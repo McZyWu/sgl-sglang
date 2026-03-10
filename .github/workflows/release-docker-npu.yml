@@ -62,7 +62,7 @@ jobs:
         with:
           context: docker
           file: docker/npu_fia_poc.Dockerfile
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           push: ${{ github.repository == 'Ascend/sglang' }}

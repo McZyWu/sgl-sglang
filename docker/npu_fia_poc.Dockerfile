@@ -99,7 +99,8 @@ RUN ${PIP_INSTALL} wheel==0.45.1 pybind11 pyyaml decorator scipy attrs psutil \
     && cd .. && rm -rf sgl-kernel-npu \
     && cd "$(python3 -m pip show deep-ep | awk '/^Location:/ {print $2}')" && ln -sf deep_ep/deep_ep_cpp*.so
 
-RUN wget https://sglang-ascend.obs.cn-east-3.myhuaweicloud.com:443/fia.tar.gz \
+RUN pip install --force-reinstall transformers==5.3.0 \
+    && wget https://sglang-ascend.obs.cn-east-3.myhuaweicloud.com:443/fia.tar.gz \
     && wget https://sglang-ascend.obs.cn-east-3.myhuaweicloud.com:443/so.tar.gz \
     && tar -zxf fia.tar.gz \
     && tar -zxf so.tar.gz \
