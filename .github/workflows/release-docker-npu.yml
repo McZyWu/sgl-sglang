@@ -29,7 +29,7 @@ jobs:
 
       - name: Generate full image tag
         run: |
-          echo "FULL_TAG=cann${{ matrix.cann_version }}-${{ matrix.device_type }}-${{ github.event.inputs.tag_suffix }}" >> $GITHUB_ENV  
+          echo "FULL_TAG=${{ github.event.inputs.tag_suffix }}-${{ matrix.device_type }}" >> $GITHUB_ENV  
 
       - name: Docker meta
         id: meta
