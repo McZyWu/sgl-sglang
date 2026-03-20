@@ -469,8 +469,8 @@ class GDNAttnBackend(MambaAttnBackendBase):
                 mixed_qkv_reshaped = mixed_qkv.view(
                     batch_size, draft_token_num, -1
                 )
-                num_accepted_tokens=torch.full((batch_size,),draft_token_num,dtype=torch.int32, device=mixed_qkv.device)
                 if enable_custom_op_flag and enable_custom_op():
+                    num_accepted_tokens=torch.full((batch_size,),draft_token_num,dtype=torch.int32, device=mixed_qkv.device)
                     mixed_qkv = torch.ops._C_ascend.npu_causal_conv1d_update(
                         mixed_qkv_reshaped,
                         layer.conv_weights.transpose(0,1).contiguous(),
