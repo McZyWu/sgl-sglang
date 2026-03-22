@@ -37,9 +37,10 @@ if is_cuda():
     causal_conv1d_fn = causal_conv1d_fn_cuda
 elif is_npu():
     try:
+        import vllm_ascend
         from vllm_ascend.utils import enable_custom_op
         enable_custom_op_flag = True
-    except ValueError:
+    except ModuleNotFoundError:
         enable_custom_op_flag = False
     from sgl_kernel_npu.fla.fused_gdn_gating import fused_gdn_gating_npu
     from sgl_kernel_npu.mamba.causal_conv1d import (
