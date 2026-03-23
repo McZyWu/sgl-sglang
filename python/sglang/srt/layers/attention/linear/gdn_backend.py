@@ -530,7 +530,21 @@ class GDNAttnBackend(MambaAttnBackendBase):
                 conv_states_tmp = conv_states_for_prefill.transpose(1, 2).contiguous()
             else:
                 conv_states_tmp = conv_states
+            if enable_custom_op_flag and enable_custom_op():
+                x_origin = mixed_qkv.transpose(-1, -2).contiguous()
+                weight_origin = layer.conv_weights.transpose(-1, -2).contiguous()
 
+                mixed_qkv = torch.ops._C_ascend.causal_conv1d_fn(
+                    x_origin,
+                    weight_origin,
+                    layer.bias,
+                    activation=layer.activation,
+                    conv_states=conv_states_for_prefill,
+                    has_initial_state=has_initial_states,
+                    non_spec_state_indices_tensor=cache_indices,
+                    non_spec_query_start_loc=query_start_loc,
+                    pad_slot_id=-1,
+                ).view(seq_len,-1)
             mixed_qkv = causal_conv1d_fn(
                 mixed_qkv,
                 layer.conv_weights,
