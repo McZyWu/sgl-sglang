@@ -15,7 +15,7 @@ ARG PYTORCH_VERSION="2.8.0"
 ARG TORCHVISION_VERSION="0.23.0"
 ARG PTA_URL_ARM64="https://gitcode.com/Ascend/pytorch/releases/download/v7.3.0-pytorch2.8.0/torch_npu-2.8.0.post2-cp311-cp311-manylinux_2_28_aarch64.whl"
 ARG PTA_URL_AMD64="https://gitcode.com/Ascend/pytorch/releases/download/v7.3.0-pytorch2.8.0/torch_npu-2.8.0.post2-cp311-cp311-manylinux_2_28_x86_64.whl"
-ARG SGLANG_TAG=main
+ARG SGLANG_TAG=release/330
 ARG ASCEND_CANN_PATH=/usr/local/Ascend/ascend-toolkit
 ARG SGLANG_KERNEL_NPU_TAG=main
 
@@ -57,8 +57,6 @@ RUN apt-get update -y && apt upgrade -y && apt-get install -y \
     openssl \
     libssl-dev \
     pkg-config \
-    libgl1-mesa-glx \
-    libgl1-mesa-dri \
     ca-certificates \
     && rm -rf /var/cache/apt/* \
     && rm -rf /var/lib/apt/lists/* \
@@ -86,7 +84,7 @@ RUN . /etc/environment_new && \
 RUN (${PIP_INSTALL} pybind11 triton-ascend)
 
 # Install SGLang
-RUN git clone https://github.com/sgl-project/sglang --branch $SGLANG_TAG && \
+RUN git clone https://github.com/Ascend/sglang.git --branch $SGLANG_TAG && \
     (cd sglang/python && rm -rf pyproject.toml && mv pyproject_npu.toml pyproject.toml && ${PIP_INSTALL} -v .[all_npu]) && \
     rm -rf sglang
 
