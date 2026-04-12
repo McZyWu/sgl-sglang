@@ -381,7 +381,6 @@ def fused_moe_npu(
         expanded_src_to_dst_row=expanded_row_idx,
         export_for_source_row=topk_ids,
     )
-
     return final_hidden_states
 
 
