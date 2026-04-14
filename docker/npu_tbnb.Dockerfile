@@ -99,17 +99,28 @@ ARG A3_CUSTOM_OPS_RUN_URL="https://sglang-ascend.obs.cn-east-3.myhuaweicloud.com
 ARG A3_CUSTOM_OPS_WHL_URL="https://sglang-ascend.obs.cn-east-3.myhuaweicloud.com:443/newmodel/pkg_20260413/a3/custom_ops-1.0-cp311-cp311-linux_aarch64.whl"
 ARG A3_TRANSFORMER_RUN_URL="https://sglang-ascend.obs.cn-east-3.myhuaweicloud.com:443/newmodel/pkg_20260413/a3/cann-ops-transformer-custom_linux-aarch64.run"
 
+
+RUN if [ "$DEVICE_TYPE" = "910b" ]; then \
+      echo "Using 910b dependencies"; \
+      echo "CUSTOM_OPS_WHL_URL=$A2_CUSTOM_OPS_WHL_URL" >> /etc/environment_new; \
+    elif [ "$DEVICE_TYPE" = "a3" ]; then \
+      echo "Using a3 dependencies"; \
+      echo "CUSTOM_OPS_WHL_URL=$A3_CUSTOM_OPS_WHL_URL" >> /etc/environment_new; \
+    else \
+      echo "Unsupported DEVICE_TYPE: $DEVICE_TYPE"; exit 1; \
+    fi
 # 安装脚本（合并为一个 RUN 层，便于清理）
-RUN mkdir -p /tmp/ascend_ops && cd /tmp/ascend_ops \
+RUN . /etc/environment_new \
+    && mkdir -p /tmp/ascend_ops && cd /tmp/ascend_ops \
     && if [ "$DEVICE_TYPE" = "910b" ]; then \
           echo "Downloading A2 specific packages..." \
           && wget -O CANN-custom_ops.run "$A2_CUSTOM_OPS_RUN_URL" \
-          && wget -O custom_ops.whl "$A2_CUSTOM_OPS_WHL_URL" \
+          && wget ${CUSTOM_OPS_WHL_URL} \
           && wget -O cann-ops-transformer.run "$A2_TRANSFORMER_RUN_URL"; \
        elif [ "$DEVICE_TYPE" = "a3" ]; then \
           echo "Downloading A3 specific packages..." \
           && wget -O CANN-custom_ops.run "$A3_CUSTOM_OPS_RUN_URL" \
-          && wget -O custom_ops.whl "$A3_CUSTOM_OPS_WHL_URL" \
+          && wget ${CUSTOM_OPS_WHL_URL} \
           && wget -O cann-ops-transformer.run "$A3_TRANSFORMER_RUN_URL"; \
        else \
           echo "Unsupported DEVICE_TYPE: $DEVICE_TYPE (must be a2 or a3)" && exit 1; \
@@ -118,7 +129,7 @@ RUN mkdir -p /tmp/ascend_ops && cd /tmp/ascend_ops \
     && ./CANN-custom_ops.run --quiet --install-path=${ASCEND_CANN_PATH}/latest/opp \
     && chmod +x cann-ops-transformer.run \
     && ./cann-ops-transformer.run --quiet --install-path=${ASCEND_CANN_PATH}/latest/opp \
-    && ${PIP_INSTALL} custom_ops.whl \
+    && ${PIP_INSTALL} ${CUSTOM_OPS_WHL_URL} \
     && cd / && rm -rf /tmp/ascend_ops
 
 # 将环境变量 source 命令持久化到 profile.d，确保后续会话可用
