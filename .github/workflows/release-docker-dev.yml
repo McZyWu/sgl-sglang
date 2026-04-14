@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'tag_name,for example:Kinlin-a3'
+        description: 'tag_name,for example:20260414'
         required: true
         type: string
 
@@ -30,7 +30,7 @@ jobs:
 
       - name: Generate full image tag
         run: |
-          echo "FULL_TAG=${{ github.event.inputs.tag_name }}-${{ matrix.device_type }}" >> $GITHUB_ENV  
+          echo "FULL_TAG=tbnb-${{ matrix.device_type }}-${{ github.event.inputs.tag_name }}" >> $GITHUB_ENV  
 
       - name: Docker meta
         id: meta
@@ -62,13 +62,13 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker
-          file: docker/npu_Kylin.Dockerfile
-          platforms: linux/arm64,linux/amd64
+          file: docker/npu_tbnb.Dockerfile
+          platforms: linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           push: ${{ github.repository == 'Ascend/sglang' }}
           provenance: false
           build-args: |
-            SGLANG_KERNEL_NPU_TAG=2026.03.10.rc1
+            SGLANG_KERNEL_NPU_TAG=2026.04.15.rc2
             CANN_VERSION=${{ matrix.cann_version }}
             DEVICE_TYPE=${{ matrix.device_type }}
