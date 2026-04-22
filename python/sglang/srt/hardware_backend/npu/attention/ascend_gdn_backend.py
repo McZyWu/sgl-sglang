@@ -5,7 +5,7 @@ from sgl_kernel_npu.fla.fused_gdn_gating import fused_gdn_gating_npu
 from sgl_kernel_npu.mamba.causal_conv1d import (
     causal_conv1d_fn_npu,
     causal_conv1d_update_npu,
-    causal_conv1d_update_mtp_npu,
+    causal_conv1d_update_v2,
 )
 
 from sglang.srt.layers.attention.fla.fused_gdn_gating import (
@@ -243,7 +243,7 @@ class AscendGDNAttnBackend(GDNAttnBackend):
                 dtype=torch.int32,
                 device=mixed_qkv.device,
             )
-            mixed_qkv = causal_conv1d_update_mtp_npu(
+            mixed_qkv = causal_conv1d_update_v2(
                 x=mixed_qkv.view(batch_size, draft_token_num, -1).contiguous(),
                 conv_state=conv_states.contiguous(),
                 weight=layer.conv_weights.transpose(0,1).contiguous(),
