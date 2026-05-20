@@ -13,7 +13,7 @@ jobs:
     strategy:
       matrix:
         cann_version: ["9.0.0"]
-        device_type: ["a3"]
+        device_type: ["a3", "910b"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
