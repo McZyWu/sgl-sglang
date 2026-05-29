@@ -15,7 +15,6 @@ register_npu_ci(
     est_time=2400,
     suite="nightly-16-npu-a3",
     nightly=True,
-    disabled=False,
 )
 
 DEEPSEEK_R1_BASE_ENVS = {
