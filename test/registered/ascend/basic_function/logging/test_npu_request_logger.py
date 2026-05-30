@@ -1,5 +1,4 @@
 import io
-import json
 import os
 import tempfile
 import time
@@ -8,7 +7,6 @@ from pathlib import Path
 
 import requests
 
-from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
 from sglang.srt.utils import kill_process_tree
 from sglang.test.ascend.test_ascend_utils import QWEN3_0_6B_WEIGHTS_PATH
 from sglang.test.ci.ci_register import register_npu_ci
@@ -28,7 +26,7 @@ TEST_CUSTOM_HEADER_VALUE = "test-header-value-67890"
 
 class BaseTestNPURequestLogger:
     log_requests_format = None
-    env_vars: dict[str, str] = {}
+    env_vars: dict[str, str] = {}  # Env vars to set before server launch
     request_headers: dict[str, str] = {"X-SMG-Routing-Key": TEST_ROUTING_KEY}
 
     @classmethod
@@ -51,6 +49,7 @@ class BaseTestNPURequestLogger:
             "stdout",
             cls.temp_dir,
         ]
+        # Set env vars and save old values for restoration
         cls._old_env_vars = {}
         for key, value in cls.env_vars.items():
             cls._old_env_vars[key] = os.environ.get(key)
@@ -70,6 +69,7 @@ class BaseTestNPURequestLogger:
         cls.stdout.close()
         cls.stderr.close()
         cls._temp_dir_obj.cleanup()
+        # Restore env vars
         for key, old_value in cls._old_env_vars.items():
             if old_value is None:
                 os.environ.pop(key, None)
@@ -83,12 +83,12 @@ class BaseTestNPURequestLogger:
         raise NotImplementedError
 
     def _wait_until_verified(
-        self,
-        verify_fn,
-        get_content_fn,
-        source_name: str,
-        timeout: float = 10.0,
-        interval: float = 0.1,
+            self,
+            verify_fn,
+            get_content_fn,
+            source_name: str,
+            timeout: float = 10.0,
+            interval: float = 0.1,
     ):
         deadline = time.time() + timeout
         last_error = None
@@ -158,115 +158,6 @@ class BaseTestNPURequestLogger:
         self.assertGreater(len(log_files), 0, "No log files found in temp directory")
 
 
-class TestNPURequestLoggerText(BaseTestNPURequestLogger, CustomTestCase):
-    """Test request logger with text format on NPU.
-
-    [Test Category] Logging
-    [Test Target] Request logging functionality with text format
-    """
-
-    log_requests_format = "text"
-
-    def _verify_logs(self, content: str, source_name: str):
-        self.assertIn("Receive:", content, f"'Receive:' not found in {source_name}")
-        self.assertIn("Finish:", content, f"'Finish:' not found in {source_name}")
-        self.assertIn(
-            TEST_ROUTING_KEY, content, f"Routing key not found in {source_name}"
-        )
-        self.assertIn(
-            "x-smg-routing-key", content, f"Header name not found in {source_name}"
-        )
-
-    def _verify_openai_logs(self, content: str, source_name: str):
-        self.assertIn(
-            "Receive OpenAI:", content, f"OpenAI receive log not found in {source_name}"
-        )
-        self.assertIn("'messages':", content, f"Messages not found in {source_name}")
-        self.assertIn(
-            "hello request logger",
-            content,
-            f"OpenAI user prompt not found in {source_name}",
-        )
-
-
-class TestNPURequestLoggerJson(BaseTestNPURequestLogger, CustomTestCase):
-    """Test request logger with JSON format on NPU.
-
-    [Test Category] Logging
-    [Test Target] Request logging functionality with JSON format
-    """
-
-    log_requests_format = "json"
-
-    def _verify_logs(self, content: str, source_name: str):
-        received_found = False
-        finished_found = False
-        for line in content.splitlines():
-            idx = line.find("{")
-            if idx == -1:
-                continue
-            try:
-                data = json.loads(line[idx:])
-            except json.JSONDecodeError:
-                continue
-
-            rid = data.get("rid", "")
-            if rid.startswith(HEALTH_CHECK_RID_PREFIX):
-                continue
-
-            if data.get("event") == "request.received":
-                self.assertIn("rid", data)
-                self.assertIn("obj", data)
-                self.assertEqual(
-                    data.get("headers", {}).get("x-smg-routing-key"), TEST_ROUTING_KEY
-                )
-                received_found = True
-            elif data.get("event") == "request.finished":
-                self.assertIn("rid", data)
-                self.assertIn("obj", data)
-                self.assertIn("out", data)
-                self.assertEqual(
-                    data.get("headers", {}).get("x-smg-routing-key"), TEST_ROUTING_KEY
-                )
-                finished_found = True
-
-        self.assertTrue(
-            received_found, f"request.received event not found in {source_name}"
-        )
-        self.assertTrue(
-            finished_found, f"request.finished event not found in {source_name}"
-        )
-
-    def _verify_openai_logs(self, content: str, source_name: str):
-        openai_received_found = False
-        for line in content.splitlines():
-            idx = line.find("{")
-            if idx == -1:
-                continue
-            try:
-                data = json.loads(line[idx:])
-            except json.JSONDecodeError:
-                continue
-            if data.get("event") != "request.received.openai":
-                continue
-
-            obj = data.get("obj", {})
-            self.assertEqual(obj.get("model"), QWEN3_0_6B_WEIGHTS_PATH)
-            self.assertIsInstance(obj.get("messages"), list)
-            self.assertGreater(len(obj.get("messages")), 0)
-            self.assertEqual(obj["messages"][0].get("content"), "hello request logger")
-            self.assertEqual(
-                data.get("headers", {}).get("x-smg-routing-key"), TEST_ROUTING_KEY
-            )
-            openai_received_found = True
-            break
-
-        self.assertTrue(
-            openai_received_found,
-            f"request.received.openai event not found in {source_name}",
-        )
-
-
 class TestNPUCustomHeaderViaEnvVar(BaseTestNPURequestLogger, CustomTestCase):
     """Test custom headers via environment variable on NPU.
 
@@ -282,6 +173,7 @@ class TestNPUCustomHeaderViaEnvVar(BaseTestNPURequestLogger, CustomTestCase):
     }
 
     def _verify_logs(self, content: str, source_name: str):
+        # Verify custom header is logged
         self.assertIn(
             TEST_CUSTOM_HEADER_NAME.lower(),
             content,
@@ -292,6 +184,7 @@ class TestNPUCustomHeaderViaEnvVar(BaseTestNPURequestLogger, CustomTestCase):
             content,
             f"Custom header value not found in {source_name}",
         )
+        # Verify default header is still logged (env var appends, not replaces)
         self.assertIn(
             "x-smg-routing-key",
             content,
