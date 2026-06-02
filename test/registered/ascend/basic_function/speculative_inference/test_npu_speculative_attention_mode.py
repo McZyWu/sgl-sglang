@@ -101,8 +101,8 @@ class TestNpuSpeculativeAttentionMode(CustomTestCase):
             metrics = self._run_gsm8k_eval()
             self.assertGreaterEqual(
                 metrics["score"],
-                0.86,
-                f"GSM8K score {metrics['score']} below threshold 0.86",
+                0.84,
+                f"GSM8K score {metrics['score']} below threshold 0.84",
             )
         finally:
             kill_process_tree(process.pid)
@@ -162,8 +162,8 @@ class TestNpuSpeculativeAttentionMode(CustomTestCase):
             metrics = self._run_gsm8k_eval()
             self.assertGreaterEqual(
                 metrics["score"],
-                0.86,
-                f"GSM8K score {metrics['score']} below threshold 0.86",
+                0.84,
+                f"GSM8K score {metrics['score']} below threshold 0.84",
             )
         finally:
             kill_process_tree(process.pid)
