@@ -104,7 +104,7 @@ class TestNPUQwen3_6_35BA3B_1P_In3k5_Out1k5_aime26(TestAscendAccuracyTestCaseBas
     model = QWEN3_6_35B_A3B_MODEL_PATH
     envs = QWEN3_6_35B_A3B_3K5_1K5_ENVS
     other_args = QWEN3_6_35B_A3B_3K5_1K5_OTHER_ARGS
-    accuracy = 92.7
+    accuracy = 0.927
     datasets = ["aime26"]
     few_shot_num = 0
     generation_config = {"max_tokens": 65536, "temperature": 1.0}
