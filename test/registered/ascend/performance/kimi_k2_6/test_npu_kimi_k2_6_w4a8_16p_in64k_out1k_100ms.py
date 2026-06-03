@@ -101,7 +101,7 @@ class TestNPUKimiK2_6_W4A8_8P_AIME2025(TestAscendAccuracyMultiNodePdMixTestCaseB
     model = KIMI_K2_6_W4A8_MODEL_PATH
     other_args = OTHER_ARGS
     envs = ENVS
-    accuracy = 96.1
+    accuracy = 0.961
     datasets = ["aime25"]
     few_shot_num = 0
     generation_config = {"max_tokens": 8192, "temperature": 1.0}
