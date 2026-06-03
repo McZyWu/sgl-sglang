@@ -94,8 +94,8 @@ class TestQwen8B_mmlupro(TestAscendAccuracyTestCaseBase):
     model = QWEN3_8B_W8A8_MODEL_PATH
     envs = QWEN3_8B_ENVS
     other_args = QWEN3_8B_OTHER_ARGS
-    accuracy = 56.73
-    datasets = ["mmlu_pro"]
+    accuracy = 0.327
+    datasets = ["gpqa_diamond"]
     few_shot_num = 5
     generation_config = {"max_tokens": 32768, "temperature": 1.0}
     eval_batch_size = 16
