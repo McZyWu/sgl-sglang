@@ -82,7 +82,7 @@ MODEL_OTHER_ARGS = [
 ]
 
 
-class TestAscendDeepSeekR1W4A8(TestAscendPerformanceTestCaseBase):
+class TestNPUDeepSeekR1W4A8(TestAscendPerformanceTestCaseBase):
     benchmark_tool = BENCHMARK_TOOL_DEFAULT
     aisbench_dataset_type = AISBENCHMARK_DATASET_DEFAULT
     # aisbench_dataset_path = "/data/c30044170/dataset/GSM8K-in3584-bs7168.jsonl"

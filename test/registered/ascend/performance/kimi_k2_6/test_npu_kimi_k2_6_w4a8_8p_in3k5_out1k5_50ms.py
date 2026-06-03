@@ -4,8 +4,8 @@ from sglang.test.ascend.e2e.test_npu_multi_node_utils import NIC_NAME
 from sglang.test.ascend.e2e.test_npu_performance_utils import (
     AISBENCHMARK_DATASET_DEFAULT,
     BENCHMARK_TOOL_DEFAULT,
-    KIMI_K2_5_EAGLE3_MODEL_PATH,
-    KIMI_K2_5_W4A8_MODEL_PATH,
+    KIMI_K2_6_EAGLE3_MODEL_PATH,
+    KIMI_K2_6_W4A8_MODEL_PATH,
     TestAscendPerformanceTestCaseBase,
 )
 from sglang.test.ci.ci_register import register_npu_ci
@@ -17,7 +17,7 @@ register_npu_ci(
     disabled="Currently it is executed by the npu performance workflow.",
 )
 
-KIMI_K2_5_ENVS = {
+KIMI_K2_6_ENVS = {
     "SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT": "600",
     "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
     "HCCL_SOCKET_IFNAME": NIC_NAME,
@@ -32,7 +32,7 @@ KIMI_K2_5_ENVS = {
     "SGLANG_PREFILL_DELAYER_MAX_DELAY_PASSES": "200",
 }
 
-KIMI_K2_5_OTHER_ARGS = [
+KIMI_K2_6_OTHER_ARGS = [
     "--trust-remote-code",
     "--attention-backend",
     "ascend",
@@ -85,7 +85,7 @@ KIMI_K2_5_OTHER_ARGS = [
     "--speculative-algorithm",
     "EAGLE3",
     "--speculative-draft-model-path",
-    KIMI_K2_5_EAGLE3_MODEL_PATH,
+    KIMI_K2_6_EAGLE3_MODEL_PATH,
     "--speculative-num-steps",
     4,
     "--speculative-eagle-topk",
@@ -100,9 +100,9 @@ KIMI_K2_5_OTHER_ARGS = [
 class TestKimiK25W4A8(TestAscendPerformanceTestCaseBase):
     benchmark_tool = BENCHMARK_TOOL_DEFAULT
     aisbench_dataset_type = AISBENCHMARK_DATASET_DEFAULT
-    model = KIMI_K2_5_W4A8_MODEL_PATH
-    other_args = KIMI_K2_5_OTHER_ARGS
-    envs = KIMI_K2_5_ENVS
+    model = KIMI_K2_6_W4A8_MODEL_PATH
+    other_args = KIMI_K2_6_OTHER_ARGS
+    envs = KIMI_K2_6_ENVS
     backend = "sglang"
     dataset_name = "random"
     max_concurrency = 120
@@ -114,7 +114,7 @@ class TestKimiK25W4A8(TestAscendPerformanceTestCaseBase):
     tpot = 50
     output_token_throughput = 3452
 
-    def test_kimi_k2_5_w4a8(self):
+    def test_kimi_k2_6_w4a8(self):
         self.run_throughput()
 
 
