@@ -108,3 +108,4 @@ class TestNPUMiniMaxM2_5_W8A8_4P_In32k_Out1k_HighThroughput(
 
 if __name__ == "__main__":
     unittest.main()
+

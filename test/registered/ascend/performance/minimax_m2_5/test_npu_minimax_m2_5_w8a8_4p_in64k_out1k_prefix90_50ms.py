@@ -133,3 +133,4 @@ class TestNPUMiniMaxM2_5_W8A8_4P_In3k5_Out1k5_aime25(TestAscendAccuracyTestCaseB
 
 if __name__ == "__main__":
     unittest.main()
+
