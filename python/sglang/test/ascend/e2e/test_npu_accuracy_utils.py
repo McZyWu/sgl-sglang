@@ -19,6 +19,7 @@ from sglang.test.ascend.e2e.test_npu_multi_node_utils import (
 from sglang.test.test_utils import (
     DEFAULT_URL_FOR_TEST,
     CustomTestCase,
+    dump_metric,
     popen_launch_server,
 )
 
@@ -211,10 +212,11 @@ def assert_metrics(self, metrics):
         raise Exception("No metrics obtained from benchmark")
 
     if self.accuracy is not None:
+        dump_metric("accuracy", float(metrics["accuracy"]), labels={"test_case": self.__class__.__name__, "type": "accuracy"})
         self.assertGreaterEqual(
             float(metrics["accuracy"]),
             self.accuracy * ACCURACY_TOLERANCE,
-            f"Accuracy check failed. Expected >= {self.accuracy}, Got: {metrics['accuracy']}",
+            f"Accuracy check failed. Expected >= {self.accuracy * ACCURACY_TOLERANCE}, Got: {metrics['accuracy']}",
         )
 
 
