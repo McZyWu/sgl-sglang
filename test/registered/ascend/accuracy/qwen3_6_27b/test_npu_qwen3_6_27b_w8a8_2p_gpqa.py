@@ -1,10 +1,10 @@
 import unittest
 
+from sglang.test.ascend.e2e.test_npu_accuracy_utils import (
+    TestAscendAccuracyTestCaseBase,
+)
 from sglang.test.ascend.e2e.test_npu_performance_utils import (
-    AISBENCHMARK_DATASET_DEFAULT,
-    BENCHMARK_TOOL_DEFAULT,
     QWEN3_6_27B_W8A8_MODEL_PATH,
-    TestAscendPerformanceTestCaseBase,
 )
 from sglang.test.ci.ci_register import register_npu_ci
 
@@ -80,30 +80,18 @@ QWEN3_6_27B_64K_PREFIX_OTHER_ARGS = [
 ]
 
 
-class TestNPUQwen3_6_27B_2P_In64k_Out1k_Prefix90_50ms(
-    TestAscendPerformanceTestCaseBase
-):
-    """Test NPU performance for Qwen3.6-27B-w8a8 2p in64k out1k prefix90 50ms"""
-
-    benchmark_tool = BENCHMARK_TOOL_DEFAULT
-    aisbench_dataset_type = AISBENCHMARK_DATASET_DEFAULT
+class TestNPUQwen3_6_27B_2P_In64k_Out1k_Prefix90_gpqa(TestAscendAccuracyTestCaseBase):
     model = QWEN3_6_27B_W8A8_MODEL_PATH
-    other_args = QWEN3_6_27B_64K_PREFIX_OTHER_ARGS
     envs = QWEN3_6_27B_64K_PREFIX_ENVS
-    dataset_name = "random"
-    max_concurrency = 20
-    num_prompts = 80
-    input_len = 64000
-    output_len = 1000
-    random_range_ratio = 1
-    aisbench_repeat_rate = 0.9
-    request_rate = 60
-    tpot = 50
-    output_token_throughput = 225
+    other_args = QWEN3_6_27B_64K_PREFIX_OTHER_ARGS
+    accuracy = 0.855
+    datasets = ["gpqa_diamond"]
+    few_shot_num = 0
+    eval_batch_size = 64
+    generation_config = {"max_tokens": 81920, "temperature": 1.0}
 
-    def test_npu_qwen3_6_27b_2p_in64k_out1k_prefix90_50ms(self):
-        """Run NPU performance test for Qwen3.6-27B-w8a8 in64k out1k prefix90 50ms"""
-        self.run_throughput()
+    def test_gpqa(self):
+        self.run_accuracy()
 
 
 if __name__ == "__main__":

@@ -43,23 +43,21 @@ QWEN3_6_35B_A3B_3K5_1K5_OTHER_ARGS = [
     "--chunked-prefill-size",
     -1,
     "--max-prefill-tokens",
-    35000,
+    131072,
     "--disable-radix-cache",
     "--trust-remote-code",
     "--enable-prefill-delayer",
     "--max-running-requests",
-    100,
+    110,
     "--max-mamba-cache-size",
-    105,
+    110,
     "--mem-fraction-static",
     0.78,
     "--cuda-graph-bs",
-    4,
     16,
     32,
     64,
-    84,
-    100,
+    110,
     "--enable-multimodal",
     "--mm-attention-backend",
     "ascend_attn",
@@ -108,7 +106,7 @@ class TestNPUQwen3_6_35BA3B_1P_In3k5_Out1k5_aime26(TestAscendAccuracyTestCaseBas
     datasets = ["aime26"]
     few_shot_num = 0
     eval_batch_size = 64
-    generation_config = {"max_tokens": 65536, "temperature": 1.0}
+    generation_config = {"max_tokens": 65536, "temperature": 0.2, "repetition_penalty": 1.08}
 
     def test_aime26(self):
         self.run_accuracy()
