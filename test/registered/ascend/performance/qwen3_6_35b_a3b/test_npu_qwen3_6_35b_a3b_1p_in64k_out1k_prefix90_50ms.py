@@ -89,7 +89,11 @@ class TestNPUQwen3_6_35BA3B_1P_AIME2026(TestAscendAccuracyTestCaseBase):
     datasets = ["aime26"]
     few_shot_num = 0
     eval_batch_size = 64
-    generation_config = {"max_tokens": 65536, "temperature": 0.2, "repetition_penalty": 1.08}
+    generation_config = {
+        "max_tokens": 65536,
+        "temperature": 0.2,
+        "repetition_penalty": 1.08,
+    }
 
     @classmethod
     def tearDownClass(cls):

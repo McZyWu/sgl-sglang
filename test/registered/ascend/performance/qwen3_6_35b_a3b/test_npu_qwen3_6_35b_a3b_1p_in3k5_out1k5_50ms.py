@@ -106,7 +106,11 @@ class TestNPUQwen3_6_35BA3B_1P_In3k5_Out1k5_aime26(TestAscendAccuracyTestCaseBas
     datasets = ["aime26"]
     few_shot_num = 0
     eval_batch_size = 64
-    generation_config = {"max_tokens": 65536, "temperature": 0.2, "repetition_penalty": 1.08}
+    generation_config = {
+        "max_tokens": 65536,
+        "temperature": 0.2,
+        "repetition_penalty": 1.08,
+    }
 
     def test_aime26(self):
         self.run_accuracy()
