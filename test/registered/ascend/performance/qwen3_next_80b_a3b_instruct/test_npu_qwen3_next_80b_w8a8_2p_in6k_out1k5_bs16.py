@@ -62,7 +62,7 @@ QWEN3_NEXT_80B_A3B_OTHER_ARGS = [
     "--max-prefill-tokens",
     28672,
     "--context-length",
-    26384,
+    65536,
     "--max-total-tokens",
     122304,
     "--dp-size",

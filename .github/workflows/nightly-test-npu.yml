@@ -135,10 +135,10 @@ jobs:
 #            runner: linux-aarch64-a3-4
 #            test_case: test/registered/ascend/performance/qwen3_6_27b/test_npu_qwen3_6_27b_w8a8_2p_in128k_out1k_50ms.py
 #            test_type: 'perf'
-          - name: qwen3_6_27b_w8a8_2p_in64k_out1k_prefix90_50ms_gpqa
-            runner: linux-aarch64-a3-4
-            test_case: test/registered/ascend/performance/qwen3_6_27b/test_npu_qwen3_6_27b_w8a8_2p_in64k_out1k_prefix90_50ms.py
-            test_type: 'perf'
+#          - name: qwen3_6_27b_w8a8_2p_in64k_out1k_prefix90_50ms_gpqa
+#            runner: linux-aarch64-a3-4
+#            test_case: test/registered/ascend/performance/qwen3_6_27b/test_npu_qwen3_6_27b_w8a8_2p_in64k_out1k_prefix90_50ms.py
+#            test_type: 'perf'
 #          - name: qwen3_6_27b_1p_in1024x1024_30_out1024_50ms
 #            runner: linux-aarch64-a3-2
 #            test_case: test/registered/ascend/performance/qwen3_6_27b/test_npu_qwen3_6_27b_1p_in1024x1024_30_out1024_50ms.py
@@ -256,37 +256,37 @@ jobs:
 #      prefill_decode_deployment: ${{ matrix.test_config.prefill_decode_deployment }}
 #      transformers_version: ''
 
-#  nightly-poc-multi-node-mix-tests:
-#    name: multi-node-mix-poc
-#    if: ${{ !cancelled() }}
-##    needs: [set-image-config, nightly-poc-single-node-tests, nightly-poc-multi-node-tests]
-#    needs: [set-image-config]
-#    strategy:
-#      fail-fast: false
-#      max-parallel: 1
-#      matrix:
-#        test_config:
-#          # kimi_k2_6 performance tests
-#          - name: kimi_k2_6_w4a8_16p_in64k_out1k_100ms_aime25
-#            node_size: 2
-#            test_case: test/registered/ascend/performance/kimi_k2_6/test_npu_kimi_k2_6_w4a8_16p_in64k_out1k_100ms.py
-#            test_type: 'perf'
-#    uses: ./.github/workflows/nightly-test-npu-e2e-multi-node.yml
-#    with:
-#      runner: linux-aarch64-a3-0
-#      test_type: ${{ matrix.test_config.test_type }}
-#      test_config_name: ${{ matrix.test_config.name }}
-#      node_size: ${{ matrix.test_config.node_size }}
-#      test_case: ${{ matrix.test_config.test_case }}
-#      image: ${{ needs.set-image-config.outputs.image_a3 }}
-#      install_sglang_from_source: false
-#      prefill_decode_deployment: 'mix'
-#      transformers_version: ''
+  nightly-poc-multi-node-mix-tests:
+    name: multi-node-mix-poc
+    if: ${{ !cancelled() }}
+#    needs: [set-image-config, nightly-poc-single-node-tests, nightly-poc-multi-node-tests]
+    needs: [set-image-config]
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        test_config:
+          # kimi_k2_6 performance tests
+          - name: kimi_k2_6_w4a8_16p_in64k_out1k_100ms_aime25
+            node_size: 2
+            test_case: test/registered/ascend/performance/kimi_k2_6/test_npu_kimi_k2_6_w4a8_16p_in64k_out1k_100ms.py
+            test_type: 'perf'
+    uses: ./.github/workflows/nightly-test-npu-e2e-multi-node.yml
+    with:
+      runner: linux-aarch64-a3-0
+      test_type: ${{ matrix.test_config.test_type }}
+      test_config_name: ${{ matrix.test_config.name }}
+      node_size: ${{ matrix.test_config.node_size }}
+      test_case: ${{ matrix.test_config.test_case }}
+      image: ${{ needs.set-image-config.outputs.image_a3 }}
+      install_sglang_from_source: false
+      prefill_decode_deployment: 'mix'
+      transformers_version: ''
   check-all-jobs:
     needs:
       - nightly-poc-single-node-tests
 #      - nightly-poc-multi-node-tests
-#      - nightly-poc-multi-node-mix-tests
+      - nightly-poc-multi-node-mix-tests
     runs-on: ubuntu-latest
     container:
       image: docker.m.daocloud.io/ubuntu:22.04
