@@ -4,7 +4,7 @@ on:
     - cron: '0 18 * * *'  # Execute at 2:00 a.m. Beijing Time every day
   pull_request:
     branches:
-#      - main
+      - main
       - testcases
     paths:
       - ".github/workflows/nightly-test-npu.yml"
@@ -97,11 +97,11 @@ jobs:
       max-parallel: 6
       matrix:
         test_config:
-#          # qwen3_6_35b_a3b performance tests
-#          - name: qwen3_6_35b_a3b_1p_in3k5_out1k5_50ms_aime26
-#            runner: linux-aarch64-a3-2
-#            test_case: test/registered/ascend/performance/qwen3_6_35b_a3b/test_npu_qwen3_6_35b_a3b_1p_in3k5_out1k5_50ms.py
-#            test_type: 'perf'
+          # qwen3_6_35b_a3b performance tests
+          - name: qwen3_6_35b_a3b_1p_in3k5_out1k5_50ms_aime26
+            runner: linux-aarch64-a3-2
+            test_case: test/registered/ascend/performance/qwen3_6_35b_a3b/test_npu_qwen3_6_35b_a3b_1p_in3k5_out1k5_50ms.py
+            test_type: 'perf'
 #          - name: qwen3_6_35b_a3b_1p_in64k_out1k_50ms
 #            runner: linux-aarch64-a3-2
 #            test_case: test/registered/ascend/performance/qwen3_6_35b_a3b/test_npu_qwen3_6_35b_a3b_1p_in64k_out1k_50ms.py
@@ -259,7 +259,8 @@ jobs:
   nightly-poc-multi-node-mix-tests:
     name: multi-node-mix-poc
     if: ${{ !cancelled() }}
-    needs: [set-image-config, nightly-poc-single-node-tests, nightly-poc-multi-node-tests]
+#    needs: [set-image-config, nightly-poc-single-node-tests, nightly-poc-multi-node-tests]
+    needs: [set-image-config]
     strategy:
       fail-fast: false
       max-parallel: 1
