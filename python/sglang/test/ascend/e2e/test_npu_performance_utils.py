@@ -734,7 +734,7 @@ def assert_metrics(self, metrics):
         dump_metric(
             "tpot_baseline",
             float(self.tpot),
-            labels={"test_case": tc_name, "type": "perf"}
+            labels={"test_case": tc_name, "type": "perf"},
         )
     if self.output_token_throughput and metrics.get("total_tps"):
         dump_metric(
@@ -745,7 +745,7 @@ def assert_metrics(self, metrics):
         dump_metric(
             "throughput_baseline",
             float(self.output_token_throughput),
-            labels={"test_case": tc_name, "type": "perf"}
+            labels={"test_case": tc_name, "type": "perf"},
         )
     if self.ttft and metrics.get("mean_ttft"):
         dump_metric(
@@ -756,7 +756,7 @@ def assert_metrics(self, metrics):
         dump_metric(
             "ttft_baseline",
             float(self.ttft),
-            labels={"test_case": tc_name, "type": "perf"}
+            labels={"test_case": tc_name, "type": "perf"},
         )
     if self.mean_e2e_latency and metrics.get("mean_e2e_latency"):
         dump_metric(
@@ -767,7 +767,7 @@ def assert_metrics(self, metrics):
         dump_metric(
             "e2e_latency_baseline",
             float(self.mean_e2e_latency),
-            labels={"test_case": tc_name, "type": "perf"}
+            labels={"test_case": tc_name, "type": "perf"},
         )
 
     if self.tpot:
