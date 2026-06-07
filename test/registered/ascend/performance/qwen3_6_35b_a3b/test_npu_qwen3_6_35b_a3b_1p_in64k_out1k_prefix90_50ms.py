@@ -22,15 +22,14 @@ register_npu_ci(
 QWEN3_6_35B_A3B_64K_PREFIX_ENVS = {
     "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
     "STREAMS_PER_DEVICE": "32",
-    "HCCL_BUFFSIZE": "1600",
+    "HCCL_BUFFSIZE": "300",
     "HCCL_SOCKET_IFNAME": "lo",
     "GLOO_SOCKET_IFNAME": "lo",
     "HCCL_OP_EXPANSION_MODE": "AIV",
     "SGLANG_SET_CPU_AFFINITY": "1",
     "SGLANG_ENABLE_SPEC_V2": "1",
-    "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
+    "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "0",
     "ASCEND_USE_FIA": "1",
-    "SGLANG_PREFILL_DELAYER_MAX_DELAY_PASSES": "20",
 }
 
 QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
@@ -45,22 +44,31 @@ QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
     "--chunked-prefill-size",
     -1,
     "--max-prefill-tokens",
-    131072,
+    65536,
     "--trust-remote-code",
     "--enable-prefill-delayer",
     "--mamba-scheduler-strategy",
     "extra_buffer",
     "--max-running-requests",
-    32,
+    40,
     "--max-mamba-cache-size",
-    32,
+    200,
     "--mem-fraction-static",
-    0.65,
+    0.73,
     "--cuda-graph-bs",
-    4,
+    2,
     8,
+    12,
     16,
+    20,
+    24,
+    28,
+    30,
     32,
+    34,
+    36,
+    38,
+    40,
     "--enable-multimodal",
     "--mm-attention-backend",
     "ascend_attn",
@@ -116,10 +124,10 @@ class TestNPUQwen3_6_35BA3B_1P_In64k_Out1k_Prefix90_50ms(
     other_args = QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS
     envs = QWEN3_6_35B_A3B_64K_PREFIX_ENVS
     dataset_name = "random"
-    max_concurrency = 32
-    num_prompts = 128
-    input_len = 32000
-    output_len = 1000
+    max_concurrency = 40
+    num_prompts = 160
+    input_len = 65536
+    output_len = 1024
     random_range_ratio = 1
     prefix_hit_rate = 0.9
     tpot = 50
