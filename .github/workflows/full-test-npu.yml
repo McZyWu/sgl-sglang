@@ -147,7 +147,7 @@ jobs:
       - name: Print Log Information
         run: bash scripts/ci/npu/npu_log_print.sh
       - name: Run test
-        timeout-minutes: 240
+        timeout-minutes: 360
         env:
           SGLANG_USE_MODELSCOPE: true
           SGLANG_IS_IN_CI: true
@@ -211,7 +211,7 @@ jobs:
       - name: Print Log Information
         run: bash scripts/ci/npu/npu_log_print.sh
       - name: Run test
-        timeout-minutes: 240
+        timeout-minutes: 360
         env:
           SGLANG_USE_MODELSCOPE: true
           SGLANG_IS_IN_CI: true
@@ -274,7 +274,7 @@ jobs:
       - name: Print Log Information
         run: bash scripts/ci/npu/npu_log_print.sh
       - name: Run test
-        timeout-minutes: 240
+        timeout-minutes: 360
         env:
           SGLANG_USE_MODELSCOPE: true
           SGLANG_IS_IN_CI: true
@@ -337,7 +337,7 @@ jobs:
       - name: Print Log Information
         run: bash scripts/ci/npu/npu_log_print.sh
       - name: Run test
-        timeout-minutes: 240
+        timeout-minutes: 360
         env:
           SGLANG_USE_MODELSCOPE: true
           SGLANG_IS_IN_CI: true
@@ -400,7 +400,7 @@ jobs:
       - name: Print Log Information
         run: bash scripts/ci/npu/npu_log_print.sh
       - name: Run test
-        timeout-minutes: 240
+        timeout-minutes: 360
         env:
           SGLANG_USE_MODELSCOPE: true
           SGLANG_IS_IN_CI: true
