@@ -97,7 +97,7 @@ jobs:
   nighly-test-npu:
     needs: [ set-image-config ]
     name: nightly-test-npu
-    if: ${{ needs.set-image-config.outputs.test_scope == 'all' || needs.set-image-config.outputs.test_scope == 'func' }}
+    if: ${{ needs.set-image-config.outputs.test_scope == 'all' || needs.set-image-config.outputs.test_scope == 'poc' }}
     uses: ./.github/workflows/nightly-test-npu.yml
     with:
       ref: ${{ needs.set-image-config.outputs.ref }}
