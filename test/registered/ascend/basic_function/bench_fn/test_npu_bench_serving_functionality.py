@@ -6,8 +6,8 @@ from pathlib import Path
 
 from sglang.bench_serving import run_benchmark
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
-from sglang.test.ascend.test_ascend_utils import QWEN3_8B_WEIGHTS_PATH
 from sglang.srt.utils import kill_process_tree
+from sglang.test.ascend.test_ascend_utils import QWEN3_8B_WEIGHTS_PATH
 from sglang.test.ci.ci_register import register_npu_ci
 from sglang.test.test_utils import (
     DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
@@ -101,6 +101,7 @@ class TestBenchServingFunctionality(CustomTestCase):
         self.assertGreaterEqual(
             prefix_count, expected, f"Expected at least {expected} prefix pairs"
         )
+
 
 if __name__ == "__main__":
     unittest.main()
