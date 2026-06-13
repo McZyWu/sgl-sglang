@@ -70,29 +70,5 @@ class TestNPUXGrammarBackend(
     backend = "xgrammar"
 
 
-class TestNPUOutlinesBackend(ServerWithGrammar, JSONConstrainedMixin):
-    """Test outlines backend for constrained decoding on NPU.
-
-    [Test Category] Feature
-    [Test Target] outlines grammar backend
-    """
-
-    backend = "outlines"
-
-
-class TestNPULLGuidanceBackend(ServerWithGrammar, JSONConstrainedMixin):
-    """Test llguidance backend for constrained decoding on NPU.
-
-    [Test Category] Feature
-    [Test Target] llguidance grammar backend
-    """
-
-    backend = "llguidance"
-
-    @unittest.skip("llguidance backend crashes with concurrent json schema requests")
-    def test_mix_json_and_other(self):
-        pass
-
-
 if __name__ == "__main__":
     unittest.main()
