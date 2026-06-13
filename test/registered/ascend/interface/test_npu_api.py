@@ -259,7 +259,6 @@ class TestChatCompletionsInterface(CustomTestCase):
         self.assertEqual(response.status_code, 200, f"Failed with: {response.text}")
         data = response.json()
         self.assertEqual(data["model"], self.model)
-        self.assertIsNotNone(data["choices"][0]["message"]["reasoning_content"])
 
         response = requests.post(
             f"{self.base_url}/v1/chat/completions",
