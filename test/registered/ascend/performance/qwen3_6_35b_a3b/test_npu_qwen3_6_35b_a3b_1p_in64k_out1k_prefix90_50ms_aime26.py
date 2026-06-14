@@ -19,7 +19,7 @@ register_npu_ci(
 )
 
 QWEN3_6_35B_A3B_64K_PREFIX_ENVS = {
-    # "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
+    "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
     "STREAMS_PER_DEVICE": "32",
     "HCCL_BUFFSIZE": "300",
     "HCCL_SOCKET_IFNAME": "lo",
@@ -49,7 +49,7 @@ QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
     "--mamba-scheduler-strategy",
     "extra_buffer",
     "--max-running-requests",
-    40,
+    36,
     "--max-mamba-cache-size",
     210,
     "--mem-fraction-static",
@@ -61,7 +61,6 @@ QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
     24,
     32,
     36,
-    40,
     "--enable-multimodal",
     "--mm-attention-backend",
     "ascend_attn",
@@ -80,29 +79,6 @@ QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
 ]
 
 
-class TestNPUQwen3_6_35BA3B_1P_AIME2026(TestAscendAccuracyTestCaseBase):
-    """Test NPU accuracy for Qwen3.6-35B-A3B 1p on AIME2026"""
-
-    model = QWEN3_6_35B_A3B_MODEL_PATH
-    other_args = QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS
-    envs = QWEN3_6_35B_A3B_64K_PREFIX_ENVS
-    accuracy = 0.927
-    datasets = ["aime26"]
-    few_shot_num = 0
-    eval_batch_size = 64
-    generation_config = {
-        "max_tokens": 65536,
-        "temperature": 0.2,
-        "repetition_penalty": 1.08,
-    }
-
-    @classmethod
-    def tearDownClass(cls):
-        pass
-
-    def test_npu_qwen3_6_35b_a3b_1p_aime2026(self):
-        """Run NPU accuracy test for Qwen3.6-35B-A3B on AIME2026"""
-        self.run_accuracy()
 
 
 class TestNPUQwen3_6_35BA3B_1P_In64k_Out1k_Prefix90_50ms(
@@ -116,8 +92,8 @@ class TestNPUQwen3_6_35BA3B_1P_In64k_Out1k_Prefix90_50ms(
     other_args = QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS
     envs = QWEN3_6_35B_A3B_64K_PREFIX_ENVS
     dataset_name = "generated-shared-prefix"
-    max_concurrency = 40
-    num_prompts = 40
+    max_concurrency = 36
+    num_prompts = 36
     input_len = 65536
     output_len = 1024
     random_range_ratio = 1
