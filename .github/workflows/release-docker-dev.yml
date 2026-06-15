@@ -30,7 +30,7 @@ jobs:
 
       - name: Generate full image tag
         run: |
-          echo "FULL_TAG=cann${{ matrix.cann_version }}-${{ matrix.device_type }}-${{ github.event.inputs.tag_suffix }}" >> $GITHUB_ENV  
+          echo "FULL_TAG=cann${{ matrix.cann_version }}-${{ matrix.device_type }}-glm5.2-${{ github.event.inputs.tag_suffix }}" >> $GITHUB_ENV  
 
       - name: Docker meta
         id: meta
@@ -62,7 +62,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker
-          file: docker/npu_cann9_0_dev.Dockerfile
+          file: docker/npu_glm5_2.Dockerfile
           platforms: linux/arm64,linux/amd64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
