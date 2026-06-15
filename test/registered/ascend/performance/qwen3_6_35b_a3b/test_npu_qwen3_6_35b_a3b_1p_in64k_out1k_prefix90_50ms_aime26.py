@@ -17,7 +17,6 @@ register_npu_ci(
     nightly=True,
     disabled="performance testcase",
 )
-QWEN3_6_35B_A3B_MODEL_PATH="/home/weights/Qwen3.6-35B-A3B"
 QWEN3_6_35B_A3B_64K_PREFIX_ENVS = {
     "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
     "STREAMS_PER_DEVICE": "32",
@@ -120,7 +119,6 @@ class TestNPUQwen3_6_35BA3B_1P_In64k_Out1k_Prefix90_50ms(
     other_args = QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS
     envs = QWEN3_6_35B_A3B_64K_PREFIX_ENVS
     dataset_name = "generated-shared-prefix"
-    dataset_path = "/home/hexq/ShareGPT_V3_unfiltered_cleaned_split.json"
     max_concurrency = 40
     num_prompts = 40
     input_len = 65536
