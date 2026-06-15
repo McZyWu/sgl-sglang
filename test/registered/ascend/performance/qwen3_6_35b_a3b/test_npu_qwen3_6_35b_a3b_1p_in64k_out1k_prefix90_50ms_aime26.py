@@ -42,17 +42,15 @@ QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
     "ascend",
     "--device",
     "npu",
-    "--chunked-prefill-size",
-    -1,
     "--max-prefill-tokens",
     65536,
     "--trust-remote-code",
     "--mamba-scheduler-strategy",
     "extra_buffer",
     "--max-running-requests",
-    44,
+    45,
     "--max-mamba-cache-size",
-    220,
+    225,
     "--mem-fraction-static",
     0.75,
     "--cuda-graph-bs",
@@ -65,7 +63,7 @@ QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS = [
     28,
     35,
     40,
-    44,
+    45,
     "--enable-multimodal",
     "--mm-attention-backend",
     "ascend_attn",
@@ -94,8 +92,8 @@ class TestNPUQwen3_6_35BA3B_1P_In64k_Out1k_Prefix90_50ms(
     other_args = QWEN3_6_35B_A3B_64K_PREFIX_OTHER_ARGS
     envs = QWEN3_6_35B_A3B_64K_PREFIX_ENVS
     dataset_name = "generated-shared-prefix"
-    max_concurrency = 44
-    num_prompts = 176
+    max_concurrency = 45
+    num_prompts = 180
     input_len = 65536
     output_len = 1024
     random_range_ratio = 1
