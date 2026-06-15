@@ -125,9 +125,9 @@ class TestNPUQwen3_6_35BA3B_1P_In64k_Out1k_Prefix90_50ms(
     request_rate = float("inf")
     output_token_throughput = 660
 
-    @classmethod
-    def setUpClass(cls):
-        pass
+    # @classmethod
+    # def setUpClass(cls):
+    #     pass
 
     def test_npu_qwen3_6_35b_a3b_1p_in64k_out1k_prefix90_50ms(self):
         """Run NPU performance test for Qwen3.6-35B-A3B in64k out1k prefix90 50ms"""
