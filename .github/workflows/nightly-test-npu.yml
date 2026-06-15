@@ -400,6 +400,7 @@ jobs:
           else
             echo "No per-test metrics available (artifacts not found)." >> $GITHUB_STEP_SUMMARY
           fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
 
           FAIL=0
