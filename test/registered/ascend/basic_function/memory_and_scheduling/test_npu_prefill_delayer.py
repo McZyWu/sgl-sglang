@@ -24,7 +24,6 @@ from sglang.test.test_utils import (
     CustomTestCase,
     get_benchmark_args,
     popen_launch_server,
-    run_distributed_test,
 )
 
 register_npu_ci(
