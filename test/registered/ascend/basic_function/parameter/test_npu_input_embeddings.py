@@ -137,6 +137,7 @@ class TestInputEmbeds(CustomTestCase):
             print(
                 f"Embeddings Input (for text '{text}'):\nEmbedding-Based Response: {json.dumps(embed_response, indent=2)}\n{'-' * 80}"
             )
+            self.assertEqual(text_response["text"], embed_response["text"])
 
     def test_generate_from_file(self):
         """Test the /generate_from_file endpoint using tokenized embeddings."""
