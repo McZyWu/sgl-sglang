@@ -141,6 +141,8 @@ class TestMatryoshkaEmbeddingModel(CustomTestCase):
             "--enable-metrics",
             "--json-model-override-args",
             json.dumps(matryoshka_config),
+            "--attention-backend",
+            "ascend",
         ]
         cls.process = popen_launch_server(
             cls.model,
