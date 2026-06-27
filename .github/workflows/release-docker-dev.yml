@@ -62,8 +62,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: docker
-          file: docker/npu_cann9_0_A5.Dockerfile
-          platforms: linux/arm64,linux/amd64
+          file: docker/npu_cann9_0_custom.Dockerfile
+          platforms: linux/arm64
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           push: ${{ github.repository == 'Ascend/sglang' }}
