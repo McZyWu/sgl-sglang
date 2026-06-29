@@ -1,0 +1,145 @@
+---
+title: "Parameter Tuning Skill — High Throughput 20 ms TPOT"
+metatags:
+  description: "Sub-skill for tuning SGLang launch parameters on Ascend NPU for balanced high throughput scenarios, targeting ~20 ms TPOT."
+---
+
+<Note>
+This sub-skill is part of the [Parameter Tuning Skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill). Read the main skill first for the four rules (concurrency alignment, mem-fraction-static sizing, KV cache starvation diagnosis, scenario selection). This page covers the 20 ms TPOT high throughput scenario: push the decode batch size as high as possible while keeping TPOT near 20 ms.
+</Note>
+
+## Goal
+
+Maximize decode throughput while keeping TPOT close to 20 ms. This is the balanced regime: aggressive enough to amortize the cost of the decode step across many requests, conservative enough that per-token latency does not regress past your SLO.
+
+## How TPOT and throughput trade off with decode `bs`
+
+The decode step on Ascend NPU is compute-bound, but the per-token cost has two components:
+
+- a fixed cost that does not depend on `bs` (weight loading, attention setup)
+- a per-request cost that grows with `bs` (attention across batched requests)
+
+At small `bs` the fixed cost dominates, so increasing `bs` from 1 to 8 raises TPOT only slightly but raises throughput roughly linearly. At large `bs` the per-request cost dominates, and the same increase in `bs` raises TPOT a lot while raising throughput only a little.
+
+The 20 ms TPOT target sits in the linear regime: every additional request in the batch is converted into throughput at a roughly constant rate. This is the "good" part of the throughput curve. The 50 ms TPOT target ([next sub-skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_50tpot)) sits past the knee, where the conversion rate from `bs` to throughput drops.
+
+## How to read the screen output
+
+You are in the right regime when the server log shows:
+
+```text Output
+Decode batch. #running-req: <large>, #token: <large>, token usage: 0.6-0.85, cuda graph: True, gen throughput (token/s): <plateau>, #queue-req: 50-500
+```
+
+The signals:
+
+- `#running-req` is at or near `max(cuda-graph-bs) * dp-size`. This is Rule 1.
+- `token usage` is in `0.6` to `0.85`. High enough that KV cache is the limiter, not compute. Low enough that you are not yet seeing `KV cache pool is full. Retract requests.`.
+- `gen throughput` has plateaued. If it is still climbing as you increase `bs`, you are still in the linear regime and can extend `max(cuda-graph-bs)`.
+- `#queue-req` is in the 50–500 range. If it is 0, the client is the bottleneck.
+
+## Parameter choices
+
+### Concurrency alignment (Rule 1)
+
+```text
+max-running-requests  ==  max-concurrency  ==  num-prompts  ==  max(cuda-graph-bs) * dp-size
+```
+
+For 20 ms TPOT, the right-hand side is the largest `bs` you can reach while keeping `Mean TPOT` near 20 ms. To find it:
+
+1. Start from a [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) configuration for your model and quantization.
+2. Run the pressure test with `max-concurrency == num-prompts == max-running-requests`.
+3. Read the `Mean TPOT` from the `bench_serving` summary.
+4. If `Mean TPOT < 18 ms`, extend `max(cuda-graph-bs)` by adding the next entry and re-run. Repeat until `Mean TPOT` enters the 19–22 ms range.
+5. If `Mean TPOT > 22 ms`, drop the largest entry from `max(cuda-graph-bs)` and re-run.
+
+For the Qwen3-Next-80B-A3B-Instruct W8A8 case in [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice/qwen3_next_80b_a3b_instruct), the result is `--cuda-graph-bs 1 2 3 4 5 6 7 8 10 12 14 16 18 20 22 24 26 28 30 32 40 44 48 52 56 60 64 72 80 88 96 104 112 120 128 136 144 150` with `dp-size 2`, so the right-hand side is `150 * 2 = 300`. `max-running-requests`, `max-concurrency`, and `num-prompts` are all `300`.
+
+### mem-fraction-static (Rule 2)
+
+At 20 ms TPOT the KV cache is the throughput lever, not the latency floor. Use the highest `mem-fraction-static` that does not OOM. Walk the boundary:
+
+1. Start from the best practice value (for example `0.75` for the 50 ms case, `0.85` for the 20 ms case).
+2. Increase by `0.01` and re-run.
+3. Stop at the value just below the one that OOMs.
+4. Read `available_gpu_mem` from the server log. If it is below 5 GB, step back down by `0.01` or `0.02`.
+
+For a model with MoE expert weights, leave at least 8–10 GB for experts plus CUDA graph buffers. For a dense model, 5 GB is usually enough.
+
+### dp-size
+
+DP is a throughput multiplier. Each DP rank runs its own decode batch, so the effective `bs` becomes `max(cuda-graph-bs) * dp-size`. For 20 ms TPOT, increase `dp-size` before extending `max(cuda-graph-bs)` past the knee:
+
+- If `Mean TPOT` is below 18 ms and the per-rank `bs` is past the knee (typically above 32 for MoE models on Atlas 800I A3), raise `dp-size` by 1. This adds parallelism without growing the per-rank batch.
+- Raising `dp-size` costs collective communication time. On Atlas 800I A3, the per-rank TPOT cost of going from `dp-size 1` to `dp-size 2` is small (single-digit ms); going to `dp-size 4` or above usually pushes the per-rank TPOT above the 20 ms target.
+
+For most 80B-class MoE models on 2 Atlas 800I A3 nodes, `dp-size 2` with a per-rank `max(cuda-graph-bs)` of 64–150 is the sweet spot for 20 ms TPOT.
+
+## What "resource limit" looks like
+
+The user instruction to this skill is: "increasing decode `bs` raises TPOT and throughput, but at the resource limit throughput degrades". On Ascend NPU this limit shows up as:
+
+- HBM bandwidth saturation — `gen throughput` stops climbing with `bs`
+- MoE expert dispatch saturation — the dispatch/combine collectives dominate the step
+- KV cache starvation — `token usage` saturates and retracts appear
+- PCIe / HCCL saturation — DP collectives take longer than the compute they overlap with
+
+When you see `gen throughput` plateau or start to fall as you extend `max(cuda-graph-bs)`, you are past the resource limit for 20 ms TPOT. Drop the largest entry, or move to the [50 ms TPOT sub-skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_50tpot) if a higher TPOT is acceptable.
+
+## Example launch (Qwen3-Next-80B-A3B-Instruct, 20 ms TPOT)
+
+Adapted from [Qwen3-Next-80B-A3B-Instruct Best Practice](/docs/hardware-platforms/ascend-npus/best_practice/qwen3_next_80b_a3b_instruct). The full environment variables and speculative decoding flags match the best practice file.
+
+```bash Command
+python3 -m sglang.launch_server \
+    --model-path $MODEL_PATH \
+    --host 127.0.0.1 --port 6688 \
+    --trust-remote-code \
+    --attention-backend ascend \
+    --device npu \
+    --quantization modelslim \
+    --page-size 128 \
+    --tp-size 4 \
+    --watchdog-timeout 9000 \
+    --mem-fraction-static 0.85 \
+    --disable-radix-cache \
+    --max-prefill-tokens 28672 \
+    --context-length 81920 \
+    --max-total-tokens 122304 \
+    --dp-size 2 \
+    --enable-dp-attention \
+    --enable-dp-lm-head \
+    --speculative-algorithm NEXTN \
+    --speculative-num-steps 3 \
+    --speculative-eagle-topk 1 \
+    --speculative-num-draft-tokens 4 \
+    --speculative-draft-model-quantization unquant \
+    --chunked-prefill-size -1 \
+    --max-running-requests 16 \
+    --cuda-graph-bs 2 4 8 \
+    --mamba-ssm-dtype bfloat16 \
+    --speculative-draft-model-path $DRAFT_MODEL_PATH
+```
+
+The benchmark command keeps the four-way equality:
+
+```bash Command
+python -m sglang.bench_serving \
+    --dataset-name random \
+    --backend sglang \
+    --host 127.0.0.1 \
+    --port 6688 \
+    --max-concurrency 16 \
+    --random-input-len 6144 \
+    --random-output-len 1500 \
+    --num-prompts 16 \
+    --random-range-ratio 1
+```
+
+## Common mistakes
+
+- **Setting `num-prompts` much larger than `max-concurrency`.** `num-prompts` is the total request count; `max-concurrency` is the in-flight cap. They are not the same. If `num-prompts > max-concurrency`, you are not measuring steady state.
+- **Raising `mem-fraction-static` past the OOM boundary.** If the server OOMs at warmup, step back by `0.01` or `0.02`.
+- **Extending `max(cuda-graph-bs)` without re-running the benchmark.** The relationship between `bs` and TPOT is not linear past the knee. Always measure.
+- **Treating DP as a substitute for `max(cuda-graph-bs)`.** DP adds latency to each step. If your SLO is TPOT, DP has a cost; only use enough DP to hit the throughput target.

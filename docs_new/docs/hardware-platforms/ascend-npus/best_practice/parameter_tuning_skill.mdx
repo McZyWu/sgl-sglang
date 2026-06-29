@@ -1,0 +1,134 @@
+---
+title: "Parameter Tuning Skill"
+metatags:
+  description: "Methodology for tuning SGLang launch parameters on Ascend NPU based on pressure testing results and server screen output."
+---
+
+<Note>
+This page documents the methodology used to derive the launch parameters in the [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) pages for Ascend NPU. It explains how to read server screen output and pressure testing metrics to choose `--max-running-requests`, `--cuda-graph-bs`, `--mem-fraction-static`, `--dp-size`, and related parameters. See the sub-skill pages for concrete parameter choices for each scenario.
+</Note>
+
+## What this skill covers
+
+When you pressure test a deployment on Ascend NPU, the launch parameters in [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) are not picked at random. They are derived from a small set of rules that connect:
+
+- the server's steady-state screen output (batch size, running requests, token usage)
+- the pressure testing configuration (`--max-concurrency`, `--num-prompts`)
+- the launch parameters (`--max-running-requests`, `--cuda-graph-bs`, `--dp-size`, `--mem-fraction-static`)
+
+This page is the methodology. The sub-skill pages are the recipes:
+
+- [Low latency skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_low_latency) — minimize TPOT at 1 batch
+- [High throughput 20 ms TPOT skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_20tpot) — balanced high throughput at 20 ms TPOT
+- [High throughput 50 ms TPOT skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_50tpot) — maximum throughput at 50 ms TPOT
+
+## Screen output you should read first
+
+During a pressure test, the server prints one line per decode step in this format:
+
+```text Output
+Decode batch. #running-req: 233, #token: 370959, token usage: 0.82, cuda graph: True, gen throughput (token/s): 4594.01, #queue-req: 317
+```
+
+The fields that drive parameter tuning are:
+
+- `#running-req` — number of requests currently being decoded (the actual decode batch size on this step)
+- `#token` — total tokens held in the KV cache pool
+- `token usage` — KV cache memory utilization in `[0, 1]`
+- `cuda graph` — whether CUDA graph is active for the current step
+- `gen throughput` — generated tokens per second across all running requests
+- `#queue-req` — requests waiting in the scheduler queue
+
+The maximum decode batch size you ever observe in this line is the decode `bs` you are actually achieving. The relationship between this observed `bs` and the launch parameters is the first rule below.
+
+## Rule 1: align concurrency, prompts, and the largest CUDA graph batch
+
+Pressure testing on Ascend NPU follows this equality during a fully loaded run:
+
+```text
+max-running-requests  ==  max-concurrency  ==  num-prompts  ==  max(cuda-graph-bs) * dp-size
+```
+
+Why this matters:
+
+- `--max-running-requests` is the server-side limit on concurrent requests.
+- `--max-concurrency` and `--num-prompts` (in `bench_serving`) set the client-side load.
+- `--cuda-graph-bs` is the list of batch sizes for which the server has pre-compiled CUDA graphs.
+- `--dp-size` is the data-parallel size, which multiplies the per-rank batch.
+
+When these four values are aligned, every request is admitted, the server saturates the largest compiled CUDA graph, and the observed decode `bs` reaches `max(cuda-graph-bs) * dp-size`. If they are misaligned, the throughput plateau you measure is bounded by the smallest of the four, not by the hardware.
+
+Practical consequences:
+
+- If `#queue-req` is large but `#running-req` plateaus below `max(cuda-graph-bs) * dp-size`, your client is the bottleneck. Increase `--max-concurrency` and `--num-prompts` to match.
+- If `--max-running-requests` is the smallest value, the server is the bottleneck. Raise it (or reduce `--max-concurrency`) until they match.
+- If you want to push beyond the current `max(cuda-graph-bs)`, extend the list. Each new entry costs CUDA graph memory.
+
+## Rule 2: read `token usage` to size the KV cache
+
+`mem-fraction-static` decides how much HBM is split between model weights plus KV cache pool versus everything else (MoE expert weights, CUDA graph buffers, activations). On Ascend NPU the "everything else" is large because MoE expert weights and CUDA graph buffers are not negligible, so you cannot push it to 1.0.
+
+The relationship to watch is:
+
+```text
+mem-fraction-static  =  (model weights + KV cache pool) / HBM capacity
+```
+
+The remaining `(1 - mem-fraction-static)` budget must cover:
+
+- MoE expert weights not folded into the main weight tensor
+- CUDA graph buffers for every entry in `--cuda-graph-bs`
+- transient activations during prefill and decode
+
+You tune `mem-fraction-static` by reading `token usage` and the OOM boundary:
+
+- If `token usage` is consistently low (for example `< 0.6`) and the server is request-bound, the KV cache is oversized. Lower `mem-fraction-static` to free memory and raise `max(cuda-graph-bs)`.
+- If `token usage` is high (`> 0.9`) and you see `KV cache pool is full. Retract requests.` repeatedly, the KV cache is undersized. Raise `mem-fraction-static` until retracts drop to a tolerable rate, or reduce `--max-running-requests`.
+- If the server OOMs during prefill or decode, `mem-fraction-static` is too high for the current `--cuda-graph-bs` and `--max-running-requests`. Lower it in steps of `0.01` until the OOM is gone.
+
+Rule of thumb: leave roughly 5–8 GB of HBM for activations and CUDA graph buffers. You can read this from the server log line printed just before "ready":
+
+```text Output
+max_total_num_tokens=665690, chunked_prefill_size=8192, max_prefill_tokens=16384, max_running_requests=4096, context_len=65536, available_gpu_mem=13.50 GB
+```
+
+`available_gpu_mem` is what is left after `mem-fraction-static` is applied. If it is `5–8 GB`, the setting is balanced.
+
+## Rule 3: diagnose KV cache starvation from screen output
+
+When the KV cache pool is too small, the server is forced into a low-throughput steady state. The signature in the screen output is:
+
+- decode `bs` plateaus far below `max(cuda-graph-bs) * dp-size`
+- `token usage` stays high (`> 0.9`) and you see frequent `KV cache pool is full. Retract requests.`
+- `gen throughput` is low and roughly flat as you add more client concurrency
+- cache retract-and-recompute events appear in the log
+
+If you see this pattern, the cause is KV cache starvation, not compute. Three levers, in order of preference:
+
+1. Raise `mem-fraction-static` if the OOM headroom allows.
+2. Raise `--max-total-tokens` and `--context-length` so the cache pool can hold more tokens per request, if the model supports it.
+3. Lower `--max-running-requests` so the scheduler does not have to retract and recompute.
+
+If you raise `mem-fraction-static` past the OOM boundary, the server will fail at warmup or first decode. Step it in `0.01` increments.
+
+## Rule 4: choose the scenario first, then the parameters
+
+The other rules differ by what you are optimizing. Pick the scenario that matches your service level objective, then read the matching sub-skill:
+
+- **Low latency** — target TPOT at 1 batch. Goal is the smallest possible time per output token for a single user.
+  - See [Low latency skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_low_latency).
+- **High throughput at 20 ms TPOT** — balanced. Goal is to push decode `bs` as high as possible while keeping TPOT near 20 ms.
+  - See [High throughput 20 ms TPOT skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_20tpot).
+- **High throughput at 50 ms TPOT** — maximum throughput. Goal is to drive the largest decode `bs` the cluster can hold, accepting a higher TPOT.
+  - See [High throughput 50 ms TPOT skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_50tpot).
+
+In every scenario, start from a known-good configuration in [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) for your model and quantization, then apply the rules above. The best practice file gives you a starting point that already satisfies Rule 1; your job is to confirm it satisfies Rule 2 and Rule 3 for your workload.
+
+## Workflow summary
+
+1. Pick a scenario (low latency, 20 ms TPOT, 50 ms TPOT) and read the matching sub-skill.
+2. Start from the [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) configuration for your model. Confirm `max-running-requests == max(cuda-graph-bs) * dp-size` and that `max-concurrency == num-prompts` in your `bench_serving` command match.
+3. Run the pressure test. Watch `#running-req`, `token usage`, and `gen throughput` in the server log.
+4. If you hit Rule 3 (KV cache starvation), apply the three levers in order. Do not raise `mem-fraction-static` past the OOM boundary.
+5. If you are compute-bound and `gen throughput` still climbs with `bs`, extend `max(cuda-graph-bs)` and re-align the four values from Rule 1.
+6. Record the final values into a new entry in [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) so the next user starts from your result.

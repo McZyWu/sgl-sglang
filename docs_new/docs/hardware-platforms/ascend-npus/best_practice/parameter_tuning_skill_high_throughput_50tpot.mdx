@@ -1,0 +1,152 @@
+---
+title: "Parameter Tuning Skill — High Throughput 50 ms TPOT"
+metatags:
+  description: "Sub-skill for tuning SGLang launch parameters on Ascend NPU for maximum throughput scenarios, targeting ~50 ms TPOT."
+---
+
+<Note>
+This sub-skill is part of the [Parameter Tuning Skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill). Read the main skill first for the four rules (concurrency alignment, mem-fraction-static sizing, KV cache starvation diagnosis, scenario selection). This page covers the 50 ms TPOT high throughput scenario: drive the largest decode batch the cluster can hold, accepting a higher per-token latency.
+</Note>
+
+## Goal
+
+Maximize aggregate decode throughput on the cluster. You are willing to let TPOT rise to about 50 ms in exchange for the largest possible `gen throughput`. This is the offline-style regime: many concurrent requests, fewer SLO constraints on per-token latency.
+
+## How the 50 ms TPOT regime differs from 20 ms
+
+At 20 ms TPOT you are still in the linear part of the throughput curve: every additional `bs` converts into throughput at a roughly constant rate. At 50 ms TPOT you have crossed the knee. The per-token cost grows superlinearly with `bs`, but you are still gaining throughput — just at a worse rate.
+
+This is the right trade-off when your service is:
+
+- offline batch inference (for example RAG indexing, dataset labeling, evaluation)
+- a backend where per-token latency is hidden behind prefill-dominated workloads
+- a system that has already exhausted 20 ms TPOT and is looking for the next 10–20% of throughput
+
+If your service is interactive, prefer the [20 ms TPOT sub-skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill_high_throughput_20tpot) instead.
+
+## How to read the screen output
+
+You are in the 50 ms regime when the server log shows:
+
+```text Output
+Decode batch. #running-req: <very large>, #token: <very large>, token usage: 0.85-0.95, cuda graph: True, gen throughput (token/s): <peak plateau>, #queue-req: 100-2000
+```
+
+The signals:
+
+- `#running-req` is at or near `max(cuda-graph-bs) * dp-size`. The "very large" part of this regime is the whole point.
+- `token usage` is high (`0.85` to `0.95`). The KV cache is doing real work. If you see `KV cache pool is full. Retract requests.`, you have crossed into KV cache starvation (Rule 3 of the main skill); back off `max(cuda-graph-bs)` or raise `mem-fraction-static`.
+- `gen throughput` has plateaued at the cluster's peak. This is the value you are optimizing for. The plateau, not the rise, is the answer.
+- `#queue-req` is in the 100–2000 range. The scheduler is the buffer between client and server, not the bottleneck.
+
+## Parameter choices
+
+### Concurrency alignment (Rule 1)
+
+```text
+max-running-requests  ==  max-concurrency  ==  num-prompts  ==  max(cuda-graph-bs) * dp-size
+```
+
+For 50 ms TPOT, the right-hand side is the largest `bs` the cluster can hold without triggering Rule 3 (KV cache starvation) or OOM. To find it:
+
+1. Start from the [Best Practice](/docs/hardware-platforms/ascend-npus/best_practice) configuration for your model — typically the 50 ms TPOT case for your model already exists.
+2. Run the pressure test with `max-concurrency == num-prompts == max-running-requests`.
+3. Read `gen throughput` from the `bench_serving` summary.
+4. If `Mean TPOT < 45 ms` and `gen throughput` is still climbing, extend `max(cuda-graph-bs)` and re-run.
+5. If `Mean TPOT > 55 ms` and `gen throughput` has plateaued or dropped, drop the largest entry from `max(cuda-graph-bs)` and re-run.
+6. If you see `KV cache pool is full. Retract requests.` more than once per minute, back off `max(cuda-graph-bs)` and re-run.
+
+For Qwen3-Next-80B-A3B-Instruct W8A8 on 2 Atlas 800I A3 nodes, the result is `--cuda-graph-bs 1 2 3 4 5 6 7 8 10 12 14 16 18 20 22 24 26 28 30 32 40 44 48 52 56 60 64 72 80 88 96 104 112 120 128 136 144 150` with `dp-size 2`, giving `max-running-requests = max-concurrency = num-prompts = 300`.
+
+### mem-fraction-static (Rule 2)
+
+At 50 ms TPOT the KV cache is the throughput lever, and you want as much of it as possible. Push `mem-fraction-static` to the OOM boundary, then step back by `0.01` or `0.02`.
+
+The trade-off:
+
+- More `mem-fraction-static` → more KV cache → larger steady-state `bs` → higher throughput.
+- Less `mem-fraction-static` → more HBM for MoE expert weights and CUDA graph buffers → fewer OOMs at large `bs`.
+
+For a 80B-class MoE model on Atlas 800I A3, `0.75` to `0.80` is typical. For a dense 30B model, `0.85` to `0.87` is common. The best practice files in this directory are a good starting point; tune from there.
+
+### dp-size
+
+At 50 ms TPOT you can afford more DP than at 20 ms because the per-rank TPOT cost of DP is small relative to your 50 ms budget. For Atlas 800I A3 with 80B-class MoE, `dp-size 2` on 2 nodes is the common setting. Going to `dp-size 4` on 4 nodes is possible but each user's TPOT crosses 50 ms; only do this if the SLO allows it.
+
+### Resource limit diagnosis
+
+The user instruction to this skill is: "at the resource limit throughput degrades". On Ascend NPU at 50 ms TPOT this limit shows up as:
+
+- HBM bandwidth saturation — `gen throughput` plateaus
+- MoE dispatch saturation — expert dispatch/combine collectives start to take more than the per-step budget
+- KV cache exhaustion — `token usage` is at `1.0` and retracts dominate the step
+- HCCL saturation — DP collectives serialize with compute, so the per-step time grows faster than the per-step work
+
+When you see `gen throughput` plateau or start to fall as you extend `max(cuda-graph-bs)`, you have found the resource limit for 50 ms TPOT. This is not a failure — it is the answer. Record it.
+
+If `gen throughput` is still climbing and you want more, the right next step is usually one of:
+
+- Add another node and grow `dp-size` (if the model is small enough to share across more nodes).
+- Switch from W8A8 to BF16 if the model supports it and the model weights fit.
+- Enable a more aggressive speculative decoding policy.
+
+These are scenario changes, not parameter tunings, and are out of scope for this skill.
+
+## Example launch (Qwen3-Next-80B-A3B-Instruct, 50 ms TPOT)
+
+Adapted from [Qwen3-Next-80B-A3B-Instruct Best Practice](/docs/hardware-platforms/ascend-npus/best_practice/qwen3_next_80b_a3b_instruct). The full environment variables and speculative decoding flags match the best practice file.
+
+```bash Command
+python3 -m sglang.launch_server \
+    --model-path $MODEL_PATH \
+    --host 127.0.0.1 --port 6688 \
+    --trust-remote-code \
+    --attention-backend ascend \
+    --device npu \
+    --quantization modelslim \
+    --page-size 128 \
+    --tp-size 4 \
+    --watchdog-timeout 9000 \
+    --mem-fraction-static 0.75 \
+    --disable-radix-cache \
+    --max-prefill-tokens 14080 \
+    --context-length 26384 \
+    --chunked-prefill-size -1 \
+    --max-running-requests 300 \
+    --mamba-ssm-dtype bfloat16 \
+    --speculative-algorithm NEXTN \
+    --speculative-num-steps 3 \
+    --speculative-eagle-topk 1 \
+    --speculative-num-draft-tokens 4 \
+    --speculative-draft-model-quantization unquant \
+    --speculative-draft-model-path $DRAFT_MODEL_PATH \
+    --dp-size 2 \
+    --enable-dp-attention \
+    --enable-dp-lm-head \
+    --moe-a2a-backend deepep \
+    --deepep-mode auto \
+    --cuda-graph-bs 1 2 3 4 5 6 7 8 10 12 14 16 18 20 22 24 26 28 30 32 40 44 48 52 56 60 64 72 80 88 96 104 112 120 128 136 144 150
+```
+
+The benchmark command keeps the four-way equality:
+
+```bash Command
+python -m sglang.bench_serving \
+    --dataset-name random \
+    --backend sglang \
+    --host 127.0.0.1 \
+    --port 6688 \
+    --max-concurrency 300 \
+    --random-input-len 3500 \
+    --random-output-len 1500 \
+    --num-prompts 300 \
+    --random-range-ratio 1
+```
+
+## Common mistakes
+
+- **Setting `max-concurrency` larger than `max-running-requests`.** The server caps concurrency at `max-running-requests`. The extra client concurrency is wasted.
+- **Setting `num-prompts` much larger than `max-concurrency`.** At 50 ms TPOT, the workload is request-bound. `num-prompts` should be a small multiple of `max-concurrency` (for example `1x` to `4x`) to keep the queue healthy without skewing the steady-state measurement.
+- **Pushing `mem-fraction-static` past the OOM boundary.** OOMs at warmup are recoverable. OOMs mid-decode under load are not — the server has to restart. Always step back from the boundary.
+- **Treating `gen throughput` plateau as a bug.** It is the answer. The plateau is the cluster's peak decode throughput at 50 ms TPOT.
+- **Continuing to extend `max(cuda-graph-bs)` past the plateau.** This raises TPOT past 50 ms and can trigger KV cache starvation. Drop the largest entry instead.

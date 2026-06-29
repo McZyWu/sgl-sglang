@@ -1,0 +1,119 @@
+---
+title: "Parameter Tuning Skill — Low Latency"
+metatags:
+  description: "Sub-skill for tuning SGLang launch parameters on Ascend NPU for low latency scenarios, targeting minimum TPOT at batch size 1."
+---
+
+<Note>
+This sub-skill is part of the [Parameter Tuning Skill](/docs/hardware-platforms/ascend-npus/best_practice/parameter_tuning_skill). Read the main skill first for the four rules (concurrency alignment, mem-fraction-static sizing, KV cache starvation diagnosis, scenario selection). This page covers the low latency scenario: minimize TPOT at 1 batch.
+</Note>
+
+## Goal
+
+Minimize the time per output token (TPOT) for a single user request. The target is the smallest TPOT the cluster can deliver, measured at decode batch size 1.
+
+## Why 1 batch is the starting point
+
+At batch size 1 there is no decode-level batching, no CUDA graph batching, and no attention batching across users. The only work is the per-token forward pass for one request. This is the floor for TPOT on a given cluster.
+
+If you start at batch size 1, you are measuring the cost of the model itself, not the cost of your batch. Any deviation from this floor that you observe in production can then be attributed to batching, scheduling, or KV cache pressure.
+
+## How to read the screen output
+
+Run the pressure test with `--max-concurrency 1 --num-prompts 1` so the server never sees a second request. The relevant line is:
+
+```text Output
+Decode batch. #running-req: 1, #token: <context + generated so far>, token usage: <small>, cuda graph: True, gen throughput (token/s): <1 / TPOT * 1000>, #queue-req: 0
+```
+
+The fields you check:
+
+- `#running-req` should be `1` for the entire run. If it is higher, your client is sending more than one request.
+- `cuda graph: True` is required. If it is `False`, `--cuda-graph-bs` does not include `1`.
+- `gen throughput` divided by 1000 is roughly `1 / TPOT`. A TPOT of 8 ms corresponds to a per-request throughput of 125 tok/s, which shows up as `gen throughput` near 125.
+
+## Parameter choices
+
+### Concurrency alignment (Rule 1)
+
+```text
+max-running-requests  ==  max-concurrency  ==  num-prompts  ==  max(cuda-graph-bs) * dp-size
+```
+
+For low latency at 1 batch:
+
+```text
+max-running-requests  =  1
+max-concurrency       =  1
+num-prompts           =  1
+max(cuda-graph-bs)    =  1
+dp-size               =  1
+```
+
+Use `--cuda-graph-bs 1` so the server compiles a CUDA graph for the one batch size you actually need. Do not extend the list with larger entries. They consume CUDA graph memory and do not contribute to TPOT at 1 batch.
+
+### mem-fraction-static (Rule 2)
+
+For 1 batch the KV cache is not the bottleneck. You can lower `mem-fraction-static` to leave more HBM for activations and CUDA graph buffers, which slightly improves the tail of TPOT. The best practice files in this directory typically use `0.6` to `0.85` for low latency. Start at `0.85` and lower in `0.05` steps if your `available_gpu_mem` is well above 8 GB.
+
+If you raise `mem-fraction-static` past `0.85` for low latency, you are not buying more KV cache you can use at 1 batch — you are just shrinking the activation budget and risking OOM.
+
+### dp-size trade-off
+
+DP does not help low latency. When you enable DP attention (`--enable-dp-attention --enable-dp-lm-head`), the decode step becomes a collective across DP ranks, and TPOT rises. The benefit of DP at low latency is that you can serve `dp-size` independent users at 1 batch each, but each user's TPOT is higher.
+
+Rule of thumb:
+
+- If you only care about the TPOT floor of one user, keep `dp-size 1`.
+- If you care about serving `N` users in parallel at 1 batch each, set `dp-size N` and `--max-running-requests N`, but expect each user's TPOT to grow with `N`.
+
+### Example launch (Qwen3-Next-80B-A3B-Instruct, low latency)
+
+This is the 20 ms TPOT case from [Qwen3-Next-80B-A3B-Instruct Best Practice](/docs/hardware-platforms/ascend-npus/best_practice/qwen3_next_80b_a3b_instruct):
+
+```bash Command
+python3 -m sglang.launch_server \
+    --model-path $MODEL_PATH \
+    --host 127.0.0.1 --port 6688 \
+    --trust-remote-code \
+    --attention-backend ascend \
+    --device npu \
+    --quantization modelslim \
+    --page-size 128 \
+    --tp-size 2 \
+    --watchdog-timeout 9000 \
+    --mem-fraction-static 0.85 \
+    --disable-radix-cache \
+    --max-prefill-tokens 28672 \
+    --context-length 26384 \
+    --max-total-tokens 122304 \
+    --speculative-algorithm NEXTN \
+    --speculative-num-steps 3 \
+    --speculative-eagle-topk 1 \
+    --speculative-num-draft-tokens 4 \
+    --speculative-draft-model-quantization unquant \
+    --chunked-prefill-size -1 \
+    --max-running-requests 2 \
+    --cuda-graph-bs 2 \
+    --mamba-ssm-dtype bfloat16 \
+    --speculative-draft-model-path $DRAFT_MODEL_PATH
+```
+
+Note: this case uses `--max-running-requests 2` and `--cuda-graph-bs 2` because the NEXTN speculative decoder is not active at batch 1. For a strict 1-batch TPOT floor without speculative decoding, set `--max-running-requests 1` and `--cuda-graph-bs 1`.
+
+## Common mistakes
+
+- **Setting `max-running-requests` above 1 for a 1-batch test.** The server will admit the second request as soon as it arrives, and your measured TPOT is no longer the floor.
+- **Including large entries in `--cuda-graph-bs`.** Each entry costs CUDA graph memory. At low latency you only need `1` (or `2` if speculative decoding is on).
+- **Treating DP as free.** DP is a throughput feature. It raises TPOT. If your SLO is a TPOT number, do not enable DP.
+- **Raising `mem-fraction-static` to "give the model more room".** At 1 batch the model is not the bottleneck. Use the freed HBM to lower the activation footprint and stabilize the tail.
+
+## How to confirm you are in low latency regime
+
+After the run, check the `bench_serving` summary:
+
+- `Mean TPOT (ms)` is the headline number. It should match the value quoted in the best practice file.
+- `Concurrency` should be `1.0`. If it is higher, you are not in the 1-batch regime.
+- `Mean E2E Latency (ms)` is `TTFT + TPOT * (output tokens - 1)`. For 1.5K output tokens at 20 ms TPOT, expect about 30 s plus TTFT.
+
+If the measured `Mean TPOT` is more than 20% above the best practice value, your cluster is not delivering the same throughput. Re-check `mem-fraction-static` against Rule 2 and the OOM boundary before changing the batch size.
