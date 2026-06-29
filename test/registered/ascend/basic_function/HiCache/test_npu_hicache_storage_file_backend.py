@@ -17,8 +17,10 @@ Key observation points ported from the GPU test:
 NPU adaptation notes (see report for the full rationale):
   * `--attention-backend ascend` and `--disable-cuda-graph` are mandatory
     on NPU and are added to every server launch.
-  * `--mem-fraction-static` is bumped from 0.6 to 0.8 to follow the NPU
-    HiCache convention used by the existing `test_npu_hicache.py`.
+  * `--mem-fraction-static` stays at 0.6 (same as GPU). The earlier NPU
+    draft used 0.8 to follow `test_npu_hicache.py`, but with the 8B model
+    (16GB weights, tp=2 => 8GB/card) 0.8 would OOM; 0.6 leaves enough
+    room for weights + overhead and matches the GPU original.
   * `--page-size` is forced to 128 because NPU only supports 128
     (GPU used 64). The `cached_tokens > 700` threshold is independent of
     page size, so the assertion still holds.
@@ -30,10 +32,11 @@ NPU adaptation notes (see report for the full rationale):
     but skipped in CI (it exercises the same code path as
     `PageFirstDirectIO` on NPU).
   * Models are taken from `test_ascend_utils.py`:
-      - base / page-first / accuracy variants: LLAMA_3_2_1B_INSTRUCT
-        (matches the existing `test_npu_hicache.py` choice; 1B model boots
-        fast and leaves enough Host-Tier room for the 768-token backup
-        test).
+      - base / page-first / accuracy variants: LLAMA_3_1_8B_INSTRUCT
+        (same model family as the GPU test's Llama-3.1-8B-Instruct; the
+        earlier NPU draft used 1B to follow `test_npu_hicache.py`, but was
+        switched back to 8B to stay aligned with the GPU original at the
+        cost of ~30s slower boot per server launch).
       - MLA variant: DEEPSEEK_CODER_V2_LITE (the NPU-available MLA model
         closest to GPU's DeepSeek-Coder-V2-Lite-Instruct).
   * `--hicache-storage-prefetch-policy wait_complete` and
@@ -61,7 +64,7 @@ from sglang.benchmark.utils import get_tokenizer
 from sglang.srt.utils import kill_process_tree
 from sglang.test.ascend.test_ascend_utils import (
     DEEPSEEK_CODER_V2_LITE_WEIGHTS_PATH,
-    LLAMA_3_2_1B_INSTRUCT_WEIGHTS_PATH,
+    LLAMA_3_1_8B_INSTRUCT_WEIGHTS_PATH,
 )
 from sglang.test.ci.ci_register import register_npu_ci
 from sglang.test.run_eval import run_eval
@@ -102,7 +105,7 @@ class HiCacheStorageBaseMixin:
 
     @classmethod
     def _get_model_name(cls) -> str:
-        return LLAMA_3_2_1B_INSTRUCT_WEIGHTS_PATH
+        return LLAMA_3_1_8B_INSTRUCT_WEIGHTS_PATH
 
     @classmethod
     def _get_extra_server_args(cls) -> list:
@@ -117,7 +120,7 @@ class HiCacheStorageBaseMixin:
         common_args = [
             "--trust-remote-code",
             "--mem-fraction-static",
-            "0.8",
+            "0.6",
             "--attention-backend",
             "ascend",
             "--disable-cuda-graph",
@@ -272,6 +275,8 @@ class TestHiCacheStoragePageFirstDirectIO(HiCacheStorageBaseMixin, CustomTestCas
             "page_first_direct",
             "--hicache-io-backend",
             "direct",
+            "--tp-size",
+            "2",
         ]
 
 
@@ -294,6 +299,8 @@ class TestHiCacheStoragePageFirstLayout(HiCacheStorageBaseMixin, CustomTestCase)
             "page_first",
             "--hicache-io-backend",
             "direct",
+            "--tp-size",
+            "2",
         ]
 
 

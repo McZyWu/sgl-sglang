@@ -24,10 +24,18 @@ Key observation points ported from the GPU test:
 NPU adaptation notes (see report for the full rationale):
   * `--attention-backend ascend` and `--disable-cuda-graph` are mandatory
     on NPU and are added to every server launch.
-  * `--mem-fraction-static` is bumped from 0.6 to 0.8 (NPU convention).
+  * `--mem-fraction-static` stays at 0.6 (same as GPU). The earlier NPU
+    draft used 0.8 (NPU convention), but with the 8B model 0.8 would OOM;
+    0.6 matches the GPU original and leaves room for 8B weights (tp=2).
+  * `--tp-size 2` is added so the 8B model fits on the 4-card runner
+    (GPU original used DEFAULT_MODEL_NAME_FOR_TEST with tp=1; we need
+    tp=2 for 8B on NPU).
   * `--page-size` is forced to 128 (NPU only supports 128).
-  * Model: LLAMA_3_2_1B_INSTRUCT (same as `test_npu_hicache.py`, light
-    enough that we can launch / kill it twice within the test).
+  * Model: LLAMA_3_1_8B_INSTRUCT (same family as the GPU test's
+    Llama-3.1-8B-Instruct; the earlier NPU draft used 1B to follow
+    `test_npu_hicache.py`, switched back to 8B to stay aligned with the
+    GPU original). The test launches/kills the server twice; 8B is
+    heavier but still fits the suite time budget.
   * `find_available_port` and `popen_launch_server` are reused directly
     from `sglang.test.test_utils` - no NPU-specific helper is needed.
   * The HTTP request / response contract is identical to the GPU test:
@@ -46,7 +54,7 @@ import requests
 
 from sglang.srt.utils import kill_process_tree
 from sglang.test.ascend.test_ascend_utils import (
-    LLAMA_3_2_1B_INSTRUCT_WEIGHTS_PATH,
+    LLAMA_3_1_8B_INSTRUCT_WEIGHTS_PATH,
 )
 from sglang.test.ci.ci_register import register_npu_ci
 from sglang.test.test_utils import (
@@ -76,7 +84,7 @@ def _common_hicache_args(port: int) -> list:
     return [
         "--trust-remote-code",
         "--mem-fraction-static",
-        "0.8",
+        "0.6",
         "--attention-backend",
         "ascend",
         "--disable-cuda-graph",
@@ -88,6 +96,8 @@ def _common_hicache_args(port: int) -> list:
         "--hicache-size",
         "100",
         "--enable-cache-report",
+        "--tp-size",
+        "2",
         "--port",
         str(port),
     ]
@@ -163,7 +173,7 @@ class TestHiCacheStorageRuntimeAttachDetach(CustomTestCase):
         port_a = find_available_port(20000)
         base_url_a = f"http://127.0.0.1:{port_a}"
         process_a = popen_launch_server(
-            LLAMA_3_2_1B_INSTRUCT_WEIGHTS_PATH,
+            LLAMA_3_1_8B_INSTRUCT_WEIGHTS_PATH,
             base_url_a,
             timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
             other_args=_common_hicache_args(port_a),
@@ -198,7 +208,7 @@ class TestHiCacheStorageRuntimeAttachDetach(CustomTestCase):
             ADMIN_API_KEY,
         ]
         process_b = popen_launch_server(
-            LLAMA_3_2_1B_INSTRUCT_WEIGHTS_PATH,
+            LLAMA_3_1_8B_INSTRUCT_WEIGHTS_PATH,
             base_url_b,
             timeout=DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
             other_args=other_args_b,
