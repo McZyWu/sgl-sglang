@@ -277,5 +277,3 @@ sgl-kernel/csrc/**/*_musa/
 *.npz
 artifacts/
 .claude/scheduled_tasks.lock
-.trae/skills/ascend-e2e-tuning/SKILL.md
-.trae/skills/generate-ascend-testcase/SKILL.md
