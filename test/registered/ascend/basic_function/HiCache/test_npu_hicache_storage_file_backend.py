@@ -12,7 +12,6 @@ import requests
 from sglang.benchmark.utils import get_tokenizer
 from sglang.srt.utils import kill_process_tree
 from sglang.test.ascend.test_ascend_utils import (
-    DEEPSEEK_CODER_V2_LITE_WEIGHTS_PATH,
     LLAMA_3_1_8B_INSTRUCT_WEIGHTS_PATH,
 )
 from sglang.test.ci.ci_register import register_npu_ci
@@ -33,10 +32,6 @@ register_npu_ci(
 # Force deterministic inference so that the cached_tokens assertion is stable
 # across runs (mirrors the GPU test's SGLANG_ENABLE_DETERMINISTIC_INFERENCE=1).
 os.environ.setdefault("SGLANG_ENABLE_DETERMINISTIC_INFERENCE", "1")
-
-
-def _is_in_ci() -> bool:
-    return os.environ.get("SGLANG_IS_IN_CI") == "true"
 
 
 class HiCacheStorageBaseMixin:
@@ -207,64 +202,7 @@ class HiCacheStorageBaseMixin:
 
 
 class TestHiCacheStoragePageFirstDirectIO(HiCacheStorageBaseMixin, CustomTestCase):
-    """Variant: page_first_direct mem-layout + direct IO backend (single NPU).
-
-    This is the only variant that runs in CI; the other three variants below
-    are skipped in CI to avoid redundant coverage (see their docstrings).
-    """
-
-    @classmethod
-    def _get_extra_server_args(cls) -> list:
-        return [
-            "--hicache-mem-layout",
-            "page_first_direct",
-            "--hicache-io-backend",
-            "direct",
-            "--tp-size",
-            "2",
-        ]
-
-
-@unittest.skipIf(
-    _is_in_ci(), "Skipped in CI: page_first is remapped to page_first_direct on NPU"
-)
-class TestHiCacheStoragePageFirstLayout(HiCacheStorageBaseMixin, CustomTestCase):
-    """Variant: page_first mem-layout.
-
-    Skipped in CI because NPU does not support `page_first` and internally
-    remaps it to `page_first_direct`, which is already covered by
-    `TestHiCacheStoragePageFirstDirectIO`. Kept here for parity with the GPU
-    test and for manual / nightly runs.
-    """
-
-    @classmethod
-    def _get_extra_server_args(cls) -> list:
-        return [
-            "--hicache-mem-layout",
-            "page_first",
-            "--hicache-io-backend",
-            "direct",
-            "--tp-size",
-            "2",
-        ]
-
-
-@unittest.skipIf(
-    _is_in_ci(),
-    "Skipped in CI: MLA + file backend covered by test_npu_hicache_mla.py smoke",
-)
-class TestHiCacheStorageMLA(HiCacheStorageBaseMixin, CustomTestCase):
-    """Variant: MLA model + file backend (tp=2).
-
-    Uses DeepSeek-Coder-V2-Lite (the NPU-available MLA model closest to the
-    GPU test's DeepSeek-Coder-V2-Lite-Instruct). Skipped in CI to keep the
-    suite short; the MLA + HiCache combination is already smoke-tested by
-    `test_npu_hicache_mla.py`.
-    """
-
-    @classmethod
-    def _get_model_name(cls) -> str:
-        return DEEPSEEK_CODER_V2_LITE_WEIGHTS_PATH
+    """Variant: page_first_direct mem-layout + direct IO backend (single NPU)."""
 
     @classmethod
     def _get_extra_server_args(cls) -> list:
