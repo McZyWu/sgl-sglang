@@ -119,6 +119,7 @@ class TestNPUKimiK2_6_W4A8_8P_IN1024x1024_30_OUT1024_50MS(
     output_len = 1024
     random_range_ratio = 1
     warmup_requests = 16
+    seed = 1
     tpot = 50
     output_token_throughput = 2635.24
 
