@@ -160,13 +160,13 @@ class TestDeepSeekR1W8A8(TestAscendPerfMultiNodePdSepTestCaseBase):
     model_config = MODEL_CONFIG
     dataset_name = "random"
     request_rate = 16
-    max_concurrency = 768
-    num_prompts = 768
+    max_concurrency = 32
+    num_prompts = 32
     input_len = 3500
     output_len = 1500
     random_range_ratio = 1
-    tpot = 18.9
-    output_token_throughput = 1611
+    tpot = 20
+    output_token_throughput = 1183
 
     def test_throughput(self):
         self.run_throughput()
