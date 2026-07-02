@@ -24,6 +24,7 @@ class TestDeepseekV32IndexTopkPattern(GSM8KAscendMixin, CustomTestCase):
         '{"index_topk_pattern": "FFSFSSSFSSFFFSSSFFFSFSSSSSSFFSFFSFFSSFFFFFFSFFFFFSFFSSSSSSFSF"}',
     ]
 
+
 class TestDeepseekV32IndexFreq(GSM8KAscendMixin, CustomTestCase):
     model = DEEPSEEK_V3_2_W8A8_WEIGHTS_PATH
     accuracy = 0.935
