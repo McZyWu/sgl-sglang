@@ -173,6 +173,7 @@ class TestNPUKimiK2_6_W4A8_1P1D_16p_In64k_Out1k5_Prefix90_100ms(
     output_len = 1500
     random_range_ratio = 1
     ttft = 3000
+    pop_sglang_is_in_ci_for_gsp = True
     tpot = 100
     output_token_throughput = 52.56
 
