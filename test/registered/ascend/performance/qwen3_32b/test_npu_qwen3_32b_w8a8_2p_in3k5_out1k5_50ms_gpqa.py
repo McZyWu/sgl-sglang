@@ -112,7 +112,6 @@ class TestQwen32B(TestAscendPerformanceTestCaseBase):
 
 
 class TestQwen32B_mmlupro(TestAscendAccuracyTestCaseBase):
-    seed = 1
     model = QWEN3_32B_W8A8_MODEL_PATH
     envs = QWEN3_32B_ENVS
     other_args = QWEN3_32B_OTHER_ARGS
