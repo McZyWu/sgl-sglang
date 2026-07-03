@@ -23,8 +23,8 @@ register_npu_ci(est_time=600, suite="nightly-4-npu-a3", nightly=True)
 # Video processing config matching the reference command
 _MM_PROCESS_CONFIG = json.dumps({
     "video": {
-        "min_pixels": 320x240,
-        "max_pixels": 1280x720,
+        "min_pixels": "320x240",
+        "max_pixels": "1280x720",
         "resized_height": 448,
         "resized_width": 448,
         "fps": 2,
