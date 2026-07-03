@@ -129,9 +129,6 @@ class TestWeightLoaderDropCache(CustomTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text", resp.json())
 
-        # flush_cache triggers fadvise to release page cache
-        requests.post(self.base_url + "/flush_cache", timeout=10)
-
         weight_dir = QWEN3_8B_WEIGHTS_PATH
         safetensor_files = sorted(
             f for f in os.listdir(weight_dir) if f.endswith(".safetensors")
@@ -193,9 +190,6 @@ class TestWeightLoaderDropCacheOff(CustomTestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text", resp.json())
-
-        # flush_cache triggers fadvise to release page cache
-        requests.post(self.base_url + "/flush_cache", timeout=10)
 
         weight_dir = QWEN3_8B_WEIGHTS_PATH
         safetensor_files = sorted(

@@ -1,5 +1,5 @@
 name: Single Test (NPU)
-# test round 15: mm-process-config + mm-enable-dp-encoder
+# test round 16: weight-loader-drop-cache-after-load B090 image
 
 on:
   pull_request:
@@ -15,9 +15,9 @@ concurrency:
 jobs:
   single-node-poc:
     name: single-node-poc
-    runs-on: linux-aarch64-a3-4
+    runs-on: linux-aarch64-a3-2
     container:
-      image: swr.cn-southwest-2.myhuaweicloud.com/base_image/dockerhub/lmsysorg/sglang:cann9.0.0-a3-20260622
+      image: swr.cn-southwest-2.myhuaweicloud.com/base_image/dockerhub/lmsysorg/sglang:cann9.0.0-a3-B090
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,6 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install tabulate
+          apt-get update && apt-get install -y vmtouch
 
       - name: Run test
         timeout-minutes: 120
@@ -44,7 +45,7 @@ jobs:
 
           # Test cases
           test_cases=(
-            "test/registered/ascend/basic_function/parameter/test_npu_mm_process_config.py"
+            "test/registered/ascend/basic_function/parameter/test_npu_weight_loader_drop_cache.py"
           )
 
           for test_case in "${test_cases[@]}"; do
