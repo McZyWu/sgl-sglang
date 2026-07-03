@@ -76,8 +76,7 @@ def _print_vmtouch(safetensor_files, weight_dir, label):
 
 class TestWeightLoaderDropCache(CustomTestCase):
     """--weight-loader-drop-cache-after-load — verify page cache after
-    drop-cache.  vmtouch runs AFTER server shutdown so posix_fadvise
-    can actually release pages.
+    drop-cache.  vmtouch runs while server is still alive.
 
     [Test Category] Parameter
     [Test Target] --weight-loader-drop-cache-after-load
@@ -109,18 +108,14 @@ class TestWeightLoaderDropCache(CustomTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        # Process already killed in test method; safe to call again
-        try:
-            kill_process_tree(cls.process.pid)
-        except Exception:
-            pass
+        kill_process_tree(cls.process.pid)
         cls.out_file.close()
         cls.err_file.close()
         os.unlink(cls.out_file.name)
         os.unlink(cls.err_file.name)
 
     def test_drop_cache_after_load(self):
-        """Launch with drop-cache-after-load, flush_cache, then check vmtouch."""
+        """Launch with drop-cache-after-load, then check vmtouch while alive."""
         resp = requests.get(self.base_url + "/health", timeout=30)
         self.assertEqual(resp.status_code, 200)
 
@@ -133,10 +128,6 @@ class TestWeightLoaderDropCache(CustomTestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text", resp.json())
-
-        # Flush cache to release radix tree pages, then shutdown
-        requests.post(self.base_url + "/flush_cache", timeout=10)
-        kill_process_tree(self.process.pid)
 
         weight_dir = QWEN3_8B_WEIGHTS_PATH
         safetensor_files = sorted(
@@ -179,17 +170,14 @@ class TestWeightLoaderDropCacheOff(CustomTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        try:
-            kill_process_tree(cls.process.pid)
-        except Exception:
-            pass
+        kill_process_tree(cls.process.pid)
         cls.out_file.close()
         cls.err_file.close()
         os.unlink(cls.out_file.name)
         os.unlink(cls.err_file.name)
 
     def test_drop_cache_off_baseline(self):
-        """Launch without drop-cache, flush_cache, then check vmtouch."""
+        """Launch without drop-cache, then check vmtouch while alive."""
         resp = requests.get(self.base_url + "/health", timeout=30)
         self.assertEqual(resp.status_code, 200)
 
@@ -202,10 +190,6 @@ class TestWeightLoaderDropCacheOff(CustomTestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text", resp.json())
-
-        # Flush cache to release radix tree pages, then shutdown
-        requests.post(self.base_url + "/flush_cache", timeout=10)
-        kill_process_tree(self.process.pid)
 
         weight_dir = QWEN3_8B_WEIGHTS_PATH
         safetensor_files = sorted(
