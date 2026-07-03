@@ -25,11 +25,11 @@ _MM_PROCESS_CONFIG = json.dumps({
     "video": {
         "min_pixels": "320x240",
         "max_pixels": "1280x720",
-        "resized_height": "448",
-        "resized_width": "448",
-        "fps": "2",
-        "min_frames": "4",
-        "max_frames": "64",
+        "resized_height": 448,
+        "resized_width": 448,
+        "fps": 2,
+        "min_frames": 4,
+        "max_frames": 64,
     }
 })
 
