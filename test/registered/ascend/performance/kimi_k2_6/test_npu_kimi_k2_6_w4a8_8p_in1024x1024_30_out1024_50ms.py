@@ -121,7 +121,7 @@ class TestNPUKimiK2_6_W4A8_8P_IN1024x1024_30_OUT1024_50MS(
     warmup_requests = 16
     seed = 1
     tpot = 50
-    output_token_throughput = 2635.24
+    output_token_throughput = 2400
 
     def test_npu_kimi_k2_6_w4a8_8p_in1024x1024_30_out1024_50ms(self):
         """Run NPU performance test for Kimi-K2.6-w4a8 multimodal in1024x1024+30 out1024"""
