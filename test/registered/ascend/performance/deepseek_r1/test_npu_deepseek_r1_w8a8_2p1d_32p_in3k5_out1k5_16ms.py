@@ -154,6 +154,7 @@ MODEL_CONFIG = {
 }
 
 
+
 class TestDeepSeekR1W8A8(TestAscendPerfMultiNodePdSepTestCaseBase):
     benchmark_tool = BENCHMARK_TOOL_DEFAULT
     dataset_type = AISBENCHMARK_DATASET_DEFAULT
