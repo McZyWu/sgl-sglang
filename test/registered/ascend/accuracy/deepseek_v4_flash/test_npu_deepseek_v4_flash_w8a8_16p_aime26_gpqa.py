@@ -82,7 +82,7 @@ DEEPSEEK_V4_FLASH_W8A8_16P_OTHER_ARGS = [
     "--deepep-mode",
     "auto",
     "--quantization",
-    "compressed-tensors",
+    "modelslim",
     "--enable-dp-lm-head",
     "--kv-cache-dtype",
     "auto",
