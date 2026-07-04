@@ -40,7 +40,7 @@ MODEL_CONFIG = {
         "SGLANG_USE_FIA_NZ": "1",
         "SGLANG_ENABLE_OVERLAP_PLAN_STREAM": "1",
         "SGLANG_ENABLE_SPEC_V2": "1",
-        "HCCL_BUFFSIZE": "650",
+        "HCCL_BUFFSIZE": "600",
         "SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK": "12",
         "TASK_QUEUE_ENABLE": "1",
         "SGLANG_SCHEDULER_SKIP_ALL_GATHER": "1",
@@ -147,6 +147,10 @@ MODEL_CONFIG = {
         "deepseek-r1",
         "--tool-call-parser",
         "deepseekv3",
+        "--disaggregation-transfer-backend ascend",
+        "--trust-remote-code",
+        "--attention-backend","ascend",
+        "--device",'npu"
     ],
     "router_args": [
         "--mini-lb",
