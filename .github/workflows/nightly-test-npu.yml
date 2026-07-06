@@ -335,6 +335,19 @@ jobs:
 
       - name: Generate results table
         run: |
+          status_emoji() {
+            case "$1" in
+              pass)   echo "✅" ;;
+              fail)   echo "❌" ;;
+              *)      echo "❓" ;;
+            esac
+          }
+
+          single_result_a2="${{ needs.nightly-poc-single-node-a2-tests.result }}"
+          single_result="${{ needs.nightly-poc-single-node-tests.result }}"
+          multi_result="${{ needs.nightly-poc-multi-node-tests.result }}"
+          mix_result="${{ needs.nightly-poc-multi-node-mix-tests.result }}"
+
           group_icon() {
             case "$1" in
               success)   echo "✅" ;;
@@ -344,11 +357,6 @@ jobs:
               *)         echo "❓" ;;
             esac
           }
-
-          single_result_a2="${{ needs.nightly-poc-single-node-a2-tests.result }}"
-          single_result="${{ needs.nightly-poc-single-node-tests.result }}"
-          multi_result="${{ needs.nightly-poc-multi-node-tests.result }}"
-          mix_result="${{ needs.nightly-poc-multi-node-mix-tests.result }}"
 
           echo "## Nightly Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
