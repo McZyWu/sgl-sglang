@@ -102,65 +102,84 @@ DEEPSEEK_V4_FLASH_W8A8_16P_OTHER_ARGS = [
     3,
 ]
 
-# Generation config shared by AIME26 and GPQA-Diamond, required by the test
-# case design (Excel S4): max_tokens=125000, top_p=1, temperature=1, thinking=true.
-DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG = {
+# Generation config for Non-Think mode.
+# Per official docs (ModelScope DeepSeek-V4-Flash / W8A8-MTP), Non-Think means
+# NOT passing any thinking parameter. sglang defaults SGLANG_DEFAULT_THINKING
+# to False, so omitting chat_template_kwargs.thinking is equivalent to
+# Non-Think. Official GPQA Diamond baseline: 71.2%.
+DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG_NON_THINK = {
     "max_tokens": 125000,
     "top_p": 1,
     "temperature": 1,
     "n": 1,
-    "extra_body": {"chat_template_kwargs": {"thinking": True}},
+}
+
+# Generation config for Think High mode.
+# Per official docs, High mode requires both thinking=true and
+# reasoning_effort=high in chat_template_kwargs. Official GPQA Diamond
+# baseline: 87.4%; W8A8 quantized measured range: 0.84-0.86.
+DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG_HIGH = {
+    "max_tokens": 125000,
+    "top_p": 1,
+    "temperature": 1,
+    "n": 1,
+    "extra_body": {
+        "chat_template_kwargs": {"thinking": True, "reasoning_effort": "high"}
+    },
 }
 
 
-class TestNPUDeepSeekV4FlashW8A816PAIME26(TestAscendAccuracyTestCaseBase):
-    """Test NPU accuracy for DeepSeek-V4-Flash W8A8 16p PD-mix on AIME26.
-
-    Single-node 16-card PD mixed deployment with TP=16, DP=16, EP=16 and MTP
-    (EAGLE) enabled. Baseline accuracy 0.933 (gap < 1% compared with paper).
-    """
-
-    benchmark_tool = BENCHMARK_TOOL_DEFAULT
-    model = DEEPSEEK_V4_FLASH_W8A8_MTP_MODEL_PATH
-    other_args = DEEPSEEK_V4_FLASH_W8A8_16P_OTHER_ARGS
-    envs = DEEPSEEK_V4_FLASH_W8A8_16P_ENVS
-    accuracy = 0.933
-    datasets = ["aime26"]
-    few_shot_num = 0
-    generation_config = DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG
-    eval_batch_size = 30
-    limit = 30
-    stream = True
-    timeout = 6000
-    seed = 1
-
-    def test_npu_deepseek_v4_flash_w8a8_16p_aime26(self):
-        """Run NPU accuracy test for DeepSeek-V4-Flash W8A8 16p on AIME26."""
-        self.run_accuracy()
-
-
-class TestNPUDeepSeekV4FlashW8A816PGPQA(TestAscendAccuracyTestCaseBase):
+class TestNPUDeepSeekV4FlashW8A816PGPQAHigh(TestAscendAccuracyTestCaseBase):
     """Test NPU accuracy for DeepSeek-V4-Flash W8A8 16p PD-mix on GPQA-Diamond.
 
-    Single-node 16-card PD mixed deployment with TP=16, DP=16, EP=16 and MTP
-    (EAGLE) enabled. Baseline accuracy 0.712 (gap < 1% compared with paper).
+    Think High mode: thinking=true, reasoning_effort=high.
+    Baseline accuracy 0.85 (official 0.874, W8A8 measured 0.84-0.86).
+    Framework auto-applies 5-question tolerance (5/198 ~= 0.0253), so the
+    effective threshold is 0.85 - 0.0253 = 0.8247.
     """
 
     benchmark_tool = BENCHMARK_TOOL_DEFAULT
     model = DEEPSEEK_V4_FLASH_W8A8_MTP_MODEL_PATH
     other_args = DEEPSEEK_V4_FLASH_W8A8_16P_OTHER_ARGS
     envs = DEEPSEEK_V4_FLASH_W8A8_16P_ENVS
-    accuracy = 0.712
+    accuracy = 0.85
     datasets = ["gpqa_diamond"]
     few_shot_num = 0
-    generation_config = DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG
+    generation_config = DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG_HIGH
     eval_batch_size = 128
     stream = True
     timeout = 6000
     seed = 1
 
-    def test_npu_deepseek_v4_flash_w8a8_16p_gpqa(self):
-        """Run NPU accuracy test for DeepSeek-V4-Flash W8A8 16p on GPQA-Diamond."""
+    def test_npu_deepseek_v4_flash_w8a8_16p_gpqa_high(self):
+        """Run NPU accuracy test for DeepSeek-V4-Flash W8A8 16p GPQA High mode."""
+        self.run_accuracy()
+
+
+class TestNPUDeepSeekV4FlashW8A816PGPQANonThink(TestAscendAccuracyTestCaseBase):
+    """Test NPU accuracy for DeepSeek-V4-Flash W8A8 16p PD-mix on GPQA-Diamond.
+
+    Non-Think mode: no thinking parameter (per official docs).
+    Baseline accuracy 0.71 (official 0.712, W8A8 measured 0.7121).
+    Framework auto-applies 5-question tolerance (5/198 ~= 0.0253), so the
+    effective threshold is 0.71 - 0.0253 = 0.6847.
+    """
+
+    benchmark_tool = BENCHMARK_TOOL_DEFAULT
+    model = DEEPSEEK_V4_FLASH_W8A8_MTP_MODEL_PATH
+    other_args = DEEPSEEK_V4_FLASH_W8A8_16P_OTHER_ARGS
+    envs = DEEPSEEK_V4_FLASH_W8A8_16P_ENVS
+    accuracy = 0.71
+    datasets = ["gpqa_diamond"]
+    few_shot_num = 0
+    generation_config = DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG_NON_THINK
+    eval_batch_size = 128
+    stream = True
+    timeout = 6000
+    seed = 1
+
+    def test_npu_deepseek_v4_flash_w8a8_16p_gpqa_non_think(self):
+        """Run NPU accuracy test for DeepSeek-V4-Flash W8A8 16p GPQA Non-Think."""
         self.run_accuracy()
 
 

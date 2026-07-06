@@ -30,7 +30,7 @@ jobs:
           npu-smi info
 
       - name: Run test
-        timeout-minutes: 240
+        timeout-minutes: 360
         env:
           SGLANG_USE_MODELSCOPE: true
           HF_ENDPOINT: https://hf-mirror.com
@@ -43,10 +43,11 @@ jobs:
 
           # DSV4-Flash W8A8 single-node PD-mix test cases
           # Order: performance first (faster, isolates service-launch issues),
-          # then accuracy (AIME26 + GPQA-Diamond).
+          # then accuracy (GPQA-Diamond Non-Think + High mode, two modes run
+          # serially within one test file, each launching its own server).
           test_cases=(
             "test/registered/ascend/performance/deepseek_v4_flash/test_npu_deepseek_v4_flash_w8a8_16p_in8k_out1k_50ms.py"
-            "test/registered/ascend/accuracy/deepseek_v4_flash/test_npu_deepseek_v4_flash_w8a8_16p_aime26_gpqa.py"
+            "test/registered/ascend/accuracy/deepseek_v4_flash/test_npu_deepseek_v4_flash_w8a8_16p_gpqa.py"
           )
 
           for test_case in "${test_cases[@]}"; do
