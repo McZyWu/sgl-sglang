@@ -85,6 +85,7 @@ EXAONE_3_5_7_8B_INSTRUCT_WEIGHTS_PATH = os.path.join(
 GEMMA_3_4B_IT_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "google/gemma-3-4b-it")
 GLM_4_9B_CHAT_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "ZhipuAI/glm-4-9b-chat")
 GLM_5_1_W4A8_MODEL_PATH = os.path.join(MODEL_WEIGHTS_DIR, "Eco-Tech/GLM-5.1-w4a8")
+GPT_J_6B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "EleutherAI/gpt-j-6b")
 GPT_OSS_120B_BF16_WEIGHTS_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "eigen-ai-labs/gpt-oss-120b-bf16"
 )
@@ -105,6 +106,9 @@ KIMI_K2_THINKING_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "Kimi/Kimi-K2-Th
 KIMI_K2_5_W4A8_MODEL_PATH = os.path.join(MODEL_WEIGHTS_DIR, "Eco-Tech/Kimi-K2.5-w4a8")
 KIMI_K2_5_EAGLE3_MODEL_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "lightseekorg/kimi-k2.5-eagle3"
+)
+KIMI_LINEAR_48B_A3B_INSTRUCT_MODEL_PATH = os.path.join(
+    MODEL_WEIGHTS_DIR, "moonshotai/Kimi-Linear-48B-A3B-Instruct"
 )
 LING_LITE_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "inclusionAI/Ling-lite")
 LLAMA_2_7B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "LLM-Research/Llama-2-7B")
@@ -147,6 +151,9 @@ OLMO_2_1124_7B_INSTRUCT_WEIGHTS_PATH = os.path.join(
 )
 OLMOE_1B_7B_0924_WEIGHTS_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "allenai/OLMoE-1B-7B-0924"
+)
+ORION_14B_BASE_WEIGHTS_PATH = os.path.join(
+    MODEL_WEIGHTS_DIR, "OrionStarAI/Orion-14B-Base"
 )
 PERSIMMON_8B_CHAT_WEIGHTS_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "Howeee/persimmon-8b-chat"
@@ -214,6 +221,7 @@ STABLELM_2_1_6B_WEIGHTS_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "stabilityai/stablelm-2-1_6b"
 )
 STARCODER2_7B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "bigcode/starcoder2-7b")
+TELE_FLM_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "FLM/Tele-FLM")
 TRINITY_MINI_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "arcee-ai/Trinity-Mini")
 XVERSE_MOE_A36B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "xverse/XVERSE-MoE-A36B")
 MINIMAX_M2_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "cyankiwi/MiniMax-M2-BF16")
@@ -229,6 +237,9 @@ EAGLE3_LLAMA3_1_INSTRUCT_8B_WEIGHTS_PATH = os.path.join(
 
 # VLM model weights path
 DEEPSEEK_VL2_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "deepseek-ai/deepseek-vl2")
+ERNIE_4_5_VL_28B_A3B_PT_WEIGHTS_PATH = os.path.join(
+    MODEL_WEIGHTS_DIR, "PaddlePaddle/ERNIE-4.5-VL-28B-A3B-PT"
+)
 GLM_4_5V_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "ZhipuAI/GLM-4.5V")
 JANUS_PRO_1B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "deepseek-ai/Janus-Pro-1B")
 JANUS_PRO_7B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "deepseek-ai/Janus-Pro-7B")
@@ -275,6 +286,7 @@ QWEN3_VL_235B_A22B_INSTRUCT_WEIGHTS_PATH = os.path.join(
 QWEN2_0_5B_INSTRUCT_WEIGHTS_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "Qwen/Qwen2-0.5B-Instruct"
 )
+STEP3_VL_10B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "stepfun-ai/Step3-VL-10B")
 
 QWEN3_30B_A3B_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "Qwen/Qwen3-30B-A3B")
 QWEN3_30B_A3B_W8A8_WEIGHTS_PATH = os.path.join(
@@ -301,6 +313,15 @@ QWEN3_5_397B_W4A8_MODEL_PATH = os.path.join(
 )
 QWEN3_5_397B_W8A8_MODEL_PATH = os.path.join(
     MODEL_WEIGHTS_DIR, "Eco-Tech/Qwen3.5-397B-A17B-w8a8-mtp"
+)
+
+# DLM model weights path
+LLADA2_0_FLASH_WEIGHTS_PATH = os.path.join(
+    MODEL_WEIGHTS_DIR, "inclusionAI/LLaDA2.0-flash"
+)
+SDAR_8B_CHAT_WEIGHTS_PATH = os.path.join(MODEL_WEIGHTS_DIR, "JetLM/SDAR-8B-Chat")
+SDAR_30B_A3B_CHAT_WEIGHTS_PATH = os.path.join(
+    MODEL_WEIGHTS_DIR, "JetLM/SDAR-30B-A3B-Chat"
 )
 
 # Embedding model weights path
