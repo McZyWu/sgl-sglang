@@ -19,7 +19,8 @@ register_npu_ci(est_time=200, suite="full-2-npu-a3", nightly=True)
 
 
 class TestDeepSeekV32(CustomTestCase):
-    """Testcase: Verify that the inference accuracy of the vllm-ascend/DeepSeek-V3.2-W8A8 model on the GSM8K dataset is no less than 0.95.
+    """Testcase: Verify set --init-expert-location the inference accuracy of the  model on the
+    GSM8K dataset is no less than 0.90.
 
     [Test Category] Parameters
     [Test Target] --enable-deepep-waterfill
