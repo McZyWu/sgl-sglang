@@ -419,3 +419,4 @@ jobs:
           FAIL=0
           if [ "${single_result}" != "success" ] && [ "${single_result}" != "skipped" ]; then FAIL=1; fi
           exit $FAIL
+
