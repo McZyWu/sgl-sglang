@@ -78,8 +78,8 @@ class TestEnableDeepepWaterFill(CustomTestCase):
             eval_name="gsm8k",
             api="completion",
             max_tokens=512,
-            num_examples=128,
-            num_threads=200,
+            num_examples=200,
+            num_threads=128,
         )
         metrics = run_eval(args)
         print(f"Eval accuracy of GSM8K: {metrics=}")
