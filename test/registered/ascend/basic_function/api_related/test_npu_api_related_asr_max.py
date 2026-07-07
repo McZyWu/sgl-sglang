@@ -11,7 +11,6 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-
 import websocket
 from websocket import WebSocketConnectionClosedException, WebSocketTimeoutException
 
@@ -132,16 +131,16 @@ class TestAsrMaxTranscription(CustomTestCase):
             # Update session configuration
             session_update_msg = json.dumps(
                 {
-                "type": "session.update",
-                "session": {
-                    "type": "transcription",
-                    "audio": {
-                        "input": {
-                            "format": {"type": "audio/pcm", "rate": TARGET_SR},
-                            "transcription": {"model": "qwen3-asr"},
-                        }
+                    "type": "session.update",
+                    "session": {
+                        "type": "transcription",
+                        "audio": {
+                            "input": {
+                                "format": {"type": "audio/pcm", "rate": TARGET_SR},
+                                "transcription": {"model": "qwen3-asr"},
+                            }
+                        },
                     },
-                },
                 }
             )
             ws.send(session_update_msg)
@@ -162,7 +161,7 @@ class TestAsrMaxTranscription(CustomTestCase):
                     continue
             self.assertTrue(
                 session_ok,
-                "Failed to wait for the session.updated configuration timeout."
+                "Failed to wait for the session.updated configuration timeout.",
             )
 
             offset = 0
@@ -225,13 +224,13 @@ class TestAsrMaxTranscription(CustomTestCase):
                             break
                     except (
                         WebSocketTimeoutException,
-                        WebSocketConnectionClosedException
+                        WebSocketConnectionClosedException,
                     ):
                         logging.warning("Timed out waiting for transcription event.")
                         continue
                 self.assertTrue(
                     finish_flag,
-                    f"Transcription completion event not received within 30 seconds."
+                    f"Transcription completion event not received within 30 seconds.",
                 )
                 self.assertGreater(
                     len(transcript_text.strip()), 0, "Transcription result is empty."
