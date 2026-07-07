@@ -15,7 +15,6 @@ from sglang.test.test_utils import (
 from sglang.test.ascend.test_ascend_utils import (
     QWEN3_30B_A3B_INSTRUCT_2507_WEIGHTS_PATH,
     QWEN3_30B_A3B_INSTRUCT_2507_THEO_STYLE_LORA_PATH,
-
 )
 
 register_npu_ci(est_time=200, suite="full-2-npu-a3", nightly=True)
