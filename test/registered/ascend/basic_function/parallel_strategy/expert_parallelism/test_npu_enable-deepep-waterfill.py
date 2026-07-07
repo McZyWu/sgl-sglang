@@ -18,7 +18,7 @@ from sglang.test.test_utils import (
 register_npu_ci(est_time=200, suite="full-2-npu-a3", nightly=True)
 
 
-class TestDeepSeekV32(CustomTestCase):
+class TestEnableDeepepWaterFill(CustomTestCase):
     """Testcase: Verify set --enable-deepep-waterfill the inference accuracy of the model on the
     GSM8K dataset is no less than 0.90,
 
