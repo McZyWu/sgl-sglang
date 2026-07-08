@@ -73,7 +73,7 @@ class TestVLMModels(CustomTestCase):
             base_url=self.base_url,
             model=self.model,
             eval_name="mmmu",
-            num_examples=100,
+            num_examples=900,
             num_threads=64,
             max_tokens=self.max_tokens,
             return_latency=True,
