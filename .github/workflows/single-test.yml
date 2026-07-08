@@ -119,15 +119,15 @@ jobs:
 #            test_case: test/registered/ascend/llm_models/test_npu_orion_14b_base.py
 #            test_type: 'function'
           - name: test_npu_tele_flm
-            runner: linux-aarch64-a3-2
+            runner: linux-aarch64-a3-4
             test_case: test/registered/ascend/llm_models/test_npu_tele_flm.py
             test_type: 'function'
 #          - name: test_npu_ernie_4_5_vl_28b_a3b_pt
-#            runner: linux-aarch64-a3-4
+#            runner: linux-aarch64-a3-2
 #            test_case: test/registered/ascend/vlm_models/test_npu_ernie_4_5_vl_28b_a3b_pt.py
 #            test_type: 'function'
           - name: test_npu_step3_vl_10b
-            runner: linux-aarch64-a3-4
+            runner: linux-aarch64-a3-2
             test_case: test/registered/ascend/vlm_models/test_npu_step3_vl_10b.py
             test_type: 'function'
     uses: ./.github/workflows/nightly-test-npu-e2e-single-node.yml
