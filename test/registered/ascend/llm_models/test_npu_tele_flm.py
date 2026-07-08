@@ -17,6 +17,16 @@ class TestAFM(GSM8KAscendMixin, CustomTestCase):
 
     model = TELE_FLM_WEIGHTS_PATH
     accuracy = 0
+    other_args = [
+        "--trust-remote-code",
+        "--mem-fraction-static",
+        "0.8",
+        "--attention-backend",
+        "ascend",
+        "--disable-cuda-graph",
+        "--tp-size",
+        2,
+    ]
 
 
 if __name__ == "__main__":
