@@ -25,7 +25,6 @@ class TestExternalModelsNPU(CustomTestCase):
 
         engine = sgl.Engine(
             model_path=model_path,
-            max_total_tokens=64,
             enable_multimodal=True,
             attention_backend="torch_native",
         )
