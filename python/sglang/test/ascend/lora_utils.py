@@ -4,13 +4,13 @@ from typing import List, Optional
 
 import torch
 
-from sglang.test.runners import HFRunner, SRTRunner
-from sglang.test.test_utils import calculate_rouge_l
 from sglang.test.ascend.test_ascend_utils import (
-    QWEN3_4B_WEIGHTS_PATH,
     QWEN3_4B_LORA_V2_WEIGHTS_PATH,
     QWEN3_4B_LORA_ZH_WEBNOVELTY_V0_0_WEIGHTS_PATH,
+    QWEN3_4B_WEIGHTS_PATH,
 )
+from sglang.test.runners import HFRunner, SRTRunner
+from sglang.test.test_utils import calculate_rouge_l
 
 
 @dataclasses.dataclass
@@ -87,7 +87,7 @@ TEST_MULTIPLE_BATCH_PROMPTS = [
 
 
 def create_multiple_batch_test_samples(
-        prompts: List[str], lora_adapter_paths: List[str]
+    prompts: List[str], lora_adapter_paths: List[str]
 ):
     random.seed(42)
 
@@ -126,16 +126,18 @@ def ensure_reproducibility():
 
 
 def run_lora_multiple_batch_on_model_cases(
-        model_cases: List[LoRAModelCase],
-        use_spec_decoding: bool = False,
-        attention_backend: str = "torch_native",
-        disable_cuda_graph: bool = True,
-        enable_deterministic_inference: bool = False,
-        disable_radix_cache: bool = True,
-        enable_lora_overlap_loading: Optional[bool] = None,
+    model_cases: List[LoRAModelCase],
+    use_spec_decoding: bool = False,
+    attention_backend: str = "torch_native",
+    disable_cuda_graph: bool = True,
+    enable_deterministic_inference: bool = False,
+    disable_radix_cache: bool = True,
+    enable_lora_overlap_loading: Optional[bool] = None,
 ):
     if not torch.npu.is_available():
-        raise RuntimeError("NPU device not available. Please ensure NPU environment is properly configured.")
+        raise RuntimeError(
+            "NPU device not available. Please ensure NPU environment is properly configured."
+        )
 
     for model_case in model_cases:
         for torch_dtype in TORCH_DTYPES:
@@ -195,7 +197,7 @@ def run_lora_multiple_batch_on_model_cases(
                     )
 
                     for srt_out, hf_out in zip(
-                            srt_outputs.output_strs, hf_outputs.output_strs
+                        srt_outputs.output_strs, hf_outputs.output_strs
                     ):
                         srt_str = srt_out.strip()
                         hf_str = hf_out.strip()
