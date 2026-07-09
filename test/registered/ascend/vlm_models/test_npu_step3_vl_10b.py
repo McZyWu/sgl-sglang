@@ -12,14 +12,14 @@ register_npu_ci(
 
 
 class TestDeepseekVl2(TestVLMModels):
-    """Testcase: Verify that the inference accuracy of the stepfun-ai/Step3-VL-10B model on the MMMU dataset is no less than 0.
+    """Testcase: Verify that the inference accuracy of the stepfun-ai/Step3-VL-10B model on the MMMU dataset is no less than 0.7.
 
     [Test Category] Model
     [Test Target] stepfun-ai/Step3-VL-10B
     """
 
     model = STEP3_VL_10B_WEIGHTS_PATH
-    mmmu_accuracy = 0
+    mmmu_accuracy = 0.71
     other_args = [
         "--trust-remote-code",
         "--disable-radix-cache",

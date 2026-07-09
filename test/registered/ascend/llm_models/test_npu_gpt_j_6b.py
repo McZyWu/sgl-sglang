@@ -9,14 +9,14 @@ register_npu_ci(est_time=400, suite="full-2-npu-a3", nightly=True)
 
 
 class TestAFM(GSM8KAscendMixin, CustomTestCase):
-    """Testcase: Verify that the inference accuracy of the EleutherAI/gpt-j-6b model on the GSM8K dataset is no less than 0.
+    """Testcase: Verify that the inference accuracy of the EleutherAI/gpt-j-6b model on the GSM8K dataset is no less than 0.037.
 
     [Test Category] Model
     [Test Target] EleutherAI/gpt-j-6b
     """
 
     model = GPT_J_6B_WEIGHTS_PATH
-    accuracy = 0
+    accuracy = 0.037
     other_args = [
         "--trust-remote-code",
         "--disable-radix-cache",

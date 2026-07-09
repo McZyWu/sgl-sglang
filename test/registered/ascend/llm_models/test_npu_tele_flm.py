@@ -5,7 +5,7 @@ from sglang.test.ascend.test_ascend_utils import TELE_FLM_WEIGHTS_PATH
 from sglang.test.ci.ci_register import register_npu_ci
 from sglang.test.test_utils import CustomTestCase
 
-register_npu_ci(est_time=400, suite="full-4-npu-a3", nightly=True)
+register_npu_ci(est_time=400, suite="full-8-npu-a3", nightly=True)
 
 
 class TestAFM(GSM8KAscendMixin, CustomTestCase):
@@ -16,7 +16,7 @@ class TestAFM(GSM8KAscendMixin, CustomTestCase):
     """
 
     model = TELE_FLM_WEIGHTS_PATH
-    accuracy = 0
+    accuracy = 0.42
     other_args = [
         "--trust-remote-code",
         "--mem-fraction-static",
@@ -25,7 +25,7 @@ class TestAFM(GSM8KAscendMixin, CustomTestCase):
         "ascend",
         "--disable-cuda-graph",
         "--tp-size",
-        4,
+        8,
     ]
 
 
