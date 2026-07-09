@@ -4,7 +4,11 @@ from abc import ABC
 from types import SimpleNamespace
 
 from sglang.srt.utils import kill_process_tree
-from sglang.test.ascend.test_ascend_utils import write_results_to_github_step_summary
+from sglang.test.ascend.test_ascend_utils import (
+    logger,
+    run_command,
+    write_results_to_github_step_summary,
+)
 from sglang.test.run_eval import run_eval
 from sglang.test.test_utils import (
     DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH,
@@ -65,6 +69,9 @@ class GSM8KAscendMixin(ABC):
         kill_process_tree(cls.process.pid)
 
     def test_gsm8k(self):
+        logger.info(run_command("ll -a /tmp"))
+        logger.info(run_command("ll -a /tmp/test.jsonl"))
+
         accuracy_threshold = getattr(self, "accuracy", 0.00)
         output_throughput_threshold = getattr(self, "output_throughput", 0.00)
 
