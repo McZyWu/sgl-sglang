@@ -121,9 +121,7 @@ class TestWeightLoaderPrefetchTp4(CustomTestCase):
             "text": "Hello, my name is",
             "sampling_params": {"temperature": 0, "max_new_tokens": 8},
         }
-        resp = requests.post(
-            self.base_url + "/generate", json=data, timeout=30
-        )
+        resp = requests.post(self.base_url + "/generate", json=data, timeout=30)
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text", resp.json())
 
