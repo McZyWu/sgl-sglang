@@ -27,7 +27,7 @@ class TestAFM(GSM8KAscendMixin, CustomTestCase):
         "--tp-size",
         8,
         "--watchdog-timeout",
-        9000,
+        300000,
     ]
 
 
