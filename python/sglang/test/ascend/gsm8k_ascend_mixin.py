@@ -71,6 +71,7 @@ class GSM8KAscendMixin(ABC):
     def test_gsm8k(self):
         logger.info(run_command("ll -a /tmp"))
         logger.info(run_command("ll -a /tmp/test.jsonl"))
+        logger.info(run_command("cat /tmp/test.jsonl"))
 
         accuracy_threshold = getattr(self, "accuracy", 0.00)
         output_throughput_threshold = getattr(self, "output_throughput", 0.00)
