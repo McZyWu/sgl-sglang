@@ -69,8 +69,8 @@ class GSM8KAscendMixin(ABC):
         kill_process_tree(cls.process.pid)
 
     def test_gsm8k(self):
-        logger.info(run_command("ll -a /tmp"))
-        logger.info(run_command("ll -a /tmp/test.jsonl"))
+        logger.info(run_command("ls -l /tmp"))
+        logger.info(run_command("ls -l /tmp/test.jsonl"))
         logger.info(run_command("cat /tmp/test.jsonl"))
 
         accuracy_threshold = getattr(self, "accuracy", 0.00)
