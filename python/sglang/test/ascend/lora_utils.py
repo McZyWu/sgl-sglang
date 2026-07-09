@@ -57,6 +57,7 @@ LORA_MODELS_QWEN3 = [
             ),
         ],
         max_loras_per_batch=2,
+        max_loaded_loras=64,
     ),
 ]
 
@@ -138,9 +139,6 @@ def run_lora_multiple_batch_on_model_cases(
 
     for model_case in model_cases:
         for torch_dtype in TORCH_DTYPES:
-            if torch_dtype == torch.float64:
-                torch_dtype = torch.float32
-
             max_new_tokens = 32
             base_path = model_case.base
             lora_adapter_paths = [a.name for a in model_case.adaptors]
@@ -166,7 +164,7 @@ def run_lora_multiple_batch_on_model_cases(
                 lora_paths=[lora_adapter_paths[0], lora_adapter_paths[1]],
                 enable_lora_overlap_loading=enable_lora_overlap_loading,
                 max_loras_per_batch=len(lora_adapter_paths) + 1,
-                max_loaded_loras=64,
+                max_loaded_loras=model_case.max_loaded_loras,
                 sleep_on_idle=True,
                 attention_backend=attention_backend,
                 enable_deterministic_inference=enable_deterministic_inference,
