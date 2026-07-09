@@ -17,6 +17,7 @@ class TestAFM(GSM8KAscendMixin, CustomTestCase):
 
     model = ORION_14B_BASE_WEIGHTS_PATH
     accuracy = 0.4
+    gsm8k_num_shots = 8
 
 
 if __name__ == "__main__":

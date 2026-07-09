@@ -5,8 +5,6 @@ from types import SimpleNamespace
 
 from sglang.srt.utils import kill_process_tree
 from sglang.test.ascend.test_ascend_utils import (
-    logger,
-    run_command,
     write_results_to_github_step_summary,
 )
 from sglang.test.run_eval import run_eval
@@ -69,10 +67,6 @@ class GSM8KAscendMixin(ABC):
         kill_process_tree(cls.process.pid)
 
     def test_gsm8k(self):
-        logger.info(run_command("ls -l /tmp"))
-        logger.info(run_command("ls -l /tmp/test.jsonl"))
-        logger.info(run_command("cat /tmp/test.jsonl"))
-
         accuracy_threshold = getattr(self, "accuracy", 0.00)
         output_throughput_threshold = getattr(self, "output_throughput", 0.00)
 

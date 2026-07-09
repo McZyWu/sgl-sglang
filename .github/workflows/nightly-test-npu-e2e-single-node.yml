@@ -88,8 +88,6 @@ jobs:
           # copy required file from our daily cache
           cp ~/.cache/modelscope/hub/datasets/otavia/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json /tmp
           cp ~/.cache/modelscope/hub/datasets/tmp/test.jsonl /tmp
-          cat /tmp/test.jsonl
-          ls -l /tmp
 
           export TRANSFORMERS_VERSION_FOR_SGLANG="${{ inputs.transformers_version }}"
           PYTHON_FOR_SGLANG="python"
