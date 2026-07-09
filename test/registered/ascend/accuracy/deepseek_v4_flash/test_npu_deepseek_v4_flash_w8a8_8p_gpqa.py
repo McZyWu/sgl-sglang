@@ -118,7 +118,7 @@ class TestNPUDeepSeekV4FlashW8A88PGPQAHigh(TestAscendAccuracyTestCaseBase):
     model = DEEPSEEK_V4_FLASH_W8A8_MTP_MODEL_PATH
     other_args = DEEPSEEK_V4_FLASH_W8A8_8P_OTHER_ARGS
     envs = DEEPSEEK_V4_FLASH_W8A8_8P_ENVS
-    accuracy = 0.85
+    accuracy = 0.874
     datasets = ["gpqa_diamond"]
     few_shot_num = 0
     generation_config = DEEPSEEK_V4_FLASH_W8A8_GENERATION_CONFIG_HIGH
