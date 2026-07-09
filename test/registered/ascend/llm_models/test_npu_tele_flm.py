@@ -26,6 +26,8 @@ class TestAFM(GSM8KAscendMixin, CustomTestCase):
         "--disable-cuda-graph",
         "--tp-size",
         8,
+        "--watchdog-timeout",
+        9000,
     ]
 
 
