@@ -129,7 +129,7 @@ jobs:
 #          - name: test_npu_step3_vl_10b
 #            runner: linux-aarch64-a3-2
 #            test_case: test/registered/ascend/vlm_models/test_npu_step3_vl_10b.py
-#            test_type: 'function'
+#            test_type: 'functions'
     uses: ./.github/workflows/nightly-test-npu-e2e-single-node.yml
     with:
       runner: ${{ matrix.test_config.runner }}
