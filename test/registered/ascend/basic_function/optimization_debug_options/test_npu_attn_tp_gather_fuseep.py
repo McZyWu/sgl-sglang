@@ -130,8 +130,6 @@ class TestAttnTpGatherDense(CustomTestCase):
                 "ascend",
                 "--disable-cuda-graph",
                 "--disable-attn-tp-gather",
-                # For non-MOE models, attention TP gather is not applicable
-                # regardless of the flag.
             ],
         )
         try:
@@ -181,8 +179,6 @@ class TestAttnTpGatherDPAttn(CustomTestCase):
             "--disable-cuda-graph",
             "--moe-a2a-backend",
             "deepep",
-            # --enable-dp-attention enables the DP attention codepath
-            # which interacts with attention TP gather logic.
             "--enable-dp-attention",
             "--tp-size",
             str(tp_size),
