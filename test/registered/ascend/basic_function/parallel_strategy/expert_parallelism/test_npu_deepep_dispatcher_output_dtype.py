@@ -40,14 +40,29 @@ class TestDtypeAuto(CustomTestCase):
                 "--trust-remote-code",
                 "--tp",
                 "4",
+                "--base-gpu-id",
+                "2",
                 "--mem-fraction-static",
                 "0.8",
+                "--moe-a2a-backend",
+                "deepep",
+                "--deepep-mode",
+                "auto",
                 "--deepep-dispatcher-output-dtype",
                 cls.dtype,
                 "--attention-backend",
                 "ascend",
-                "--disable-cuda-graph",
+                "--max-total-tokens",
+                "66000",
+                "--cuda-graph-max-bs",
+                "128",
+                "--log-level",
+                "info",
+                "--disable-radix-cache",
             ],
+            env={
+                "DEEP_NORMAL_MODE_USE_INT8_QUANT": "1",  # Quantize activations to INT8 before dispatch
+            },
         )
 
     @classmethod
