@@ -437,6 +437,18 @@ def _case_sample_step_tokens(tc):
         exp_noise=torch.ones(1, 2050, device=DEVICE),
     )
     tc.assertEqual(tokens.item(), 1000)
+    # Greedy rows must compare logits directly. A softmax can round these two
+    # distinct values to the same probability and incorrectly pick token 0.
+    near_tie = torch.tensor([[0.0, 1.0e-8, -1.0]], device=DEVICE)
+    near_tie_kw = dict(
+        step_logits=near_tie,
+        temperatures=torch.ones(1, device=DEVICE),
+        greedy_mask=torch.ones(1, dtype=torch.bool, device=DEVICE),
+        exp_noise=torch.ones_like(near_tie),
+    )
+    expected = near_tie.argmax(dim=-1)
+    tc._eq(cls.torch(**near_tie_kw), expected)
+    tc._eq(cls.triton(**near_tie_kw), expected)
     # Non-contiguous strided cropped view must match its contiguous copy.
     view = (torch.randn(2, 129536, device=DEVICE) * 4.0)[:, :VOCAB]
     tc.assertFalse(view.is_contiguous())

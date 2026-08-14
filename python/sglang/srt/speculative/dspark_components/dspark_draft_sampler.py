@@ -89,6 +89,12 @@ class DsparkDraftSampler:
             out=self.temperatures[:bs],
         )
         self.greedy_mask[:bs].copy_((sampling_info.top_ks <= 1).view(-1)[:bs])
+        if not sampling_info.is_all_greedy:
+            # Refresh stochastic noise immediately before replay instead of
+            # baking RNG into every captured proposal. Greedy batches leave
+            # this buffer untouched (SampleStepTokens masks it to unit noise),
+            # avoiding an otherwise unconditional full-vocabulary RNG kernel.
+            self.exp_noise[:bs].exponential_(1)
 
     def __call__(self, hidden_states, input_ids):
         bs = hidden_states.shape[0] // self.gamma
@@ -100,14 +106,11 @@ class DsparkDraftSampler:
 
             def sampler(step_logits: torch.Tensor, step_idx: int) -> torch.Tensor:
                 del step_idx
-                # In-graph philox noise: each replay advances the generator
-                # and redraws.
-                noise = self.exp_noise[:bs].exponential_()
                 return SampleStepTokens.execute(
                     step_logits=step_logits,
                     temperatures=self.temperatures[:bs],
                     greedy_mask=self.greedy_mask[:bs],
-                    exp_noise=noise,
+                    exp_noise=self.exp_noise[:bs],
                 )
 
         else:
