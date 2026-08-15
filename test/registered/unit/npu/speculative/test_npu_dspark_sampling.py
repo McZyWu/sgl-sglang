@@ -21,6 +21,121 @@ register_npu_ci(est_time=25, suite="stage-a-unit-test-npu")
 
 
 class TestNpuDsparkSampling(unittest.TestCase):
+    def test_tp_top1_selector_matches_argmax_under_graph_replay(self):
+        from sglang.srt.models import dspark as dspark_module
+
+        device = torch.device("npu")
+        candidates = torch.tensor(
+            [
+                [[1.0, 8.0], [2.0, 7.0], [2.0, 3.0], [0.0, 1.0]],
+                [[-1.0, 9.0], [-2.0, 4.0], [-3.0, 5.0], [-4.0, 6.0]],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        expected = torch.tensor([3, 9], dtype=torch.long, device=device)
+        actual = dspark_module._select_global_top1_npu(candidates, vocab_size=16)
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+        graph = torch.npu.NPUGraph()
+        with torch.npu.graph(graph):
+            graph_actual = dspark_module._select_global_top1_npu(
+                candidates, vocab_size=16
+            )
+        candidates.copy_(
+            torch.tensor(
+                [
+                    [[4.0, 8.0], [3.0, 7.0], [2.0, 3.0], [1.0, 1.0]],
+                    [[0.0, 9.0], [5.0, 11.0], [5.0, 6.0], [4.0, 2.0]],
+                ],
+                dtype=torch.float32,
+                device=device,
+            )
+        )
+        graph.replay()
+        torch.npu.synchronize()
+        expected_after_replay = torch.tensor([8, 6], dtype=torch.long, device=device)
+        torch.testing.assert_close(graph_actual, expected_after_replay, rtol=0, atol=0)
+
+    def test_vanilla_markov_vocab_shards_match_replicated_logits(self):
+        device = torch.device("npu")
+        batch_size, vocab_size, markov_rank, tp_size = 2, 4096, 64, 4
+        head = VanillaMarkov(vocab_size=vocab_size, markov_rank=markov_rank).to(
+            device=device, dtype=torch.bfloat16
+        )
+        base_logits = torch.randn(
+            batch_size, vocab_size, device=device, dtype=torch.bfloat16
+        )
+        prev_tokens = torch.randint(vocab_size, (batch_size,), device=device)
+
+        expected = base_logits + head.compute_step_bias(prev_tokens, None)
+        latent = head.get_prev_embeddings(prev_tokens)
+        width = vocab_size // tp_size
+        local_steps = []
+        for rank in range(tp_size):
+            start, end = rank * width, (rank + 1) * width
+            local_bias = F.linear(
+                latent.to(head.markov_w2.weight.dtype),
+                head.markov_w2.weight[start:end],
+            )
+            local_steps.append(base_logits[:, start:end] + local_bias)
+        actual = torch.cat(local_steps, dim=-1)
+
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        torch.testing.assert_close(
+            actual.argmax(dim=-1), expected.argmax(dim=-1), rtol=0, atol=0
+        )
+
+    def test_tp_sharded_greedy_block_matches_replicated_graph(self):
+        device = torch.device("npu")
+        batch_size, gamma, vocab_size = 2, 3, 4096
+        head = VanillaMarkov(vocab_size=vocab_size, markov_rank=64).to(
+            device=device, dtype=torch.bfloat16
+        )
+        base_logits = torch.randn(
+            batch_size,
+            gamma,
+            vocab_size,
+            device=device,
+            dtype=torch.bfloat16,
+        )
+        anchors = torch.randint(vocab_size, (batch_size,), device=device)
+        expected, _ = head.sample_block(
+            base_logits,
+            first_prev_tokens=anchors,
+            hidden_states=None,
+            sampler=lambda logits, _step_idx: logits.argmax(dim=-1),
+            return_corrected_logits=False,
+        )
+
+        class _IdentityGroup:
+            @staticmethod
+            def all_gather(value, dim=-1):
+                del dim
+                return value
+
+        head._tp_shard = SimpleNamespace(
+            tp_size=1,
+            org_vocab_start=0,
+            org_vocab_end=vocab_size,
+            num_embeddings_per_partition=vocab_size,
+            num_embeddings_padded=vocab_size,
+        )
+        head._shard_group = _IdentityGroup()
+        actual = head.sample_greedy_block_sharded(
+            base_logits, first_prev_tokens=anchors
+        )
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+        graph = torch.npu.NPUGraph()
+        with torch.npu.graph(graph):
+            graph_actual = head.sample_greedy_block_sharded(
+                base_logits, first_prev_tokens=anchors
+            )
+        graph.replay()
+        torch.npu.synchronize()
+        torch.testing.assert_close(graph_actual, expected, rtol=0, atol=0)
+
     def test_greedy_near_tie_uses_logits_argmax(self):
         device = torch.device("npu")
         logits = torch.tensor([[0.0, 1.0e-8, -1.0]], device=device)
@@ -43,9 +158,7 @@ class TestNpuDsparkSampling(unittest.TestCase):
             greedy_mask=torch.ones(2, dtype=torch.bool, device=device),
             exp_noise=torch.ones_like(logits),
             corrected_logits_out=corrected,
-            write_corrected_logits=torch.zeros(
-                (), dtype=torch.int32, device=device
-            ),
+            write_corrected_logits=torch.zeros((), dtype=torch.int32, device=device),
         )
 
         torch.testing.assert_close(actual, logits.argmax(dim=-1), rtol=0, atol=0)
@@ -62,9 +175,7 @@ class TestNpuDsparkSampling(unittest.TestCase):
                 weight = torch.randn(
                     vocab_size, hidden_size, dtype=torch.bfloat16, device=device
                 )
-                self.lm_head = SimpleNamespace(
-                    weight=weight, org_vocab_size=vocab_size
-                )
+                self.lm_head = SimpleNamespace(weight=weight, org_vocab_size=vocab_size)
                 self.markov_head = VanillaMarkov(
                     vocab_size=vocab_size, markov_rank=8
                 ).to(device=device, dtype=torch.bfloat16)
@@ -112,6 +223,7 @@ class TestNpuDsparkSampling(unittest.TestCase):
         mixed_noise = torch.ones(batch_size, vocab_size, device=device)
         mixed_noise[1, 0] = 1.0e-30
         sampler.greedy_mask[:batch_size].copy_(mixed_greedy_mask)
+        sampler.kernel_greedy_mask[:batch_size].copy_(mixed_greedy_mask.to(torch.int32))
         sampler.temperatures[:batch_size].fill_(1.0)
         sampler.exp_noise[:batch_size].copy_(mixed_noise)
         sampler.write_corrected_logits.fill_(1)
@@ -141,6 +253,7 @@ class TestNpuDsparkSampling(unittest.TestCase):
         # the next request is greedy; the device flag is staged before replay.
         sampler.corrected_out.fill_(17.0)
         sampler.greedy_mask.fill_(True)
+        sampler.kernel_greedy_mask.fill_(1)
         sampler.write_corrected_logits.zero_()
         graph.replay()
         torch.npu.synchronize()
@@ -192,7 +305,6 @@ class TestNpuDsparkSampling(unittest.TestCase):
             folded_sampling=True,
         )
         sampler.exp_noise.fill_(7.0)
-        sampler.greedy_mask.fill_(False)
 
         all_greedy = SimpleNamespace(
             temperatures=torch.ones(2, device=device),
@@ -202,6 +314,7 @@ class TestNpuDsparkSampling(unittest.TestCase):
         sampler.stage_sampling_params(bs=2, sampling_info=all_greedy)
         self.assertTrue(torch.all(sampler.exp_noise == 7.0).item())
         self.assertTrue(torch.all(sampler.greedy_mask).item())
+        self.assertTrue(torch.all(sampler.kernel_greedy_mask == 1).item())
 
         mixed = SimpleNamespace(
             temperatures=torch.ones(2, device=device),
@@ -213,7 +326,24 @@ class TestNpuDsparkSampling(unittest.TestCase):
         self.assertTrue(torch.all(sampler.exp_noise > 0).item())
         self.assertFalse(torch.all(sampler.exp_noise == 7.0).item())
         self.assertTrue(torch.equal(sampler.greedy_mask[:2], mixed.top_ks <= 1))
+        self.assertTrue(
+            torch.equal(
+                sampler.kernel_greedy_mask[:2],
+                (mixed.top_ks <= 1).to(torch.int32),
+            )
+        )
         self.assertTrue(torch.all(sampler.greedy_mask[2:]).item())
+        self.assertTrue(torch.all(sampler.kernel_greedy_mask[2:] == 1).item())
+
+        # Returning to greedy restores both graph buffers once; subsequent
+        # greedy requests reuse the resident state and leave RNG untouched.
+        mixed_noise = sampler.exp_noise.clone()
+        sampler.stage_sampling_params(bs=2, sampling_info=all_greedy)
+        sampler.stage_sampling_params(bs=2, sampling_info=all_greedy)
+        self.assertTrue(torch.all(sampler.greedy_mask).item())
+        self.assertTrue(torch.all(sampler.kernel_greedy_mask == 1).item())
+        self.assertEqual(sampler.write_corrected_logits.item(), 0)
+        torch.testing.assert_close(sampler.exp_noise, mixed_noise, rtol=0, atol=0)
 
     def test_mixed_rows_match_exponential_race_reference(self):
         device = torch.device("npu")
@@ -224,9 +354,7 @@ class TestNpuDsparkSampling(unittest.TestCase):
         exp_noise = torch.empty_like(logits).exponential_(1, generator=generator)
 
         noise = torch.where(greedy_mask[:, None], 1.0, exp_noise)
-        expected = (
-            logits.float() - temperatures[:, None] * noise.log()
-        ).argmax(dim=-1)
+        expected = (logits.float() - temperatures[:, None] * noise.log()).argmax(dim=-1)
         actual = SampleStepTokens.execute(
             step_logits=logits,
             temperatures=temperatures,
@@ -310,9 +438,7 @@ class TestNpuDsparkOptimizedPaths(unittest.TestCase):
                 dtype=torch.bfloat16,
                 device=device,
             )
-            k_norm = RMSNorm(head_dim, eps=eps).to(
-                device=device, dtype=torch.bfloat16
-            )
+            k_norm = RMSNorm(head_dim, eps=eps).to(device=device, dtype=torch.bfloat16)
             attn = SimpleNamespace(
                 kv_size=kv_size,
                 head_dim=head_dim,
@@ -331,9 +457,7 @@ class TestNpuDsparkOptimizedPaths(unittest.TestCase):
             "k_norm_weight": torch.stack(norm_weights).float(),
             "eps": eps,
         }
-        hidden = torch.randn(
-            tokens, hidden_size, dtype=torch.bfloat16, device=device
-        )
+        hidden = torch.randn(tokens, hidden_size, dtype=torch.bfloat16, device=device)
         positions = torch.arange(tokens, dtype=torch.int64, device=device)
 
         expected_k, expected_v = [], []
