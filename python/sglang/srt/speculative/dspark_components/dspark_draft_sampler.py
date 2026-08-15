@@ -59,6 +59,7 @@ class DsparkDraftSampler:
         self.greedy_mask = None
         self.exp_noise = None
         self.corrected_out = None
+        self.write_corrected_logits = None
         if folded_sampling:
             vocab = int(model.lm_head.org_vocab_size)
             self.temperatures = torch.ones(
@@ -73,6 +74,9 @@ class DsparkDraftSampler:
                 dtype=model.lm_head.weight.dtype,
                 device=device,
             )
+            self.write_corrected_logits = torch.zeros(
+                (), dtype=torch.int32, device=device
+            )
 
     def stage_sampling_params(self, *, bs: int, sampling_info) -> None:
         """Host-side refresh of the static sampling params; must run before
@@ -81,20 +85,27 @@ class DsparkDraftSampler:
             return
         if sampling_info is None:
             self.temperatures[:bs].fill_(1.0)
-            self.greedy_mask[:bs].fill_(True)
+            self.greedy_mask.fill_(True)
+            self.write_corrected_logits.zero_()
             return
         torch.clamp(
             sampling_info.temperatures.view(-1)[:bs].to(torch.float32),
             min=1e-5,
             out=self.temperatures[:bs],
         )
+        if sampling_info.is_all_greedy:
+            self.greedy_mask.fill_(True)
+            self.write_corrected_logits.zero_()
+            return
         self.greedy_mask[:bs].copy_((sampling_info.top_ks <= 1).view(-1)[:bs])
-        if not sampling_info.is_all_greedy:
-            # Refresh stochastic noise immediately before replay instead of
-            # baking RNG into every captured proposal. Greedy batches leave
-            # this buffer untouched (SampleStepTokens masks it to unit noise),
-            # avoiding an otherwise unconditional full-vocabulary RNG kernel.
-            self.exp_noise[:bs].exponential_(1)
+        # CUDA-graph buckets can be larger than the live batch. Reset their
+        # tail rows so a smaller request cannot inherit stochastic flags from
+        # a previous larger replay and pay full-vocabulary noise/log work.
+        self.greedy_mask[bs:].fill_(True)
+        self.write_corrected_logits.fill_(1)
+        # Refresh stochastic noise immediately before replay instead of baking
+        # RNG into every captured proposal.
+        self.exp_noise[:bs].exponential_(1)
 
     def __call__(self, hidden_states, input_ids):
         bs = hidden_states.shape[0] // self.gamma
@@ -105,12 +116,15 @@ class DsparkDraftSampler:
         if self.folded_sampling:
 
             def sampler(step_logits: torch.Tensor, step_idx: int) -> torch.Tensor:
-                del step_idx
                 return SampleStepTokens.execute(
                     step_logits=step_logits,
                     temperatures=self.temperatures[:bs],
                     greedy_mask=self.greedy_mask[:bs],
                     exp_noise=self.exp_noise[:bs],
+                    corrected_logits_out=self.corrected_out.view(
+                        -1, self.gamma, step_logits.shape[-1]
+                    )[:bs, step_idx, :],
+                    write_corrected_logits=self.write_corrected_logits,
                 )
 
         else:
@@ -121,12 +135,10 @@ class DsparkDraftSampler:
             first_prev_tokens=anchor,
             hidden_states=hidden_states.view(bs, self.gamma, -1),
             sampler=sampler,
+            return_corrected_logits=False,
         )
         self.out[: draft_tokens.numel()].copy_(draft_tokens.reshape(-1))
-        if self.folded_sampling:
-            self.corrected_out[: bs * self.gamma].copy_(
-                corrected_logits.reshape(bs * self.gamma, -1)
-            )
+        assert corrected_logits is None
         if self.confidence_out is not None:
             confidence = self.confidence_fn(
                 draft_hidden=hidden_states.view(bs, self.gamma, -1),

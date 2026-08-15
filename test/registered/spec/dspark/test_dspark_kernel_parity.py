@@ -461,6 +461,29 @@ def _case_sample_step_tokens(tc):
         cls.triton(step_logits=view, **kw),
         cls.triton(step_logits=view.contiguous(), **kw),
     )
+    # Corrected logits are written directly into a gamma-strided graph buffer.
+    bs, gamma, vocab, step = 2, 3, 5003, 1
+    logits = torch.randn(bs, vocab, dtype=torch.bfloat16, device=DEVICE)
+    corrected = torch.full(
+        (bs, gamma, vocab), 17.0, dtype=torch.bfloat16, device=DEVICE
+    )
+    corrected_step = corrected[:, step, :]
+    write_flag = torch.zeros((), dtype=torch.int32, device=DEVICE)
+    direct_kw = dict(
+        step_logits=logits,
+        temperatures=torch.ones(bs, device=DEVICE),
+        greedy_mask=torch.ones(bs, dtype=torch.bool, device=DEVICE),
+        exp_noise=torch.ones(bs, vocab, device=DEVICE),
+        corrected_logits_out=corrected_step,
+        write_corrected_logits=write_flag,
+    )
+    cls.triton(**direct_kw)
+    tc.assertTrue(bool((corrected == 17.0).all()))
+    write_flag.fill_(1)
+    cls.triton(**direct_kw)
+    tc._eq(corrected_step, logits)
+    tc.assertTrue(bool((corrected[:, 0, :] == 17.0).all()))
+    tc.assertTrue(bool((corrected[:, 2, :] == 17.0).all()))
 
 
 def _case_scatter_compact_to_strided(tc):

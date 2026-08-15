@@ -33,9 +33,29 @@ class TestNpuDsparkSampling(unittest.TestCase):
         )
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
+    def test_greedy_skips_corrected_logits_store(self):
+        device = torch.device("npu")
+        logits = torch.randn(2, 4097, device=device)
+        corrected = torch.full_like(logits, 17.0)
+        actual = SampleStepTokens.execute(
+            step_logits=logits,
+            temperatures=torch.ones(2, device=device),
+            greedy_mask=torch.ones(2, dtype=torch.bool, device=device),
+            exp_noise=torch.ones_like(logits),
+            corrected_logits_out=corrected,
+            write_corrected_logits=torch.zeros(
+                (), dtype=torch.int32, device=device
+            ),
+        )
+
+        torch.testing.assert_close(actual, logits.argmax(dim=-1), rtol=0, atol=0)
+        self.assertTrue(torch.all(corrected == 17.0).item())
+
     def test_folded_proposal_graph_matches_eager(self):
         device = torch.device("npu")
-        batch_size, gamma, hidden_size, vocab_size = 2, 3, 32, 64
+        # Exercise a production-sized combine reduction and the gamma-strided
+        # corrected-logit destination, not only a one-tile toy vocabulary.
+        batch_size, gamma, hidden_size, vocab_size = 2, 3, 32, 163840
 
         class _Model:
             def __init__(self):
@@ -70,16 +90,43 @@ class TestNpuDsparkSampling(unittest.TestCase):
             vocab_size, (batch_size * gamma,), dtype=torch.int64, device=device
         )
         base_logits, _ = model.compute_base_logits(hidden)
-        expected_tokens, expected_logits = model.markov_head.sample_block(
+        expected_greedy_tokens, _ = model.markov_head.sample_block(
             base_logits.view(batch_size, gamma, vocab_size),
             first_prev_tokens=input_ids.view(batch_size, gamma)[:, 0],
             hidden_states=hidden.view(batch_size, gamma, hidden_size),
             sampler=lambda step_logits, _step_idx: step_logits.argmax(dim=-1),
         )
 
+        # Production capture also runs a warmup pass; compile the Ascend
+        # Triton kernel before entering NPUGraph capture.
+        sampler(hidden, input_ids)
+        torch.npu.synchronize()
         graph = torch.npu.NPUGraph()
         with torch.npu.graph(graph):
             sampler(hidden, input_ids)
+
+        # Production captures with greedy defaults, then can stage a mixed
+        # replay into the same graph. Force row 1 toward token zero so a branch
+        # accidentally frozen to greedy cannot pass by chance.
+        mixed_greedy_mask = torch.tensor([True, False], device=device)
+        mixed_noise = torch.ones(batch_size, vocab_size, device=device)
+        mixed_noise[1, 0] = 1.0e-30
+        sampler.greedy_mask[:batch_size].copy_(mixed_greedy_mask)
+        sampler.temperatures[:batch_size].fill_(1.0)
+        sampler.exp_noise[:batch_size].copy_(mixed_noise)
+        sampler.write_corrected_logits.fill_(1)
+        expected_tokens, expected_logits = model.markov_head.sample_block(
+            base_logits.view(batch_size, gamma, vocab_size),
+            first_prev_tokens=input_ids.view(batch_size, gamma)[:, 0],
+            hidden_states=hidden.view(batch_size, gamma, hidden_size),
+            sampler=lambda step_logits, _step_idx: SampleStepTokens.torch(
+                step_logits=step_logits,
+                temperatures=sampler.temperatures[:batch_size],
+                greedy_mask=mixed_greedy_mask,
+                exp_noise=mixed_noise,
+            ),
+        )
+        self.assertTrue(torch.all(expected_tokens[1] == 0).item())
         graph.replay()
         torch.npu.synchronize()
 
@@ -90,6 +137,49 @@ class TestNpuDsparkSampling(unittest.TestCase):
         torch.testing.assert_close(actual_tokens, expected_tokens, rtol=0, atol=0)
         torch.testing.assert_close(actual_logits, expected_logits, rtol=0, atol=0)
 
+        # The same captured graph must suppress the full-vocabulary store when
+        # the next request is greedy; the device flag is staged before replay.
+        sampler.corrected_out.fill_(17.0)
+        sampler.greedy_mask.fill_(True)
+        sampler.write_corrected_logits.zero_()
+        graph.replay()
+        torch.npu.synchronize()
+        torch.testing.assert_close(
+            sampler.out[: batch_size * gamma].view(batch_size, gamma),
+            expected_greedy_tokens,
+            rtol=0,
+            atol=0,
+        )
+        self.assertTrue(torch.all(sampler.corrected_out == 17.0).item())
+
+    def test_markov_block_can_skip_corrected_logits_materialization(self):
+        device = torch.device("npu")
+        batch_size, gamma, vocab_size = 2, 3, 64
+        head = VanillaMarkov(vocab_size=vocab_size, markov_rank=8).to(
+            device=device, dtype=torch.bfloat16
+        )
+        base_logits = torch.randn(
+            batch_size, gamma, vocab_size, dtype=torch.bfloat16, device=device
+        )
+        anchors = torch.randint(vocab_size, (batch_size,), device=device)
+
+        expected_tokens, _ = head.sample_block(
+            base_logits,
+            first_prev_tokens=anchors,
+            hidden_states=None,
+            sampler=lambda logits, _step_idx: logits.argmax(dim=-1),
+        )
+        actual_tokens, corrected_logits = head.sample_block(
+            base_logits,
+            first_prev_tokens=anchors,
+            hidden_states=None,
+            sampler=lambda logits, _step_idx: logits.argmax(dim=-1),
+            return_corrected_logits=False,
+        )
+
+        self.assertIsNone(corrected_logits)
+        torch.testing.assert_close(actual_tokens, expected_tokens, rtol=0, atol=0)
+
     def test_sampling_noise_is_staged_only_for_stochastic_batches(self):
         device = torch.device("npu")
         lm_head = SimpleNamespace(org_vocab_size=32, weight=torch.empty(0))
@@ -97,11 +187,12 @@ class TestNpuDsparkSampling(unittest.TestCase):
         sampler = DsparkDraftSampler(
             model=model,
             gamma=2,
-            max_bs=2,
+            max_bs=4,
             device=device,
             folded_sampling=True,
         )
         sampler.exp_noise.fill_(7.0)
+        sampler.greedy_mask.fill_(False)
 
         all_greedy = SimpleNamespace(
             temperatures=torch.ones(2, device=device),
@@ -110,15 +201,19 @@ class TestNpuDsparkSampling(unittest.TestCase):
         )
         sampler.stage_sampling_params(bs=2, sampling_info=all_greedy)
         self.assertTrue(torch.all(sampler.exp_noise == 7.0).item())
+        self.assertTrue(torch.all(sampler.greedy_mask).item())
 
         mixed = SimpleNamespace(
             temperatures=torch.ones(2, device=device),
             top_ks=torch.tensor([1, 8], dtype=torch.int32, device=device),
             is_all_greedy=False,
         )
+        sampler.greedy_mask[2:].fill_(False)
         sampler.stage_sampling_params(bs=2, sampling_info=mixed)
         self.assertTrue(torch.all(sampler.exp_noise > 0).item())
         self.assertFalse(torch.all(sampler.exp_noise == 7.0).item())
+        self.assertTrue(torch.equal(sampler.greedy_mask[:2], mixed.top_ks <= 1))
+        self.assertTrue(torch.all(sampler.greedy_mask[2:]).item())
 
     def test_mixed_rows_match_exponential_race_reference(self):
         device = torch.device("npu")

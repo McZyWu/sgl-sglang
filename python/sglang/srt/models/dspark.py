@@ -41,11 +41,12 @@ def run_markov_block(
     first_prev_tokens: torch.Tensor,
     hidden_states: Optional[torch.Tensor],
     sampler: StepSampler,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    return_corrected_logits: bool = True,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     batch_size, proposal_len = base_logits.shape[:2]
     if proposal_len == 0:
         empty = torch.empty(batch_size, 0, dtype=torch.long, device=base_logits.device)
-        return empty, base_logits
+        return empty, base_logits if return_corrected_logits else None
 
     sampled_tokens = []
     corrected_logits = []
@@ -59,11 +60,12 @@ def run_markov_block(
         )
         next_tokens = sampler(step_logits, step_idx)
         sampled_tokens.append(next_tokens)
-        corrected_logits.append(step_logits.unsqueeze(1))
+        if return_corrected_logits:
+            corrected_logits.append(step_logits.unsqueeze(1))
         prev_tokens = next_tokens
     return (
         torch.stack(sampled_tokens, dim=1),
-        torch.cat(corrected_logits, dim=1),
+        torch.cat(corrected_logits, dim=1) if return_corrected_logits else None,
     )
 
 
@@ -123,13 +125,15 @@ class VanillaMarkov(nn.Module):
         first_prev_tokens: torch.Tensor,
         hidden_states: Optional[torch.Tensor],
         sampler: StepSampler,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return_corrected_logits: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         return run_markov_block(
             self,
             base_logits,
             first_prev_tokens=first_prev_tokens,
             hidden_states=hidden_states,
             sampler=sampler,
+            return_corrected_logits=return_corrected_logits,
         )
 
 
@@ -233,7 +237,8 @@ class RNNHead(VanillaMarkov):
         first_prev_tokens: torch.Tensor,
         hidden_states: Optional[torch.Tensor],
         sampler: StepSampler,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return_corrected_logits: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         if hidden_states is None:
             raise ValueError("RNNHead requires hidden_states.")
         batch_size, proposal_len = base_logits.shape[:2]
@@ -241,7 +246,7 @@ class RNNHead(VanillaMarkov):
             empty = torch.empty(
                 batch_size, 0, dtype=torch.long, device=base_logits.device
             )
-            return empty, base_logits
+            return empty, base_logits if return_corrected_logits else None
 
         state = torch.zeros(
             batch_size,
@@ -258,11 +263,12 @@ class RNNHead(VanillaMarkov):
             step_logits = base_logits[:, step_idx, :] + bias
             next_tokens = sampler(step_logits, step_idx)
             sampled_tokens.append(next_tokens)
-            corrected_logits.append(step_logits.unsqueeze(1))
+            if return_corrected_logits:
+                corrected_logits.append(step_logits.unsqueeze(1))
             prev_tokens = next_tokens
         return (
             torch.stack(sampled_tokens, dim=1),
-            torch.cat(corrected_logits, dim=1),
+            torch.cat(corrected_logits, dim=1) if return_corrected_logits else None,
         )
 
 
