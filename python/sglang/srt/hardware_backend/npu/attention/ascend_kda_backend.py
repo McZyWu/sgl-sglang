@@ -13,13 +13,6 @@ from sgl_kernel_npu.fla.kda_prefill import (
 from sgl_kernel_npu.fla.kda_target_verify import kda_target_verify_npu
 from sgl_kernel_npu.fla.solve_tril import solve_tril_npu
 from sgl_kernel_npu.fla.utils import prepare_chunk_indices
-from sgl_kernel_npu.mamba.causal_conv1d import (
-    causal_conv1d_fn_npu,
-    causal_conv1d_update_npu,
-)
-from sgl_kernel_npu.mamba.causal_conv1d_verify import (
-    causal_conv1d_linear_verify_npu,
-)
 from sgl_kernel_npu.mamba.kda_state_commit import (
     move_kda_temporal_snapshot,
     scatter_kda_conv_snapshot,
