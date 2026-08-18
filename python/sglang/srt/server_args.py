@@ -9104,6 +9104,20 @@ class ServerArgs:
 
             hf_config = self.get_model_config().hf_config
             chunk_size = getattr(hf_config, "mamba_chunk_size", FLA_CHUNK_SIZE)
+            if is_npu() and os.getenv("GDN_USE_MEGA_GDN", "0") == "1":
+                try:
+                    from sgl_kernel_npu.fla.mega_chunk_gdn import (
+                        CHUNK_SIZE as NPU_MEGA_GDN_CHUNK_SIZE,
+                    )
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "GDN_USE_MEGA_GDN=1 requires an sgl_kernel_npu build "
+                        "that provides the Mega GDN kernel."
+                    ) from exc
+                # Mega GDN emits intermediate states on its fixed chunk grid.
+                # Prefix-cache tracking must use the same grid; otherwise the
+                # tracker can index past the returned intermediate-state tensor.
+                chunk_size = max(chunk_size, NPU_MEGA_GDN_CHUNK_SIZE)
             page_size = resolved_view(self).page_size
             assert (
                 max(chunk_size, page_size) % min(chunk_size, page_size) == 0
