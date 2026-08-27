@@ -521,6 +521,8 @@ class Envs:
     SGLANG_DSPARK_OPT_FUSED_GREEDY_MARKOV = EnvBool(False)
     SGLANG_DSPARK_ENABLE_MULTI_STREAM = EnvBool(True)
     SGLANG_NPU_DSPARK_EARLY_MAIN_PROJ = EnvBool(False)
+    # Replace the NPU BuildOutTokens scatter fallback with its fused Triton kernel.
+    SGLANG_NPU_DSPARK_FUSED_OUT_TOKENS = EnvBool(False)
     SGLANG_DSPARK_CONFIDENCE_RELAY_LAG_STEPS = EnvInt(2)
 
     # ===================================================================
