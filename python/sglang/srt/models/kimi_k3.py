@@ -618,7 +618,15 @@ class KimiK3MoE(nn.Module):
         # no flag.
         # NPU attention-TP compatibility mode can also overlap the shared
         # collectives using SGLANG_NPU_FINE_GRAINED_MOE_DUAL_STREAM. Otherwise
-        # the collectives stay on the current stream.
+        # the collectives stay on the current stream unless legacy RS overlap
+        # explicitly moves reduce-scatter behind routed combine.
+        self._npu_overlap_shared_rs = (
+            _is_npu
+            and envs.SGLANG_NPU_OVERLAP_SHARED_RS.get()
+            and self._shared_experts_attn_tp_comm
+            and self.shared_experts is not None
+            and self.alt_stream is not None
+        )
         self._sbo_shared_overlap = (
             self._ep_a2a
             and self.shared_experts is not None
@@ -1004,21 +1012,43 @@ class KimiK3MoE(nn.Module):
             return self._latent_norm(latent)
         return self._latent_norm(tensor_model_parallel_all_reduce(latent))
 
-    def _forward_shared_experts(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Run TP-sharded shared experts while DeepEP tokens stay scattered."""
+    def _prepare_shared_experts_input(
+        self, hidden_states: torch.Tensor
+    ) -> tuple[torch.Tensor, bool]:
+        """Gather shared-expert input on the current stream when required."""
         if not self._shared_experts_attn_tp_comm:
-            return self.shared_experts(hidden_states)
+            return hidden_states, False
 
         group = get_parallel().attn_tp_group
         # SP-MoE presents one contiguous token shard per attention-TP rank;
         # the DP local buffer is the full reassembled per-replica batch.
         gathered_hidden_states = get_local_dp_buffer(group)
         attn_tp_all_gather_into_tensor(gathered_hidden_states, hidden_states)
+        return gathered_hidden_states, True
 
-        gathered_shared_output = self.shared_experts(gathered_hidden_states)
+    def _finalize_shared_experts_output(
+        self,
+        gathered_shared_output: torch.Tensor,
+        hidden_states: torch.Tensor,
+        needs_reduce_scatter: bool,
+    ) -> torch.Tensor:
+        """Reduce-scatter shared-expert output on the current stream."""
+        if not needs_reduce_scatter:
+            return gathered_shared_output
+
         shared_output = torch.empty_like(hidden_states)
         attn_tp_reduce_scatter_tensor(shared_output, gathered_shared_output)
         return shared_output
+
+    def _forward_shared_experts(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Run TP-sharded shared experts while DeepEP tokens stay scattered."""
+        shared_input, needs_reduce_scatter = self._prepare_shared_experts_input(
+            hidden_states
+        )
+        gathered_shared_output = self.shared_experts(shared_input)
+        return self._finalize_shared_experts_output(
+            gathered_shared_output, hidden_states, needs_reduce_scatter
+        )
 
     def _can_overlap_shared_experts_npu(self, hidden_states: torch.Tensor) -> bool:
         if not (
@@ -1074,9 +1104,11 @@ class KimiK3MoE(nn.Module):
         shared_output = None
         shared_event = None
         shared_compute_event = None
+        shared_output_needs_reduce_scatter = False
 
         def issue_shared():
             nonlocal shared_input, shared_output, shared_event
+            nonlocal shared_output_needs_reduce_scatter
             if self.shared_experts is None or hidden_states.shape[0] == 0:
                 return
             if fine_grained_overlap:
@@ -1091,13 +1123,9 @@ class KimiK3MoE(nn.Module):
                 return
             if self._sbo_shared_overlap:
                 current_stream = torch.cuda.current_stream()
-                # Keep HCCL collectives on the current stream. The alternate
-                # stream only executes the shared-expert MLP.
-                shared_input = hidden_states
-                if self._shared_experts_attn_tp_comm:
-                    group = get_parallel().attn_tp_group
-                    shared_input = get_local_dp_buffer(group)
-                    attn_tp_all_gather_into_tensor(shared_input, hidden_states)
+                shared_input, shared_output_needs_reduce_scatter = (
+                    self._prepare_shared_experts_input(hidden_states)
+                )
                 shared_input.record_stream(self.alt_stream)
                 self.alt_stream.wait_stream(current_stream)
                 with torch.cuda.stream(self.alt_stream):
@@ -1150,19 +1178,48 @@ class KimiK3MoE(nn.Module):
                 # failures, so closures cannot leak into the next forward.
                 pre_handle.remove()
 
-        def wait_and_finalize_shared_experts():
+        def join_shared():
             nonlocal shared_output
             if shared_event is None:
                 return
-            # Join just before consuming the shared result. The legacy path
-            # still needs to reduce-scatter its TP-partial MLP output here.
             current_stream = torch.cuda.current_stream()
             current_stream.wait_event(shared_event)
+            # Legacy RS overlap records the output when submitting it. Other
+            # side-stream paths retain A5's lifetime record at the tail join.
+            if (
+                fine_grained_overlap
+                or shared_output_needs_reduce_scatter
+                or not self._shared_experts_attn_tp_comm
+            ):
+                shared_output.record_stream(current_stream)
+            if shared_output_needs_reduce_scatter:
+                shared_output = self._finalize_shared_experts_output(
+                    shared_output, hidden_states, True
+                )
+
+        def submit_shared_reduce_scatter():
+            """Run shared RS after routed combine, beside latent norm/up-proj."""
+            nonlocal shared_output, shared_event
+            nonlocal shared_output_needs_reduce_scatter
+            if (
+                not self._npu_overlap_shared_rs
+                or fine_grained_overlap
+                or shared_event is None
+                or not shared_output_needs_reduce_scatter
+            ):
+                return
+            current_stream = torch.cuda.current_stream()
+            # Called immediately after the routed experts return. This wait
+            # keeps RS behind DeepEP combine, avoiding network contention, but
+            # leaves the following latent norm/up-proj free to overlap it.
+            self.alt_stream.wait_stream(current_stream)
+            with torch.cuda.stream(self.alt_stream):
+                shared_output = self._finalize_shared_experts_output(
+                    shared_output, hidden_states, True
+                )
+                shared_event = self.alt_stream.record_event()
+            shared_output_needs_reduce_scatter = False
             shared_output.record_stream(current_stream)
-            if self._shared_experts_attn_tp_comm and not fine_grained_overlap:
-                gathered_shared_output = shared_output
-                shared_output = torch.empty_like(hidden_states)
-                attn_tp_reduce_scatter_tensor(shared_output, gathered_shared_output)
 
         # Give the NPU shared-expert branch a head start. At this point
         # hidden_states is the decoder layer's post-attention RMSNorm output.
@@ -1190,7 +1247,8 @@ class KimiK3MoE(nn.Module):
 
         if not self.use_latent_moe:
             expert_output = self.experts(hidden_states, topk_output)
-            wait_and_finalize_shared_experts()
+            submit_shared_reduce_scatter()
+            join_shared()
             if shared_output is not None:
                 expert_output = expert_output + shared_output
             if self.tp_size > 1:
@@ -1216,6 +1274,7 @@ class KimiK3MoE(nn.Module):
             else:
                 routed_input, _ = self.routed_expert_down_proj(hidden_states)
         expert_output = run_experts(routed_input, topk_output)
+        submit_shared_reduce_scatter()
         if expert_output.shape[0] == 0:
             # The EP combine returns one row per source token.  Keep the
             # source-side empty result while avoiding empty RMSNorm/up-proj
@@ -1225,7 +1284,7 @@ class KimiK3MoE(nn.Module):
             latent = self._reduce_latent(expert_output)
             # up_proj is replicated, so the routed output is now fully reduced.
             out, _ = self.routed_expert_up_proj(latent)
-        wait_and_finalize_shared_experts()
+        join_shared()
         if shared_output is not None:
             # tp1 shared experts (SP-MoE) are complete per-rank; TP-sharded
             # ones need the partial-sum reduction.
