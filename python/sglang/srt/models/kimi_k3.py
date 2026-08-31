@@ -1441,7 +1441,9 @@ class KimiK3DeltaAttention(nn.Module):
 
         # The fused path hardcodes tp_size sharding, so require attn_tp == tp.
         # Full-rank K3 also fuses mixed block-FP8 attention projections.
-        self.do_fuse_qkvbfg = self.attn_tp_size == self.tp_size and (
+        self.do_fuse_qkvbfg = (
+            self.use_full_rank_gate or self.attn_tp_size == self.tp_size
+        ) and (
             quant_config is None or self.use_full_rank_gate
         )
 
@@ -1465,8 +1467,8 @@ class KimiK3DeltaAttention(nn.Module):
                 prefix=f"{prefix}.fused_qkvg_proj",
             )
             self.split_sizes = [
-                3 * projection_size // self.tp_size,
-                projection_size // self.tp_size,
+                3 * projection_size // self.attn_tp_size,
+                projection_size // self.attn_tp_size,
             ]
             self.b_proj = ColumnParallelLinear(
                 self.hidden_size,
@@ -1499,6 +1501,9 @@ class KimiK3DeltaAttention(nn.Module):
             # _merge_bfa_weights().
             self._bfa_w: Optional[torch.Tensor] = None
             self._bfa_f_b_w: Optional[torch.Tensor] = None
+            # NPU-only merged [q,k,v,g | beta | pad] weight. Appending beta to
+            # the wide projection removes a poorly utilized six-row GEMM.
+            self._qkvgb_w: Optional[torch.Tensor] = None
         elif self.do_fuse_qkvbfg:
             self.qkvb_sizes = [
                 projection_size,
@@ -1594,6 +1599,21 @@ class KimiK3DeltaAttention(nn.Module):
                     tp_size=self.attn_tp_size,
                     prefix=f"{prefix}.g_b_proj",
                 )
+
+        # By default NPU keeps b_proj and f_a_proj separate from the wide
+        # qkvg projection. The opt-in path below instead appends beta (and
+        # optionally f_a) to that wide GEMM, folding otherwise under-utilized
+        # skinny GEMVs into one well-aligned matmul.
+        self._npu_merged_qkvgb = (
+            _is_npu
+            and envs.SGLANG_NPU_K3_MERGED_QKVGB.get()
+            and self.do_fuse_qkvbfg
+            and self.use_full_rank_gate
+        )
+        self._npu_merged_qkvgb_fa = (
+            self._npu_merged_qkvgb
+            and envs.SGLANG_NPU_K3_MERGED_QKVGBFA.get()
+        )
 
         self.dt_bias = nn.Parameter(
             torch.empty(divide(projection_size, self.attn_tp_size), dtype=torch.float32)
@@ -1737,6 +1757,39 @@ class KimiK3DeltaAttention(nn.Module):
             self._bfa_f_b_w = self.f_b_proj.weight
         self._bfa_fa_size, self._bfa_b_size = sizes
 
+    def _merge_qkvgb_weights(self) -> None:
+        """Append beta to the full-rank qkvg projection on NPU.
+
+        At TP8 decode, the standalone [B, 7168] x [6, 7168] beta GEMM takes
+        about as long as the [3072, 7168] qkvg GEMM and gates the side-stream
+        join. Padding qkvgb to eight output rows preserves the wide GEMM's
+        alignment while eliminating that under-utilized kernel.
+        """
+        if not self._npu_merged_qkvgb:
+            return
+        mods = [self.fused_qkvg_proj, self.b_proj]
+        if self._npu_merged_qkvgb_fa:
+            mods.append(self.f_a_proj)
+        if self._bfa_uses_block_fp8:
+            weights = [_get_k3_dense_weight(mod) for mod in mods]
+            sizes = [weight.shape[0] for weight in weights]
+            pad = (-sum(sizes)) % 8
+            if pad:
+                weights.append(weights[0].new_zeros((pad, weights[0].shape[1])))
+            self._qkvgb_w = torch.cat(weights, dim=0).contiguous()
+            # qkvgb is the only forward path for this opt-in instance. Rebind
+            # the source parameters to slices of the dense merged storage so
+            # their serialized block-FP8 buffers can be released instead of
+            # retaining another full qkvg copy for every KDA layer.
+            offset = 0
+            for mod, size in zip(mods, sizes):
+                mod.weight.data = self._qkvgb_w[offset : offset + size]
+                offset += size
+        else:
+            self._qkvgb_w, sizes = _merge_weights_as_views(mods, pad_rows_to=8)
+        self._qkvgb_qkvg_size, self._qkvgb_b_size = sizes[:2]
+        self._qkvgb_fa_size = sizes[2] if len(sizes) == 3 else 0
+
     def _prepare_fused_decode(self) -> None:
         """Static inputs for the fused KDA decode kernel
         (kernels/ops/attention/kda_fused_decode): per-segment transposed fp32 conv
@@ -1794,7 +1847,21 @@ class KimiK3DeltaAttention(nn.Module):
 
     def forward_qkvbfg_fused(self, hidden_states: torch.Tensor):
         if self.use_full_rank_gate:
-            if self._bfa_w is not None:
+            if getattr(self, "_qkvgb_w", None) is not None:
+                n_qkvg = self._qkvgb_qkvg_size
+                n_b = self._qkvgb_b_size
+                n_fa = self._qkvgb_fa_size
+                if n_fa:
+                    qkvgb = _k3_bf16_gemm(hidden_states, self._qkvgb_w)
+                    fa = qkvgb[..., n_qkvg + n_b : n_qkvg + n_b + n_fa]
+                    forget_gate = self.f_b_proj(fa)[0]
+                else:
+                    qkvgb = _k3_bf16_gemm(hidden_states, self._qkvgb_w)
+                    forget_gate = self.f_b_proj(self.f_a_proj(hidden_states)[0])[0]
+                qkvg = qkvgb[..., :n_qkvg]
+                beta = qkvgb[..., n_qkvg : n_qkvg + n_b]
+                qkv, g_proj_states = torch.split(qkvg, self.split_sizes, dim=-1)
+            elif self._bfa_w is not None:
                 w = self._bfa_w
                 n_fa, n_b = self._bfa_fa_size, self._bfa_b_size
                 from sglang.kernels.ops.kimi_k3 import kimi_k3_tiny_gemm as gemm
@@ -3213,6 +3280,7 @@ class KimiK3LinearForCausalLM(nn.Module):
                 if bias.dtype != torch.float32:
                     bias.data = bias.data.to(torch.float32)
             if isinstance(layer.self_attn, KimiK3DeltaAttention):
+                layer.self_attn._merge_qkvgb_weights()
                 layer.self_attn._merge_bfa_weights()
                 layer.self_attn._prepare_fused_decode()
 
