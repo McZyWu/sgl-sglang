@@ -624,10 +624,7 @@ class KimiK3MoE(nn.Module):
             self._ep_a2a
             and self.shared_experts is not None
             and self.alt_stream is not None
-            and (
-                not self._shared_experts_attn_tp_comm
-                or self._npu_overlap_shared_rs
-            )
+            and (not self._shared_experts_attn_tp_comm or self._npu_overlap_shared_rs)
         )
 
         if self.use_latent_moe:

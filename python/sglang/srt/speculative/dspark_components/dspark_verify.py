@@ -542,9 +542,7 @@ class DsparkVerifyEpilogue:
             and hasattr(commit_ctx.draft_model, "project_target_hidden")
             and hasattr(commit_ctx.draft_model, "write_projected_target_hidden_kv")
         )
-        self._main_proj_stream = (
-            torch.cuda.Stream() if self._early_main_proj else None
-        )
+        self._main_proj_stream = torch.cuda.Stream() if self._early_main_proj else None
         # Graph replay can expose the captured aux hidden through a different
         # Python tensor/storage without rerunning the pre-logits hook.  Static
         # graph batches have distinct compact shapes, so retain the projected
@@ -648,9 +646,7 @@ class DsparkVerifyEpilogue:
         self._scatter_logits(compact_logits, verify_lens, bs)
         commit_lens = self._accept(input_ids, seq_lens, verify_lens, bs)
         compact_for_scatter = self._finish_main_proj(projected_hidden, compact_hidden)
-        self.strided_hidden = self._ensure_out(
-            self.strided_hidden, compact_for_scatter
-        )
+        self.strided_hidden = self._ensure_out(self.strided_hidden, compact_for_scatter)
         self._scatter_hidden(compact_for_scatter, verify_lens, bs)
         if self.folds_commit:
             self._commit_inject(
