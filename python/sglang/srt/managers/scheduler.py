@@ -3487,9 +3487,7 @@ class Scheduler(
                     new_batch = None
                     need_mlp_sync = True
             else:
-                new_batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(
-                    new_batch
-                )
+                new_batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(new_batch)
                 need_mlp_sync = new_batch is None
 
         if new_batch is not None:
@@ -3537,8 +3535,7 @@ class Scheduler(
         if batch.is_empty() or batch.is_prefill_only:
             return True
         if not (
-            batch.forward_mode.is_decode()
-            or batch.forward_mode.is_target_verify()
+            batch.forward_mode.is_decode() or batch.forward_mode.is_target_verify()
         ):
             return False
         if any(req.finished() for req in batch.reqs):
