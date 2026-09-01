@@ -578,10 +578,7 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             )
 
             onorm_runtime = getattr(layer, "_k3_onorm_runtime", None)
-            if (
-                envs.SGLANG_NPU_FUSED_KDA_ONORM.get()
-                and onorm_runtime is not None
-            ):
+            if envs.SGLANG_NPU_FUSED_KDA_ONORM.get() and onorm_runtime is not None:
                 from sgl_kernel_npu.fla.kda_ragged import (
                     gather_kda_verify_output_norm_npu,
                 )

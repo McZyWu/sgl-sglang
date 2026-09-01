@@ -129,8 +129,7 @@ class DsparkDraftSampler:
         # through to the block sampler below.
         draft_tokens = None
         if not self.folded_sampling and (
-            self._fused_greedy
-            or envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
+            self._fused_greedy or envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
         ):
             sample_block_greedy_fused = getattr(
                 self.markov_head, "sample_block_greedy_fused", None
@@ -200,9 +199,8 @@ def _resolve_folded_sampling(
         return False
     if mode == DsparkFoldedSampling.FORCE:
         return True
-    if (
-        envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
-        and getattr(model.markov_head, "keeps_base_logits_tp_sharded", False)
+    if envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get() and getattr(
+        model.markov_head, "keeps_base_logits_tp_sharded", False
     ):
         # AUTO prefers the greedy-only distributed top-1 tail. It remains part
         # of the captured draft graph; only stochastic folded sampling is off.
