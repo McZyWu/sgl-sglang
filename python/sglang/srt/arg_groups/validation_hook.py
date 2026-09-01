@@ -17,11 +17,55 @@ from sglang.srt.arg_groups.overrides import (
 from sglang.srt.distributed.device_communicators.mooncake_transfer_engine import (
     parse_ib_device_config,
 )
-from sglang.srt.runtime_context import get_platform
+from sglang.srt.runtime_context import derive_attention_widths, get_platform
 from sglang.srt.utils.common import torch_release
 from sglang.srt.utils.runai_utils import is_runai_obj_uri
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_k3_deepep_isolation_args(cfg: Any) -> None:
+    if cfg.enable_deepep_topk_int32:
+        if cfg.device != "npu":
+            raise ValueError("--enable-deepep-topk-int32 requires --device npu")
+        if cfg.moe_a2a_backend != "deepep":
+            raise ValueError(
+                "--enable-deepep-topk-int32 requires --moe-a2a-backend deepep"
+            )
+
+    if cfg.shared_experts_attn_tp_size in (None, 0):
+        return
+    if not cfg.enable_shared_experts_attn_tp:
+        raise ValueError(
+            "--shared-experts-attn-tp-size requires --enable-shared-experts-attn-tp"
+        )
+    if cfg.device != "npu":
+        raise ValueError(
+            "--shared-experts-attn-tp-size is currently supported only "
+            "with --device npu"
+        )
+    if cfg.moe_a2a_backend != "deepep":
+        raise ValueError(
+            "--shared-experts-attn-tp-size requires --moe-a2a-backend deepep"
+        )
+    if not cfg.enable_dp_attention:
+        raise ValueError("--shared-experts-attn-tp-size requires --enable-dp-attention")
+    _, effective_attn_tp_size = derive_attention_widths(
+        tp_size=cfg.tp_size,
+        attn_cp_size=cfg.attn_cp_size,
+        dp_size=cfg.dp_size,
+        enable_dp_attention=True,
+    )
+    if (
+        cfg.shared_experts_attn_tp_size > effective_attn_tp_size
+        or effective_attn_tp_size % cfg.shared_experts_attn_tp_size != 0
+    ):
+        raise ValueError(
+            f"effective attention TP {effective_attn_tp_size} must be "
+            "divisible by --shared-experts-attn-tp-size "
+            f"{cfg.shared_experts_attn_tp_size}, and the subgroup cannot "
+            "be wider than attention TP"
+        )
 
 
 def check_server_args(server_args: Any):
@@ -70,6 +114,8 @@ def check_server_args(server_args: Any):
         1,
         cfg.tp_size,
     ), "moe_dense_tp_size only supports None, 1, or tp_size currently"
+
+    _validate_k3_deepep_isolation_args(cfg)
 
     # Check served model name to not have colon as it is reserved for LoRA adapter syntax
     if not is_runai_obj_uri(cfg.served_model_name):
