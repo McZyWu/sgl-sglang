@@ -65,7 +65,7 @@ from enum import Enum, IntEnum, auto
 import torch
 import torch.distributed as dist
 
-from sglang.srt.runtime_context import get_resources
+from sglang.srt.runtime_context import get_exec, get_resources
 
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and is_hip()
 
@@ -695,6 +695,7 @@ class _DeepEPDispatcherImplLowLatency(_DeepEPDispatcherImplBase):
         self.return_recv_hook = return_recv_hook
         self.device_module = torch.get_device_module()
         self.quant_config = {}
+        self.keep_topk_ids_int32 = _is_npu and get_exec().moe.enable_deepep_topk_int32
 
     def dispatch_a(
         self,
@@ -703,10 +704,9 @@ class _DeepEPDispatcherImplLowLatency(_DeepEPDispatcherImplBase):
     ):
         buffer = self._get_buffer()
         topk_weights, topk_ids = topk_output.topk_weights, topk_output.topk_ids
-        # Ascend's low-latency DeepEP op consumes int32 expert ids and casts
-        # them back to int32 in its strategy. NPU TopK already emits int32, so
-        # avoid an int32 -> int64 -> int32 round trip on every MoE layer.
-        if not _is_npu:
+        # Ascend's low-latency DeepEP op consumes int32 expert ids. Keep the
+        # historical int64 path unless the isolated optimization is enabled.
+        if not self.keep_topk_ids_int32:
             topk_ids = topk_ids.to(torch.int64)
         expected_m = (
             hidden_states.shape[0] * buffer.group_size * topk_ids.shape[1]

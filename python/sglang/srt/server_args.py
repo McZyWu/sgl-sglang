@@ -1119,6 +1119,15 @@ class ServerArgs:
         "Shard shared expert weights across the attention TP group when using an expert-parallel all-to-all backend.",
         NS("parallel"),
     ] = False
+    shared_experts_attn_tp_size: A[
+        Optional[int],
+        Arg(
+            help="NPU attention-TP subgroup size used by TP-sharded shared experts. "
+            "Use 0 or omit the option to reuse the full attention TP group.",
+            choices=(0, 4, 8),
+        ),
+        NS("parallel"),
+    ] = None
     enable_dense_mlp_attn_tp: A[
         bool,
         "Shard dense MLP weights across the attention TP group under DP attention.",
@@ -2422,6 +2431,12 @@ class ServerArgs:
         "Select the mode when enable DeepEP or MoriEP MoE, could be `normal`, `low_latency` or `auto`. Default is `auto`, which means `low_latency` for decode batch and `normal` for prefill batch.",
         NS("exec.moe"),
     ] = "auto"
+    enable_deepep_topk_int32: A[
+        bool,
+        "Keep NPU DeepEP low-latency top-k expert IDs in int32 instead of "
+        "casting them to int64.",
+        NS("exec.moe"),
+    ] = False
     fuseep_mode: A[
         Literal[1, 2],
         "Select the mode when enable Ascend FuseEP MoE, 1 -> dispatch_gmm_combine_decode is executed；2 -> dispatch_ffn_combine is executed (support hybrid deployment when 2).",
