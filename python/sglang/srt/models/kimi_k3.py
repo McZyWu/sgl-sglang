@@ -575,13 +575,18 @@ class KimiK3MoE(nn.Module):
             and self._dp_attention
             and get_parallel().attn_tp_size > 1
         )
+        self._shared_experts_comm_group = (
+            get_parallel().shared_experts_tp_group
+            if self._shared_experts_attn_tp_comm
+            else get_parallel().attn_tp_group
+        )
         shared_experts_tp_kwargs = {}
         if self._shared_experts_tp1:
             shared_experts_tp_kwargs = dict(tp_rank=0, tp_size=1)
         elif self._shared_experts_attn_tp_comm:
             shared_experts_tp_kwargs = dict(
-                tp_rank=get_parallel().attn_tp_rank,
-                tp_size=get_parallel().attn_tp_size,
+                tp_rank=self._shared_experts_comm_group.rank_in_group,
+                tp_size=self._shared_experts_comm_group.world_size,
             )
         if self.num_shared_experts is not None and self.num_shared_experts > 0:
             shared_intermediate_size = moe_intermediate_size * self.num_shared_experts
@@ -1003,14 +1008,25 @@ class KimiK3MoE(nn.Module):
         if not self._shared_experts_attn_tp_comm:
             return self.shared_experts(hidden_states)
 
-        group = get_parallel().attn_tp_group
+        group = self._shared_experts_comm_group
         # SP-MoE presents one contiguous token shard per attention-TP rank;
-        # the DP local buffer is the full reassembled per-replica batch.
-        gathered_hidden_states = get_local_dp_buffer(group)
-        attn_tp_all_gather_into_tensor(gathered_hidden_states, hidden_states)
+        # a smaller shared-expert subgroup reassembles only its local rows.
+        if group is get_parallel().attn_tp_group:
+            gathered_hidden_states = get_local_dp_buffer(group)
+            attn_tp_all_gather_into_tensor(gathered_hidden_states, hidden_states)
+        else:
+            gathered_hidden_states = torch.empty(
+                (hidden_states.shape[0] * group.world_size, hidden_states.shape[1]),
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+            )
+            group.all_gather_into_tensor(gathered_hidden_states, hidden_states)
         gathered_shared_output = self.shared_experts(gathered_hidden_states)
         shared_output = torch.empty_like(hidden_states)
-        attn_tp_reduce_scatter_tensor(shared_output, gathered_shared_output)
+        if group is get_parallel().attn_tp_group:
+            attn_tp_reduce_scatter_tensor(shared_output, gathered_shared_output)
+        else:
+            group.reduce_scatter_tensor(shared_output, gathered_shared_output)
         return shared_output
 
     def _forward_unfused(
