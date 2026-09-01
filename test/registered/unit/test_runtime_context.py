@@ -80,6 +80,7 @@ GROUP_DELEGATIONS = [
     ("moe_dp_group", f"{_PS}.get_moe_dp_group"),
     ("moe_tp_group", f"{_PS}.get_moe_tp_group"),
     ("attn_tp_group", f"{_PS}.get_attn_tp_group"),
+    ("shared_experts_tp_group", f"{_PS}.get_shared_experts_tp_group"),
     ("attn_cp_group", f"{_PS}.get_attn_cp_group"),
 ]
 
@@ -144,18 +145,25 @@ class TestParallelDelegation(_IsolatedOverrides):
 class TestParallelOverride(_IsolatedOverrides):
     def test_override_takes_precedence(self):
         p = get_parallel()
-        with p.override(tp_size=99, tp_rank=3, attn_dp_size=8):
+        with p.override(
+            tp_size=99,
+            tp_rank=3,
+            attn_dp_size=8,
+            shared_experts_attn_tp_size=4,
+        ):
             self.assertEqual(p.tp_size, 99)
             self.assertEqual(p.tp_rank, 3)
             self.assertEqual(p.attn_dp_size, 8)
+            self.assertEqual(p.shared_experts_attn_tp_size, 4)
             # same singleton: a fresh get_parallel() sees the override too
             self.assertEqual(get_parallel().tp_size, 99)
         self.assertEqual(p._overrides, {})
 
     def test_override_can_force_groups(self):
-        sentinel = object()
-        with get_parallel().override(tp_group=sentinel):
-            self.assertIs(get_parallel().tp_group, sentinel)
+        for group_name in ("tp_group", "shared_experts_tp_group"):
+            sentinel = object()
+            with get_parallel().override(**{group_name: sentinel}):
+                self.assertIs(getattr(get_parallel(), group_name), sentinel)
 
     def test_override_nests_and_restores(self):
         p = get_parallel()

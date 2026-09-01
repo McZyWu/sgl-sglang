@@ -270,6 +270,11 @@ def _init_parallel_groups(
             and server_args.enable_two_batch_overlap
             and get_parallel().enable_dsa_prefill_context_parallel
         ),
+        shared_experts_attn_tp_size=(
+            get_parallel().shared_experts_attn_tp_size
+            if is_npu() and get_parallel().enable_shared_experts_attn_tp
+            else None
+        ),
         enable_symm_mem=get_exec().comm.enable_symm_mem,
         recovered_rank=is_ep_joiner,
         rank_offset=rank_offset,
