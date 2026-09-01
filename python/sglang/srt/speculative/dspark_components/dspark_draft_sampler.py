@@ -9,7 +9,6 @@ from sglang.kernels.ops.speculative.dspark.dspark_draft_model import (
     SampleStepTokens,
 )
 from sglang.srt.environ import DsparkFoldedSampling, envs
-from sglang.srt.models.dspark import VanillaMarkov
 from sglang.srt.speculative.dspark_components.dspark_draft import (
     select_draft_hidden_without_anchor,
 )
@@ -126,17 +125,20 @@ class DsparkDraftSampler:
         anchor = input_ids.view(bs, self.query_token_num)[:, 0]
 
         # Fused greedy fast path: only valid for the greedy (non-sampling) fold.
-        # Gated/RNN subclasses return None (hidden-state-dependent bias); fall
+        # Heads without a compatible implementation return None and fall
         # through to the block sampler below.
         draft_tokens = None
-        if (
-            not self.folded_sampling
-            and self._fused_greedy
-            and isinstance(self.markov_head, VanillaMarkov)
+        if not self.folded_sampling and (
+            self._fused_greedy
+            or envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
         ):
-            draft_tokens = self.markov_head.sample_block_greedy_fused(
-                base_logits, first_prev_tokens=anchor
+            sample_block_greedy_fused = getattr(
+                self.markov_head, "sample_block_greedy_fused", None
             )
+            if sample_block_greedy_fused is not None:
+                draft_tokens = sample_block_greedy_fused(
+                    base_logits, first_prev_tokens=anchor
+                )
 
         if draft_tokens is None:
             if self.folded_sampling:
@@ -198,6 +200,18 @@ def _resolve_folded_sampling(
         return False
     if mode == DsparkFoldedSampling.FORCE:
         return True
+    if (
+        envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
+        and getattr(model.markov_head, "keeps_base_logits_tp_sharded", False)
+    ):
+        # AUTO prefers the greedy-only distributed top-1 tail. It remains part
+        # of the captured draft graph; only stochastic folded sampling is off.
+        if tp_rank == 0:
+            logger.info(
+                "DSpark folded sampling AUTO selected the TP-sharded greedy "
+                "proposal path."
+            )
+        return False
     vocab = int(model.lm_head.org_vocab_size)
     noise_bytes = max_bs * vocab * 4
     logits_bytes = max_bs * gamma * vocab * _base_logits_dtype(model).itemsize
