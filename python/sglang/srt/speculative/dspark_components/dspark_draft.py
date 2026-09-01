@@ -225,6 +225,11 @@ class DraftBlockProposer:
         # Persistent (bs, gamma) mask-token buffer: only column 0 (the bonus
         # token) changes per step, so avoid a fresh torch.full every decode.
         self._draft_block_ids_buf: Optional[torch.Tensor] = None
+        self._reuse_npu_scalar_metadata = str(draft_model_runner.device).startswith(
+            "npu"
+        )
+        self._num_token_non_padded_cache_key = None
+        self._num_token_non_padded_cache_value = None
 
     def attach_draft_sampler(self, draft_sampler) -> None:
         self._draft_sampler = draft_sampler
@@ -426,7 +431,9 @@ class DraftBlockProposer:
             spec_algorithm=SpeculativeAlgorithm.DSPARK,
             spec_info=self._draft_block_spec_info,
             capture_hidden_mode=CaptureHiddenMode.NULL,
-            num_token_non_padded=_make_num_token_non_padded(draft_num_tokens, device),
+            num_token_non_padded=self._get_num_token_non_padded(
+                draft_num_tokens, device
+            ),
             num_token_non_padded_cpu=draft_num_tokens,
         )
         self._fill_dp_moe_sync_metadata(draft_forward_batch, batch)
@@ -464,6 +471,19 @@ class DraftBlockProposer:
             draft_hidden_3d=draft_hidden_3d,
             can_run_graph=draft_out.can_run_graph,
         )
+
+    def _get_num_token_non_padded(self, num_tokens: int, device):
+        if not self._reuse_npu_scalar_metadata:
+            return _make_num_token_non_padded(num_tokens, device)
+        if not enable_num_token_non_padded():
+            return None
+        cache_key = (num_tokens, str(device))
+        if self._num_token_non_padded_cache_key != cache_key:
+            self._num_token_non_padded_cache_key = cache_key
+            self._num_token_non_padded_cache_value = torch.tensor(
+                num_tokens, dtype=torch.int32, device=device
+            )
+        return self._num_token_non_padded_cache_value
 
     def _fill_dp_moe_sync_metadata(
         self, forward_batch: ForwardBatch, batch: ScheduleBatch
