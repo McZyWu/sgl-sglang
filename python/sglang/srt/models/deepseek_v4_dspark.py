@@ -549,12 +549,10 @@ class DSparkV4MarkovHead(nn.Module):
                 bias_local,
                 vocab_offset=shard.org_vocab_start,
             )
-            candidates = self._shard_group.all_gather(
-                candidates_local, dim=1
-            ).view(batch_size, shard.tp_size, 2)
-            prev_tokens = select_global_top1_npu(
-                candidates, vocab_size=self.vocab_size
+            candidates = self._shard_group.all_gather(candidates_local, dim=1).view(
+                batch_size, shard.tp_size, 2
             )
+            prev_tokens = select_global_top1_npu(candidates, vocab_size=self.vocab_size)
             sampled_tokens.append(prev_tokens)
         return torch.stack(sampled_tokens, dim=1)
 
