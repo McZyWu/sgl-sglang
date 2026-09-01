@@ -290,6 +290,7 @@ class DSparkWorkerV2(BaseSpecWorker):
             self.model_runner.capture_tail_hooks.append(
                 self._verify_epilogue.capture_hook
             )
+            self._verify_epilogue.install_pre_logits_hook(self.model_runner.model)
 
         self._simulate_acc_len = float(envs.SGLANG_SIMULATE_ACC_LEN.get())
         if (
@@ -794,6 +795,12 @@ class DSparkWorkerV2(BaseSpecWorker):
                 commit_lens=accept.commit_lens,
                 bs=bs,
                 run_compact=run_compact,
+                hidden_is_projected=(
+                    run_compact
+                    and can_run_cuda_graph
+                    and epilogue is not None
+                    and epilogue.projects_hidden
+                ),
             )
         logits_output.hidden_states = None
 
