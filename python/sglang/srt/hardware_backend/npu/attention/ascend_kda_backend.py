@@ -17,6 +17,7 @@ from sgl_kernel_npu.fla.utils import prepare_chunk_indices
 from sglang.kernels.ops.attention.fla.cumsum import chunk_local_cumsum
 from sglang.kernels.ops.attention.fla.kda import chunk_kda_scaled_dot_kkt_fwd
 from sglang.kernels.ops.attention.fla.l2norm import l2norm_fwd
+from sglang.srt.environ import envs
 from sglang.srt.layers.attention.linear.kda_backend import (
     KDAAttnBackend,
     ragged_verify_dense_scatter_indices,
@@ -146,6 +147,76 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             )
         )
         self.kernel_dispatcher.extend_kernel = _AscendKDAExtendKernel()
+        self._dense_verify_metadata_cache = {}
+        self._dense_token_indices = None
+
+    def init_forward_metadata(self, forward_batch: ForwardBatch):
+        super().init_forward_metadata(forward_batch)
+        # Eager forwards do not run init_forward_metadata_in_graph, so rebuild
+        # the dynamic ragged index once here and share it across all KDA layers.
+        self._refresh_dense_token_indices(forward_batch)
+
+    def init_forward_metadata_in_graph(self, forward_batch: ForwardBatch):
+        """Record the ragged-index build exactly once in each captured graph.
+
+        The replay query_start_loc buffer has a stable address but changing
+        values. Caching by data_ptr across capture warmups would therefore make
+        the real capture reuse the warmup tensor and omit this builder op; graph
+        replays would then scatter with stale indices. Keeping the build in this
+        hook records it into the graph, and its output is shared by every KDA
+        layer in that graph body.
+        """
+        super().init_forward_metadata_in_graph(forward_batch)
+        self._refresh_dense_token_indices(forward_batch)
+
+    def _refresh_dense_token_indices(self, forward_batch: ForwardBatch):
+        self._dense_token_indices = None
+        if (
+            not envs.SGLANG_NPU_REUSE_KDA_VERIFY_METADATA.get()
+            or not forward_batch.forward_mode.is_target_verify()
+            or forward_batch.spec_info is None
+        ):
+            return
+
+        query_start_loc = self.forward_metadata.query_start_loc
+        draft_token_num = forward_batch.spec_info.draft_token_num
+        seq_len = forward_batch.input_ids.shape[0]
+        num_dense_tokens = (query_start_loc.shape[0] - 1) * draft_token_num
+        ragged_layout = forward_batch.spec_info.ragged_verify_layout
+        if ragged_layout is None and seq_len == num_dense_tokens:
+            return
+
+        self._dense_token_indices = ragged_verify_dense_scatter_indices(
+            query_start_loc=query_start_loc,
+            seq_len=seq_len,
+            draft_token_num=draft_token_num,
+        )
+
+    def _get_dense_verify_metadata(
+        self,
+        batch_size: int,
+        draft_token_num: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        key = (batch_size, draft_token_num, device)
+        cached = self._dense_verify_metadata_cache.get(key)
+        if cached is None:
+            num_accepted_tokens = torch.full(
+                (batch_size,),
+                draft_token_num,
+                dtype=torch.int32,
+                device=device,
+            )
+            dense_query_start_loc = torch.arange(
+                0,
+                batch_size * draft_token_num + 1,
+                step=draft_token_num,
+                dtype=torch.int32,
+                device=device,
+            )
+            cached = (num_accepted_tokens, dense_query_start_loc)
+            self._dense_verify_metadata_cache[key] = cached
+        return cached
 
     def _get_conv_weights_t(
         self, layer: RadixLinearAttention, dtype: torch.dtype
@@ -387,36 +458,70 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             dense_a = a
             dense_b = b
         else:
-            dense_token_indices = ragged_verify_dense_scatter_indices(
-                query_start_loc=query_start_loc,
-                seq_len=seq_len,
-                draft_token_num=draft_token_num,
-            )
-            dense_qkv = self._scatter_tokens_to_dense(
-                mixed_qkv, dense_token_indices, num_dense_tokens
-            ).view(batch_size, draft_token_num, -1)
-            dense_a = self._scatter_gate_to_dense(
-                a, dense_token_indices, num_dense_tokens
-            )
-            dense_b = self._scatter_gate_to_dense(
-                b, dense_token_indices, num_dense_tokens
-            )
+            if envs.SGLANG_NPU_REUSE_KDA_VERIFY_METADATA.get():
+                dense_token_indices = self._dense_token_indices
+                if dense_token_indices is None:
+                    # Defensive fallback for non-standard callers that bypass
+                    # both metadata-init entry points. Normal eager and graph
+                    # paths build once before the first KDA layer.
+                    dense_token_indices = ragged_verify_dense_scatter_indices(
+                        query_start_loc=query_start_loc,
+                        seq_len=seq_len,
+                        draft_token_num=draft_token_num,
+                    )
+                    self._dense_token_indices = dense_token_indices
+            else:
+                dense_token_indices = ragged_verify_dense_scatter_indices(
+                    query_start_loc=query_start_loc,
+                    seq_len=seq_len,
+                    draft_token_num=draft_token_num,
+                )
+            if envs.SGLANG_NPU_FUSED_KDA_RAGGED_IO.get():
+                from sgl_kernel_npu.fla.kda_ragged import (
+                    scatter_kda_verify_inputs_npu,
+                )
+
+                dense_qkv, dense_a, dense_b = scatter_kda_verify_inputs_npu(
+                    mixed_qkv,
+                    a,
+                    b,
+                    query_start_loc,
+                    draft_token_num=draft_token_num,
+                )
+                dense_qkv = dense_qkv.view(batch_size, draft_token_num, -1)
+            else:
+                dense_qkv = self._scatter_tokens_to_dense(
+                    mixed_qkv, dense_token_indices, num_dense_tokens
+                ).view(batch_size, draft_token_num, -1)
+                dense_a = self._scatter_gate_to_dense(
+                    a, dense_token_indices, num_dense_tokens
+                )
+                dense_b = self._scatter_gate_to_dense(
+                    b, dense_token_indices, num_dense_tokens
+                )
 
         intermediate_indices = self.verify_intermediate_state_indices[:batch_size]
         conv_states = cache.conv[0]
-        num_accepted_tokens = torch.full(
-            (batch_size,),
-            draft_token_num,
-            dtype=torch.int32,
-            device=mixed_qkv.device,
-        )
-        dense_query_start_loc = torch.arange(
-            0,
-            num_dense_tokens + 1,
-            step=draft_token_num,
-            dtype=torch.int32,
-            device=mixed_qkv.device,
-        )
+        if envs.SGLANG_NPU_REUSE_KDA_VERIFY_METADATA.get():
+            num_accepted_tokens, dense_query_start_loc = (
+                self._get_dense_verify_metadata(
+                    batch_size, draft_token_num, mixed_qkv.device
+                )
+            )
+        else:
+            num_accepted_tokens = torch.full(
+                (batch_size,),
+                draft_token_num,
+                dtype=torch.int32,
+                device=mixed_qkv.device,
+            )
+            dense_query_start_loc = torch.arange(
+                0,
+                num_dense_tokens + 1,
+                step=draft_token_num,
+                dtype=torch.int32,
+                device=mixed_qkv.device,
+            )
         processed_qkv = torch.ops.npu.causal_conv1d(
             dense_qkv.reshape(num_dense_tokens, -1).contiguous(),
             self._get_conv_weights_t(layer, mixed_qkv.dtype),
@@ -434,34 +539,64 @@ class AscendKDAAttnBackend(KDAAttnBackend):
         k = k.unflatten(-1, (-1, layer.head_k_dim)).unsqueeze(0)
         v = v.unflatten(-1, (-1, layer.head_v_dim)).unsqueeze(0)
 
-        # Activate the forget gate and beta in FP32 before entering the
-        # recurrent kernel to match the checkpoint's verify contract.
-        # This stays in the Ascend backend so shared/GPU model code is unchanged.
-        preactivated_a = fused_kda_gate_npu(
-            dense_a.flatten(-2),
-            layer.A_log,
-            layer.head_k_dim,
-            gate_bias=layer.dt_bias,
-            lower_bound=layer.lower_bound,
-        )
-        preactivated_b = dense_b.float().sigmoid()
+        fuse_gate_activations = envs.SGLANG_NPU_FUSED_KDA_VERIFY_GATES.get()
+        if fuse_gate_activations:
+            # Keep raw gates until the recurrent kernel. This preserves the K3
+            # FP32 safe-gate contract while avoiding two per-layer launches.
+            verify_a = dense_a
+            verify_b = dense_b
+        else:
+            verify_a = fused_kda_gate_npu(
+                dense_a.flatten(-2),
+                layer.A_log,
+                layer.head_k_dim,
+                gate_bias=layer.dt_bias,
+                lower_bound=layer.lower_bound,
+            )
+            verify_b = dense_b.float().sigmoid()
         out = kda_target_verify_npu(
             A_log=layer.A_log,
             dt_bias=layer.dt_bias,
             q=q,
             k=k,
             v=v,
-            a=preactivated_a,
-            b=preactivated_b,
+            a=verify_a,
+            b=verify_b,
             initial_state_source=cache.temporal,
             initial_state_indices=cache_indices[:batch_size],
             intermediate_states_buffer=intermediate_state,
             intermediate_state_indices=intermediate_indices,
             cache_steps=draft_token_num,
-            gates_are_preactivated=True,
+            gates_are_preactivated=not fuse_gate_activations,
+            lower_bound=layer.lower_bound if fuse_gate_activations else None,
         )
         if dense_token_indices is None:
             return out
+        if envs.SGLANG_NPU_FUSED_KDA_RAGGED_IO.get():
+            from sgl_kernel_npu.fla.kda_ragged import (
+                gather_kda_verify_output_npu,
+            )
+
+            onorm_runtime = getattr(layer, "_k3_onorm_runtime", None)
+            if (
+                envs.SGLANG_NPU_FUSED_KDA_ONORM.get()
+                and onorm_runtime is not None
+            ):
+                from sgl_kernel_npu.fla.kda_ragged import (
+                    gather_kda_verify_output_norm_npu,
+                )
+
+                onorm_gate, onorm_weight, onorm_eps = onorm_runtime
+                out = gather_kda_verify_output_norm_npu(
+                    out,
+                    dense_token_indices,
+                    onorm_gate,
+                    onorm_weight,
+                    eps=onorm_eps,
+                )
+                layer._k3_onorm_consumed = True
+                return out
+            return gather_kda_verify_output_npu(out, dense_token_indices)
         padded_out = out.new_zeros(1, num_dense_tokens + 1, *out.shape[2:])
         padded_out[:, :num_dense_tokens] = out
         return padded_out[:, dense_token_indices]

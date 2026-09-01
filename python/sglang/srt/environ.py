@@ -510,6 +510,7 @@ class Envs:
     SGLANG_DSPARK_BLOCK_ACCEPT_ONLINE_INTERVAL = EnvInt(0)
     SGLANG_DSPARK_ENABLE_SPS_RECORD = EnvBool(False)
     SGLANG_DSPARK_FAST_KERNEL = EnvBool(True)
+    SGLANG_DSPARK_FUSED_LOCAL_TOP1 = EnvBool(False)
     SGLANG_DSPARK_FP32_LM_HEAD = EnvBool(False)
     SGLANG_DSPARK_FAST_SAMPLING = EnvBool(True)
     SGLANG_DSPARK_FOLDED_SAMPLING = EnvInt(DsparkFoldedSampling.AUTO)
@@ -891,6 +892,12 @@ class Envs:
     SGLANG_USE_AG_AFTER_QLORA = EnvBool(False)
     # Enable int4x2 weights loading
     SGLANG_NPU_W4A4_NEW_PACKING = EnvBool(False)
+    # Kimi-K3/DSpark hot-path experiments. These stay opt-in so each component
+    # can be disabled independently during graph parity and performance A/Bs.
+    SGLANG_NPU_FUSED_KDA_VERIFY_GATES = EnvBool(False)
+    SGLANG_NPU_FUSED_KDA_RAGGED_IO = EnvBool(False)
+    SGLANG_NPU_FUSED_KDA_ONORM = EnvBool(False)
+    SGLANG_NPU_REUSE_KDA_VERIFY_METADATA = EnvBool(False)
     # Use the graph-safe Triton-Ascend kernel for masked speculative KV commits.
     SGLANG_NPU_USE_TRITON_PREFIX_KV_CACHE_STORE = EnvBoolWithAlias(
         False, deprecated_name="SGLANG_NPU_USE_TRITON_KV_CACHE_STORE"
