@@ -386,6 +386,10 @@ class DSparkV4MarkovHead(nn.Module):
         self._tp_shard: Optional[MarkovW2ShardGeometry] = None
         self._shard_group = None
 
+    @property
+    def keeps_base_logits_tp_sharded(self) -> bool:
+        return self._tp_shard is not None
+
     def configure_tp_shard(self, *, lm_head: nn.Module) -> None:
         if not self._opt_markov_w2_tp_shard:
             return
@@ -501,6 +505,56 @@ class DSparkV4MarkovHead(nn.Module):
             sampler=sampler,
             collect_corrected=collect_corrected,
         )
+
+    def sample_block_greedy_fused(
+        self,
+        base_logits: torch.Tensor,
+        *,
+        first_prev_tokens: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        """Sample sharded DSpark logits without materializing full vocab rows."""
+        shard = self._tp_shard
+        if (
+            not _is_npu
+            or not envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
+            or shard is None
+            or self._shard_group is None
+            or not self._opt_markov_w2_bf16
+            or base_logits.dtype != torch.bfloat16
+        ):
+            return None
+
+        from sgl_kernel_npu.dspark.top1 import (
+            select_global_top1_npu,
+            select_local_top1_after_add_npu,
+        )
+
+        batch_size, proposal_len = base_logits.shape[:2]
+        if proposal_len == 0:
+            return torch.empty(
+                batch_size, 0, dtype=torch.long, device=base_logits.device
+            )
+
+        org_width = shard.org_vocab_end - shard.org_vocab_start
+        weight_local = self.markov_w2.weight[
+            shard.org_vocab_start : shard.org_vocab_end
+        ]
+        sampled_tokens = []
+        prev_tokens = first_prev_tokens.long()
+        for step_idx in range(proposal_len):
+            latent = self.get_prev_embeddings(prev_tokens)
+            bias_local = F.linear(latent.to(weight_local.dtype), weight_local)
+            candidates_local = select_local_top1_after_add_npu(
+                base_logits[:, step_idx, :org_width],
+                bias_local,
+                vocab_offset=shard.org_vocab_start,
+            )
+            candidates = self._shard_group.all_gather(candidates_local, dim=1).view(
+                batch_size, shard.tp_size, 2
+            )
+            prev_tokens = select_global_top1_npu(candidates, vocab_size=self.vocab_size)
+            sampled_tokens.append(prev_tokens)
+        return torch.stack(sampled_tokens, dim=1)
 
 
 def build_dspark_v4_confidence_head(
