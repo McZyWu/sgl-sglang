@@ -602,28 +602,14 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             gates_are_preactivated=not fuse_gate_activations,
             lower_bound=layer.lower_bound if fuse_gate_activations else None,
         )
-        onorm_runtime = getattr(layer, "_k3_onorm_runtime", None)
         if dense_token_indices is None:
-            if envs.SGLANG_NPU_FUSED_KDA_ONORM.get() and onorm_runtime is not None:
-                from sgl_kernel_npu.fla.kda_ragged import (
-                    normalize_kda_verify_output_npu,
-                )
-
-                onorm_gate, onorm_weight, onorm_eps = onorm_runtime
-                out = normalize_kda_verify_output_npu(
-                    out,
-                    onorm_gate,
-                    onorm_weight,
-                    cache_indices=cache_indices[:batch_size],
-                    eps=onorm_eps,
-                )
-                layer._k3_onorm_consumed = True
             return out
         if envs.SGLANG_NPU_FUSED_KDA_RAGGED_IO.get():
             from sgl_kernel_npu.fla.kda_ragged import (
                 gather_kda_verify_output_npu,
             )
 
+            onorm_runtime = getattr(layer, "_k3_onorm_runtime", None)
             if envs.SGLANG_NPU_FUSED_KDA_ONORM.get() and onorm_runtime is not None:
                 from sgl_kernel_npu.fla.kda_ragged import (
                     gather_kda_verify_output_norm_npu,
