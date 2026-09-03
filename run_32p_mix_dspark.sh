@@ -3,7 +3,7 @@
 # Reproducible four-node Kimi-K3 DSpark graph launcher for the KDA/DSpark
 # hot-path bundle. Run this file once on every node.
 #
-# HOTPATH_BUNDLE=1 enables all five pull/1 paths. HOTPATH_BUNDLE=0 keeps the
+# HOTPATH_BUNDLE=1 enables all six optimized paths. HOTPATH_BUNDLE=0 keeps the
 # same framework/kernel revisions and launch parameters for an isolated A/B.
 # NODE_RANK can be supplied explicitly; when omitted, it is resolved from
 # NODE_IPS and hostname -I. CONFIG_ONLY=1 prints the command without launching.

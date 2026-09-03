@@ -18,6 +18,9 @@ from sglang.kernels.ops.attention.fla.cumsum import chunk_local_cumsum
 from sglang.kernels.ops.attention.fla.kda import chunk_kda_scaled_dot_kkt_fwd
 from sglang.kernels.ops.attention.fla.l2norm import l2norm_fwd
 from sglang.srt.environ import envs
+from sglang.srt.hardware_backend.npu.attention.kda_metadata import (
+    mask_dense_verify_cache_indices,
+)
 from sglang.srt.layers.attention.linear.kda_backend import (
     KDAAttnBackend,
     ragged_verify_dense_scatter_indices,
@@ -26,15 +29,6 @@ from sglang.srt.layers.radix_linear_attention import RadixLinearAttention
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 
 _LOG2_E = math.log2(math.e)
-
-
-def _mask_dense_verify_cache_indices(
-    cache_indices: torch.Tensor, query_start_loc: torch.Tensor
-) -> torch.Tensor:
-    """Return int64 state indices with zero-length graph requests masked."""
-    active_requests = query_start_loc[1:] > query_start_loc[:-1]
-    cache_indices_i64 = cache_indices[: active_requests.shape[0]].to(torch.int64)
-    return torch.where(active_requests, cache_indices_i64, -1)
 
 
 class _AscendKDAExtendKernel:
@@ -196,7 +190,7 @@ class AscendKDAAttnBackend(KDAAttnBackend):
         # layer. The cast and where are recorded in a graph, so the stable
         # output buffer is refreshed on every replay.
         query_start_loc = self.forward_metadata.query_start_loc
-        self._dense_cache_indices_i64 = _mask_dense_verify_cache_indices(
+        self._dense_cache_indices_i64 = mask_dense_verify_cache_indices(
             self.forward_metadata.mamba_cache_indices,
             query_start_loc,
         )
@@ -479,7 +473,7 @@ class AscendKDAAttnBackend(KDAAttnBackend):
         if verify_cache_indices is None:
             # Defensive eager fallback for non-standard callers that bypass
             # both metadata-init entry points.
-            verify_cache_indices = _mask_dense_verify_cache_indices(
+            verify_cache_indices = mask_dense_verify_cache_indices(
                 cache_indices[:batch_size],
                 query_start_loc,
             )
