@@ -28,6 +28,15 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 _LOG2_E = math.log2(math.e)
 
 
+def _mask_dense_verify_cache_indices(
+    cache_indices: torch.Tensor, query_start_loc: torch.Tensor
+) -> torch.Tensor:
+    """Return int64 state indices with zero-length graph requests masked."""
+    active_requests = query_start_loc[1:] > query_start_loc[:-1]
+    cache_indices_i64 = cache_indices[: active_requests.shape[0]].to(torch.int64)
+    return torch.where(active_requests, cache_indices_i64, -1)
+
+
 class _AscendKDAExtendKernel:
     """Ascend-only KDA prefill decomposition backed by sgl-kernel-npu."""
 
@@ -179,19 +188,22 @@ class AscendKDAAttnBackend(KDAAttnBackend):
         ):
             return
 
-        if envs.SGLANG_NPU_KDA_DENSE_CONV3D.get():
-            # causal_conv1d's host shim normalizes cache indices to int64. Do
-            # that once in the backend metadata hook instead of once per KDA
-            # layer. Under graph capture this cast is recorded in the graph and
-            # refreshes the stable output buffer on every replay.
-            self._dense_cache_indices_i64 = (
-                self.forward_metadata.mamba_cache_indices.to(torch.int64)
-            )
+        # Graph replay represents padded requests with a zero-length segment
+        # in query_start_loc, while its shared mamba-index buffer uses 0.  KDA
+        # verify scatters into a fixed B*T layout, so both convolution layouts
+        # and the recurrence need an explicit -1 sentinel. Build it once per
+        # eager forward / captured graph body and share it across every KDA
+        # layer. The cast and where are recorded in a graph, so the stable
+        # output buffer is refreshed on every replay.
+        query_start_loc = self.forward_metadata.query_start_loc
+        self._dense_cache_indices_i64 = _mask_dense_verify_cache_indices(
+            self.forward_metadata.mamba_cache_indices,
+            query_start_loc,
+        )
 
         if not envs.SGLANG_NPU_REUSE_KDA_VERIFY_METADATA.get():
             return
 
-        query_start_loc = self.forward_metadata.query_start_loc
         draft_token_num = forward_batch.spec_info.draft_token_num
         seq_len = forward_batch.input_ids.shape[0]
         num_dense_tokens = (query_start_loc.shape[0] - 1) * draft_token_num
@@ -463,6 +475,14 @@ class AscendKDAAttnBackend(KDAAttnBackend):
 
         draft_token_num = forward_batch.spec_info.draft_token_num
         batch_size = query_start_loc.shape[0] - 1
+        verify_cache_indices = self._dense_cache_indices_i64
+        if verify_cache_indices is None:
+            # Defensive eager fallback for non-standard callers that bypass
+            # both metadata-init entry points.
+            verify_cache_indices = _mask_dense_verify_cache_indices(
+                cache_indices[:batch_size],
+                query_start_loc,
+            )
         num_dense_tokens = batch_size * draft_token_num
         ragged_layout = forward_batch.spec_info.ragged_verify_layout
         if ragged_layout is None and seq_len == num_dense_tokens:
@@ -536,18 +556,13 @@ class AscendKDAAttnBackend(KDAAttnBackend):
                 device=mixed_qkv.device,
             )
         if envs.SGLANG_NPU_KDA_DENSE_CONV3D.get():
-            conv_cache_indices = self._dense_cache_indices_i64
-            if conv_cache_indices is None:
-                # Defensive eager fallback for non-standard callers that skip
-                # both metadata-init entry points.
-                conv_cache_indices = cache_indices.to(torch.int64)
             processed_qkv = torch.ops.npu.causal_conv1d(
                 dense_qkv.contiguous(),
                 self._get_conv_weights_t(layer, mixed_qkv.dtype),
                 conv_states=conv_states,
                 bias=layer.bias,
                 query_start_loc=None,
-                cache_indices=conv_cache_indices[:batch_size],
+                cache_indices=verify_cache_indices,
                 num_accepted_tokens=num_accepted_tokens,
                 activation_mode=1,
                 pad_slot_id=-1,
@@ -560,7 +575,7 @@ class AscendKDAAttnBackend(KDAAttnBackend):
                 conv_states=conv_states,
                 bias=layer.bias,
                 query_start_loc=dense_query_start_loc,
-                cache_indices=cache_indices[:batch_size],
+                cache_indices=verify_cache_indices,
                 num_accepted_tokens=num_accepted_tokens,
                 activation_mode=1,
                 pad_slot_id=-1,
@@ -595,7 +610,7 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             a=verify_a,
             b=verify_b,
             initial_state_source=cache.temporal,
-            initial_state_indices=cache_indices[:batch_size],
+            initial_state_indices=verify_cache_indices,
             intermediate_states_buffer=intermediate_state,
             intermediate_state_indices=intermediate_indices,
             cache_steps=draft_token_num,
