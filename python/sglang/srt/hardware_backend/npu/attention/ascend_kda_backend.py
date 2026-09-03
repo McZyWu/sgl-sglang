@@ -149,6 +149,7 @@ class AscendKDAAttnBackend(KDAAttnBackend):
         self.kernel_dispatcher.extend_kernel = _AscendKDAExtendKernel()
         self._dense_verify_metadata_cache = {}
         self._dense_token_indices = None
+        self._dense_cache_indices_i64 = None
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         super().init_forward_metadata(forward_batch)
@@ -171,11 +172,23 @@ class AscendKDAAttnBackend(KDAAttnBackend):
 
     def _refresh_dense_token_indices(self, forward_batch: ForwardBatch):
         self._dense_token_indices = None
+        self._dense_cache_indices_i64 = None
         if (
-            not envs.SGLANG_NPU_REUSE_KDA_VERIFY_METADATA.get()
-            or not forward_batch.forward_mode.is_target_verify()
+            not forward_batch.forward_mode.is_target_verify()
             or forward_batch.spec_info is None
         ):
+            return
+
+        if envs.SGLANG_NPU_KDA_DENSE_CONV3D.get():
+            # causal_conv1d's host shim normalizes cache indices to int64. Do
+            # that once in the backend metadata hook instead of once per KDA
+            # layer. Under graph capture this cast is recorded in the graph and
+            # refreshes the stable output buffer on every replay.
+            self._dense_cache_indices_i64 = (
+                self.forward_metadata.mamba_cache_indices.to(torch.int64)
+            )
+
+        if not envs.SGLANG_NPU_REUSE_KDA_VERIFY_METADATA.get():
             return
 
         query_start_loc = self.forward_metadata.query_start_loc
@@ -522,18 +535,37 @@ class AscendKDAAttnBackend(KDAAttnBackend):
                 dtype=torch.int32,
                 device=mixed_qkv.device,
             )
-        processed_qkv = torch.ops.npu.causal_conv1d(
-            dense_qkv.reshape(num_dense_tokens, -1).contiguous(),
-            self._get_conv_weights_t(layer, mixed_qkv.dtype),
-            conv_states=conv_states,
-            bias=layer.bias,
-            query_start_loc=dense_query_start_loc,
-            cache_indices=cache_indices[:batch_size],
-            num_accepted_tokens=num_accepted_tokens,
-            activation_mode=1,
-            pad_slot_id=-1,
-            run_mode=1,
-        )
+        if envs.SGLANG_NPU_KDA_DENSE_CONV3D.get():
+            conv_cache_indices = self._dense_cache_indices_i64
+            if conv_cache_indices is None:
+                # Defensive eager fallback for non-standard callers that skip
+                # both metadata-init entry points.
+                conv_cache_indices = cache_indices.to(torch.int64)
+            processed_qkv = torch.ops.npu.causal_conv1d(
+                dense_qkv.contiguous(),
+                self._get_conv_weights_t(layer, mixed_qkv.dtype),
+                conv_states=conv_states,
+                bias=layer.bias,
+                query_start_loc=None,
+                cache_indices=conv_cache_indices[:batch_size],
+                num_accepted_tokens=num_accepted_tokens,
+                activation_mode=1,
+                pad_slot_id=-1,
+                run_mode=1,
+            ).view(num_dense_tokens, -1)
+        else:
+            processed_qkv = torch.ops.npu.causal_conv1d(
+                dense_qkv.reshape(num_dense_tokens, -1).contiguous(),
+                self._get_conv_weights_t(layer, mixed_qkv.dtype),
+                conv_states=conv_states,
+                bias=layer.bias,
+                query_start_loc=dense_query_start_loc,
+                cache_indices=cache_indices[:batch_size],
+                num_accepted_tokens=num_accepted_tokens,
+                activation_mode=1,
+                pad_slot_id=-1,
+                run_mode=1,
+            )
         q, k, v = processed_qkv.split([layer.q_dim, layer.k_dim, layer.v_dim], dim=-1)
         q = q.unflatten(-1, (-1, layer.head_q_dim)).unsqueeze(0)
         k = k.unflatten(-1, (-1, layer.head_k_dim)).unsqueeze(0)
@@ -570,14 +602,28 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             gates_are_preactivated=not fuse_gate_activations,
             lower_bound=layer.lower_bound if fuse_gate_activations else None,
         )
+        onorm_runtime = getattr(layer, "_k3_onorm_runtime", None)
         if dense_token_indices is None:
+            if envs.SGLANG_NPU_FUSED_KDA_ONORM.get() and onorm_runtime is not None:
+                from sgl_kernel_npu.fla.kda_ragged import (
+                    normalize_kda_verify_output_npu,
+                )
+
+                onorm_gate, onorm_weight, onorm_eps = onorm_runtime
+                out = normalize_kda_verify_output_npu(
+                    out,
+                    onorm_gate,
+                    onorm_weight,
+                    cache_indices=cache_indices[:batch_size],
+                    eps=onorm_eps,
+                )
+                layer._k3_onorm_consumed = True
             return out
         if envs.SGLANG_NPU_FUSED_KDA_RAGGED_IO.get():
             from sgl_kernel_npu.fla.kda_ragged import (
                 gather_kda_verify_output_npu,
             )
 
-            onorm_runtime = getattr(layer, "_k3_onorm_runtime", None)
             if envs.SGLANG_NPU_FUSED_KDA_ONORM.get() and onorm_runtime is not None:
                 from sgl_kernel_npu.fla.kda_ragged import (
                     gather_kda_verify_output_norm_npu,

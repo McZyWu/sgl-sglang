@@ -898,6 +898,10 @@ class Envs:
     SGLANG_NPU_FUSED_KDA_RAGGED_IO = EnvBool(False)
     SGLANG_NPU_FUSED_KDA_ONORM = EnvBool(False)
     SGLANG_NPU_REUSE_KDA_VERIFY_METADATA = EnvBool(False)
+    # Feed fixed-width KDA verify to causal_conv1d as [B, T, C]. This avoids
+    # rebuilding/casting a dense query_start_loc inside every KDA layer; the
+    # cache-index int64 view is built once per forward/graph body instead.
+    SGLANG_NPU_KDA_DENSE_CONV3D = EnvBool(False)
     # Use the graph-safe Triton-Ascend kernel for masked speculative KV commits.
     SGLANG_NPU_USE_TRITON_PREFIX_KV_CACHE_STORE = EnvBoolWithAlias(
         False, deprecated_name="SGLANG_NPU_USE_TRITON_KV_CACHE_STORE"
