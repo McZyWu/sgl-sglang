@@ -26,6 +26,7 @@ from sglang.srt.model_executor.runner.base_runner import BaseRunner
 from sglang.srt.runtime_context import (
     get_exec,
     get_flags,
+    get_parallel,
 )
 from sglang.srt.utils import (
     get_cuda_graph_batch_size_alignment,
@@ -89,7 +90,12 @@ def get_batch_sizes_to_capture(
         # here pads a single live request all the way to attention TP, even
         # though the draft graph can capture and replay the local bs=1 shape.
         if not draft_is_deepseek_v4():
-            mul_base = 1
+            # Remove only the gathered-buffer attn-TP factor. Context-parallel
+            # and two-batch-overlap constraints still apply to a local draft.
+            mul_base = 2 if get_exec().overlap.enable_two_batch_overlap else 1
+            attn_cp_size = get_parallel().attn_cp_size
+            if mul_base % attn_cp_size != 0:
+                mul_base *= attn_cp_size
     # TBO splits each request's rows across two micro-batches, so the
     # alignment constraint applies per request rather than per token row.
     alignment_width = captured_req_width

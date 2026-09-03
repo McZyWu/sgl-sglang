@@ -14,18 +14,17 @@ register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 
 @pytest.fixture
 def graph_runtime(monkeypatch):
+    runtime = SimpleNamespace(
+        graph=SimpleNamespace(
+            cuda_graph_config=SimpleNamespace(decode=SimpleNamespace(bs=[1, 2, 4, 32])),
+            torch_compile_max_bs=32,
+        ),
+        overlap=SimpleNamespace(enable_two_batch_overlap=False),
+    )
     monkeypatch.setattr(
         base_cuda_graph_runner,
         "get_exec",
-        lambda: SimpleNamespace(
-            graph=SimpleNamespace(
-                cuda_graph_config=SimpleNamespace(
-                    decode=SimpleNamespace(bs=[1, 4, 32])
-                ),
-                torch_compile_max_bs=32,
-            ),
-            overlap=SimpleNamespace(enable_two_batch_overlap=False),
-        ),
+        lambda: runtime,
     )
     monkeypatch.setattr(
         base_cuda_graph_runner,
@@ -43,6 +42,12 @@ def graph_runtime(monkeypatch):
         lambda size: size,
     )
     monkeypatch.setattr(base_cuda_graph_runner, "is_npu", lambda: True)
+    monkeypatch.setattr(
+        base_cuda_graph_runner,
+        "get_parallel",
+        lambda: SimpleNamespace(attn_cp_size=1),
+    )
+    return runtime
 
 
 def _runner(*, draft: bool, dspark: bool):
@@ -60,7 +65,7 @@ def test_generic_dspark_draft_captures_local_batch_sizes(graph_runtime, monkeypa
         _runner(draft=True, dspark=True)
     )
 
-    assert capture_bs == [1, 4, 32]
+    assert capture_bs == [1, 2, 4, 32]
     assert compile_bs == []
 
 
@@ -72,6 +77,26 @@ def test_dspark_target_keeps_verify_width_alignment(graph_runtime):
     # TP32 gathered target rows require B*8 to be divisible by 32. The draft
     # override above must not leak into the target runner.
     assert capture_bs == [4, 32]
+
+
+@pytest.mark.parametrize(
+    ("enable_tbo", "attn_cp_size"),
+    [(True, 1), (False, 2)],
+)
+def test_generic_dspark_draft_keeps_non_gather_alignment(
+    graph_runtime, monkeypatch, enable_tbo, attn_cp_size
+):
+    monkeypatch.setattr(dspark_config, "draft_is_deepseek_v4", lambda: False)
+    graph_runtime.overlap.enable_two_batch_overlap = enable_tbo
+    monkeypatch.setattr(
+        base_cuda_graph_runner,
+        "get_parallel",
+        lambda: SimpleNamespace(attn_cp_size=attn_cp_size),
+    )
+
+    capture_bs, _ = get_batch_sizes_to_capture(_runner(draft=True, dspark=True))
+
+    assert capture_bs == [2, 4, 32]
 
 
 @pytest.mark.parametrize(

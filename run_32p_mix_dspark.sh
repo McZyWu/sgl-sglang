@@ -58,7 +58,9 @@ elif (( DSPARK_BLOCK_SIZE == 15 )); then
     # width aligned to attention-TP16, captures true bs=1 replay buckets.
     GRAPH_BS=(1 2 4 8)
 elif (( DSPARK_BLOCK_SIZE == 7 )); then
-    GRAPH_BS=(2 4 8 16)
+    # B1 is retained by the TP-local generic draft and filtered from target
+    # verify when B*verify_width does not meet attention-TP alignment.
+    GRAPH_BS=(1 2 4 8 16)
 else
     echo "Set CUDA_GRAPH_BS_DECODE explicitly for block size ${DSPARK_BLOCK_SIZE}." >&2
     exit 2
@@ -120,6 +122,7 @@ unset SGLANG_NPU_FUSED_KDA_VERIFY_GATES
 unset SGLANG_NPU_FUSED_KDA_RAGGED_IO
 unset SGLANG_NPU_FUSED_KDA_ONORM
 unset SGLANG_NPU_REUSE_KDA_VERIFY_METADATA
+unset SGLANG_NPU_KDA_DENSE_CONV3D
 unset SGLANG_NPU_K3_MERGED_QKVGB SGLANG_NPU_K3_MERGED_QKVGBFA
 
 if [[ "${HOTPATH_BUNDLE}" == "1" ]]; then
@@ -128,6 +131,7 @@ if [[ "${HOTPATH_BUNDLE}" == "1" ]]; then
     export SGLANG_NPU_FUSED_KDA_RAGGED_IO=1
     export SGLANG_NPU_FUSED_KDA_ONORM=1
     export SGLANG_NPU_REUSE_KDA_VERIFY_METADATA=1
+    export SGLANG_NPU_KDA_DENSE_CONV3D=1
 fi
 
 export SGLANG_RAGGED_VERIFY_MODE=static
