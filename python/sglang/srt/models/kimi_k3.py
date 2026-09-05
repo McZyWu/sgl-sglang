@@ -1018,7 +1018,9 @@ class KimiK3MoE(nn.Module):
             self.shared_experts(shared_input), hidden_states
         )
 
-    def _prepare_shared_experts_input(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def _prepare_shared_experts_input(
+        self, hidden_states: torch.Tensor
+    ) -> torch.Tensor:
         if not self._shared_experts_attn_tp_comm:
             return hidden_states
         group = self._shared_experts_comm_group
@@ -1498,9 +1500,7 @@ class KimiK3DeltaAttention(nn.Module):
         # For the full-rank gate (K3) the checkpoint quantizes only the MoE
         # experts; attention linears resolve to UnquantizedLinearMethod, so a
         # non-None quant_config is fine for the merged projection.
-        self.do_fuse_qkvbfg = (
-            quant_config is None and self.attn_tp_size == self.tp_size
-        )
+        self.do_fuse_qkvbfg = quant_config is None and self.attn_tp_size == self.tp_size
 
         if self.use_full_rank_gate:
             # Fuse only the alignment-friendly wide projections [q, k, v, g]
