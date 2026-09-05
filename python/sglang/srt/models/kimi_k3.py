@@ -74,7 +74,6 @@ from sglang.srt.layers.moe.utils import (
 )
 from sglang.srt.layers.quantization.base_config import QuantizationConfig
 from sglang.srt.layers.quantization.fp8_utils import block_quant_dequant
-from sglang.srt.layers.quantization.modelslim.modelslim import ModelSlimConfig
 from sglang.srt.layers.radix_linear_attention import RadixLinearAttention
 from sglang.srt.layers.utils import PPMissingLayer, get_layer_id
 from sglang.srt.layers.vocab_parallel_embedding import (
@@ -1484,9 +1483,7 @@ class KimiK3DeltaAttention(nn.Module):
             self._npu_merged_qkvgb,
             self._npu_merged_qkvgb_fa,
         ) = _get_k3_qkvgb_merge_flags(self.use_full_rank_gate)
-        self.do_fuse_qkvbfg = (
-            quant_config is None and self.attn_tp_size == self.tp_size
-        )
+        self.do_fuse_qkvbfg = quant_config is None and self.attn_tp_size == self.tp_size
 
         if self.use_full_rank_gate:
             # Fuse only the alignment-friendly wide projections [q, k, v, g]
