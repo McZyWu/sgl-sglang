@@ -4,8 +4,9 @@
 # hot-path bundle. Run this file once on every node.
 #
 # HOTPATH_BUNDLE=1 enables the remaining optional hot paths. HOTPATH_BUNDLE=0
-# keeps the same revisions and launch parameters for an isolated A/B. KDA
-# verify always uses preactivated gates in both modes.
+# keeps the same revisions and launch parameters for a bundle A/B. KDA verify
+# defaults to preactivated gates in both modes; the parallel-gate and value
+# tile experiments require their own explicit environment settings.
 # NODE_RANK can be supplied explicitly; when omitted, it is resolved from
 # NODE_IPS and hostname -I. CONFIG_ONLY=1 prints the command without launching.
 
@@ -100,8 +101,8 @@ if [[ "${CONFIG_ONLY}" == "0" && "${HOTPATH_BUNDLE}" == "1" ]]; then
         "${KERNEL_PYTHON}/sgl_kernel_npu/dspark/top1.py" \
         "${KERNEL_PYTHON}/sgl_kernel_npu/fla/kda_ragged.py"; do
         if [[ ! -f "${required_kernel_file}" ]]; then
-            echo "Missing paired pull/1 kernel source: ${required_kernel_file}" >&2
-            echo "Point SGL_KERNEL_NPU_ROOT at the matching sgl-kernel-npu pull/1 checkout." >&2
+            echo "Missing paired pull/3 kernel source: ${required_kernel_file}" >&2
+            echo "Point SGL_KERNEL_NPU_ROOT at the matching sgl-kernel-npu pull/3 checkout." >&2
             exit 2
         fi
     done
@@ -134,10 +135,13 @@ if [[ "${HOTPATH_BUNDLE}" == "1" ]]; then
     export SGLANG_NPU_KDA_DENSE_CONV3D=1
 fi
 
+export SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES="${SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES:-0}"
+export SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE="${SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE:-0}"
 export SGLANG_RAGGED_VERIFY_MODE=static
 export SGLANG_ENABLE_SPEC_V2=1
 export SGLANG_DSPARK_FOLDED_PROPOSAL=1
-export SGLANG_DSPARK_FOLDED_SAMPLING=1
+export SGLANG_DSPARK_FOLDED_SAMPLING="${SGLANG_DSPARK_FOLDED_SAMPLING:-1}"
+export SGLANG_DSPARK_FP32_LM_HEAD=0
 export SGLANG_DSPARK_STACKED_CTX_KV=1
 export SGLANG_DSPARK_EMBED_IN_GRAPH=1
 export SGLANG_DSPARK_FAST_KERNEL=1
@@ -199,6 +203,7 @@ SERVER_ARGS=(
 )
 
 echo "Kimi-K3 DSpark rank=${NODE_RANK}/4 TP=${TP_SIZE} DP=${DP_SIZE} block=${DSPARK_BLOCK_SIZE} graph=[${GRAPH_BS[*]}] hotpath_bundle=${HOTPATH_BUNDLE}"
+echo "KDA verify parallel_gates=${SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES} value_block_size=${SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE} (0=kernel default)"
 if [[ "${CONFIG_ONLY}" == "1" ]]; then
     printf 'python3 -m sglang.launch_server'
     printf ' %q' "${SERVER_ARGS[@]}"

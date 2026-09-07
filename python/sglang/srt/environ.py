@@ -903,6 +903,11 @@ class Envs:
     SGLANG_NPU_FUSED_KDA_RAGGED_IO = EnvBool(False)
     SGLANG_NPU_FUSED_KDA_ONORM = EnvBool(False)
     SGLANG_NPU_REUSE_KDA_VERIFY_METADATA = EnvBool(False)
+    # Activate verify tokens together inside the recurrent kernel. Experimental;
+    # default to standalone FP32 gates until same-stack NPU measurements pass.
+    SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES = EnvBool(False)
+    # 0 preserves the kernel default. Explicit 32/64/128 tiles are for A/Bs.
+    SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE = EnvInt(0)
     # Feed fixed-width KDA verify to causal_conv1d as [B, T, C]. This avoids
     # rebuilding/casting a dense query_start_loc inside every KDA layer; the
     # cache-index int64 view is built once per forward/graph body instead.

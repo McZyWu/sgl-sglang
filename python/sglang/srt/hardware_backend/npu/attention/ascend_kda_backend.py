@@ -574,17 +574,34 @@ class AscendKDAAttnBackend(KDAAttnBackend):
         k = k.unflatten(-1, (-1, layer.head_k_dim)).unsqueeze(0)
         v = v.unflatten(-1, (-1, layer.head_v_dim)).unsqueeze(0)
 
-        # Keep gate activation outside the recurrent loop. The raw-gate path
-        # regresses dense A5 verify despite removing the standalone launches.
-        # Preserve FP32 activation and apply the K3 lower bound exactly once.
-        verify_a = fused_kda_gate_npu(
-            dense_a.flatten(-2),
-            layer.A_log,
-            layer.head_k_dim,
-            gate_bias=layer.dt_bias,
-            lower_bound=layer.lower_bound,
-        )
-        verify_b = dense_b.float().sigmoid()
+        parallel_gates = envs.SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES.get()
+        value_block_size = envs.SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE.get()
+        if value_block_size not in (0, 32, 64, 128):
+            raise ValueError(
+                "SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE must be 0, 32, 64, or 128"
+            )
+        verify_options = {}
+        if value_block_size:
+            verify_options["value_block_size"] = value_block_size
+        if parallel_gates:
+            # New opt-in specialization: activate all tokens before the state
+            # loop, retaining FP32 decay/beta in the same kernel. Do not restore
+            # the regressed per-token raw-gate path via the legacy flag.
+            verify_a, verify_b = dense_a, dense_b
+            verify_options.update(
+                precompute_raw_gates=True, lower_bound=layer.lower_bound
+            )
+        else:
+            # Default to standalone FP32 activation and apply the K3 lower
+            # bound exactly once. Omit new kwargs for older paired kernels.
+            verify_a = fused_kda_gate_npu(
+                dense_a.flatten(-2),
+                layer.A_log,
+                layer.head_k_dim,
+                gate_bias=layer.dt_bias,
+                lower_bound=layer.lower_bound,
+            )
+            verify_b = dense_b.float().sigmoid()
         out = kda_target_verify_npu(
             A_log=layer.A_log,
             dt_bias=layer.dt_bias,
@@ -598,7 +615,8 @@ class AscendKDAAttnBackend(KDAAttnBackend):
             intermediate_states_buffer=intermediate_state,
             intermediate_state_indices=intermediate_indices,
             cache_steps=draft_token_num,
-            gates_are_preactivated=True,
+            gates_are_preactivated=not parallel_gates,
+            **verify_options,
         )
         if dense_token_indices is None:
             return out

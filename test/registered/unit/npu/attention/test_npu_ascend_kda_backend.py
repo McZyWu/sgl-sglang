@@ -61,8 +61,15 @@ def test_dense_verify_cache_indices_refreshes_replay_values():
 @pytest.mark.parametrize("reuse_metadata", [False, True])
 @pytest.mark.parametrize("dense_conv3d", [False, True])
 @pytest.mark.parametrize("lower_bound", [None, -5.0])
-def test_verify_preactivates_gates_and_preserves_padding(
-    monkeypatch, reuse_metadata, dense_conv3d, lower_bound
+@pytest.mark.parametrize("parallel_gates", [False, True])
+@pytest.mark.parametrize("value_block_size", [0, 32, 64, 128])
+def test_verify_gate_modes_and_preserves_padding(
+    monkeypatch,
+    reuse_metadata,
+    dense_conv3d,
+    lower_bound,
+    parallel_gates,
+    value_block_size,
 ):
     from sglang.srt.hardware_backend.npu.attention import ascend_kda_backend
 
@@ -70,6 +77,8 @@ def test_verify_preactivates_gates_and_preserves_padding(
     monkeypatch.setenv("SGLANG_NPU_FUSED_KDA_VERIFY_GATES", "1")
     monkeypatch.setenv("SGLANG_NPU_REUSE_KDA_VERIFY_METADATA", str(int(reuse_metadata)))
     monkeypatch.setenv("SGLANG_NPU_KDA_DENSE_CONV3D", str(int(dense_conv3d)))
+    monkeypatch.setenv("SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES", str(int(parallel_gates)))
+    monkeypatch.setenv("SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE", str(value_block_size))
     backend_cls = ascend_kda_backend.AscendKDAAttnBackend
     backend = object.__new__(backend_cls)
     backend.forward_metadata = SimpleNamespace(
@@ -117,18 +126,30 @@ def test_verify_preactivates_gates_and_preserves_padding(
     actual = backend._forward_target_verify(layer, forward_batch, mixed_qkv, a, b)
 
     assert actual is expected_out
-    gate.assert_called_once()
-    torch.testing.assert_close(gate.call_args.args[0], a.flatten(-2))
-    assert gate.call_args.args[1] is layer.A_log
-    assert gate.call_args.kwargs["gate_bias"] is layer.dt_bias
-    assert gate.call_args.kwargs["lower_bound"] == lower_bound
     recurrent.assert_called_once()
     verify_args = recurrent.call_args.kwargs
-    assert verify_args["gates_are_preactivated"] is True
-    assert verify_args.get("lower_bound") is None
-    assert verify_args["a"] is activated_a
-    assert verify_args["b"].dtype == torch.float32
-    torch.testing.assert_close(verify_args["b"], b.float().sigmoid())
+    assert verify_args["gates_are_preactivated"] is (not parallel_gates)
+    if parallel_gates:
+        gate.assert_not_called()
+        assert verify_args["precompute_raw_gates"] is True
+        assert verify_args["lower_bound"] == lower_bound
+        assert verify_args["a"] is a
+        assert verify_args["b"] is b
+    else:
+        gate.assert_called_once()
+        torch.testing.assert_close(gate.call_args.args[0], a.flatten(-2))
+        assert gate.call_args.args[1] is layer.A_log
+        assert gate.call_args.kwargs["gate_bias"] is layer.dt_bias
+        assert gate.call_args.kwargs["lower_bound"] == lower_bound
+        assert "precompute_raw_gates" not in verify_args
+        assert "lower_bound" not in verify_args
+        assert verify_args["a"] is activated_a
+        assert verify_args["b"].dtype == torch.float32
+        torch.testing.assert_close(verify_args["b"], b.float().sigmoid())
+    if value_block_size:
+        assert verify_args["value_block_size"] == value_block_size
+    else:
+        assert "value_block_size" not in verify_args
     conv_args = conv.call_args.kwargs
     assert conv_args["cache_indices"] is backend._dense_cache_indices_i64
     assert verify_args["initial_state_indices"] is conv_args["cache_indices"]
