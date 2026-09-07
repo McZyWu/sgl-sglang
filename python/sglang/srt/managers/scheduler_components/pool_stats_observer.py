@@ -240,9 +240,7 @@ class SchedulerPoolStatsObserver:
 
     def _get_mamba_token_info(self):
         is_tree_cache = self.tree_cache.is_tree_cache()
-        is_mamba_radix_cache = (
-            self.tree_cache.supports_mamba() and is_tree_cache
-        )
+        is_mamba_radix_cache = self.tree_cache.supports_mamba() and is_tree_cache
         full_available_size = self.token_to_kv_pool_allocator.available_size()
         full_evictable_size = (
             self.tree_cache.full_evictable_size() if is_tree_cache else 0
