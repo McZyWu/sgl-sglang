@@ -346,6 +346,14 @@ class DFlashAttention(nn.Module):
         return k_by_head.view_as(k)
 
     def apply_k_rope(self, positions: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
+        if _is_npu:
+            # Ascend's fused Q/K RoPE consumes [tokens, heads, head_dim].
+            # KV-only projection returns a flattened view on this path.
+            original_shape = k.shape
+            k = k.reshape(k.shape[0], -1, self.head_dim)
+            dummy_q = torch.empty_like(k)
+            _, k = self.rotary_emb(positions, dummy_q, k)
+            return k.reshape(original_shape)
         # Match K shape so RoPE kernel head-count check passes on all backends.
         dummy_q = k.new_empty(k.shape)
         _, k = self.rotary_emb(positions, dummy_q, k)

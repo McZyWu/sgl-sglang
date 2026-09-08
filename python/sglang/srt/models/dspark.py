@@ -7,9 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from sglang.kernels.ops.speculative.dspark.dspark_draft_model import (
-    MarkovGreedyStep,
-)
+from sglang.kernels.ops.speculative.dspark.dspark_draft_model import MarkovGreedyStep
 from sglang.srt.distributed.communication_op import tensor_model_parallel_all_gather
 from sglang.srt.environ import envs
 from sglang.srt.layers.linear import ReplicatedLinear
@@ -886,8 +884,14 @@ class DSparkDraftMixin:
         k32 = k32 * stacked["k_norm_weight"].view(1, num_layers, 1, head_dim)
         k_all = k32.to(ctx_hidden.dtype)
         k_flat = k_all.reshape(tokens, num_layers * kv_size)
-        dummy_q = k_flat.new_empty(k_flat.shape)
-        _, k_flat = attn0.rotary_emb(positions, dummy_q, k_flat)
+        if _is_npu:
+            k_for_rope = k_flat.view(tokens, num_layers * num_kv_heads, head_dim)
+            dummy_q = torch.empty_like(k_for_rope)
+            _, k_for_rope = attn0.rotary_emb(positions, dummy_q, k_for_rope)
+            k_flat = k_for_rope.reshape(tokens, num_layers * kv_size)
+        else:
+            dummy_q = k_flat.new_empty(k_flat.shape)
+            _, k_flat = attn0.rotary_emb(positions, dummy_q, k_flat)
         k_all = (
             k_flat.view(tokens, num_layers, num_kv_heads, head_dim)
             .permute(1, 0, 2, 3)
