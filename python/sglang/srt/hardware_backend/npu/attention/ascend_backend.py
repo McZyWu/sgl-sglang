@@ -28,11 +28,7 @@ from sglang.srt.layers.utils.cp_utils import cp_all_gather_rerange_kv_cache
 from sglang.srt.mem_cache.memory_pool import KVWriteLoc
 from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
-from sglang.srt.runtime_context import (
-    get_flags,
-    get_parallel,
-    get_spec,
-)
+from sglang.srt.runtime_context import get_flags, get_parallel, get_spec
 from sglang.srt.speculative.spec_info import SpecInput, SpecInputType
 from sglang.srt.utils import (
     get_bool_env_var,
@@ -350,6 +346,7 @@ class AscendAttnBackend(AttentionBackend):
             envs.SGLANG_NPU_USE_FIAS_V2_BSND.get()
             and model_runner.spec_algorithm.is_dspark()
         )
+        self.mla_verify_bsnd = envs.SGLANG_NPU_MLA_VERIFY_BSND.get()
         self.enable_torch_compile = get_flags().capture.enable_torch_compile
         self.speculative_num_draft_tokens = get_spec().speculative_num_draft_tokens
         if (
@@ -1659,9 +1656,7 @@ class AscendAttnBackend(AttentionBackend):
             kv = layer.kv_b_proj(kv_cached)[0].view(
                 -1, layer.tp_k_head_num, self.qk_nope_head_dim + layer.v_head_dim
             )
-            k_nope, v_pre = kv.split(
-                [self.qk_nope_head_dim, layer.v_head_dim], dim=-1
-            )
+            k_nope, v_pre = kv.split([self.qk_nope_head_dim, layer.v_head_dim], dim=-1)
 
             k_rope = k_rope_cached.expand(-1, layer.tp_k_head_num, -1)
             k_pre = torch.cat([k_nope, k_rope], dim=-1)
@@ -1705,9 +1700,7 @@ class AscendAttnBackend(AttentionBackend):
                 )
                 q_len_offset += q_len
                 prefix_len_offset += prefix_len
-            attn_output = attn_output.view(
-                -1, layer.tp_q_head_num * layer.v_head_dim
-            )
+            attn_output = attn_output.view(-1, layer.tp_q_head_num * layer.v_head_dim)
         else:
             if layer.qk_head_dim == layer.v_head_dim:
                 """FIA will support multi-bs in the later version of CANN"""
@@ -2092,45 +2085,44 @@ class AscendAttnBackend(AttentionBackend):
 
             num_query_heads = q_nope.shape[1]
             if self.use_fias_v2_bsnd:
-                # The existing paged MLA cache is [block, KV_N, page, D].
-                # V2 consumes it with BNSD queries; keep the cache unchanged.
+                # The query layout is independent of the existing ND/NZ cache.
                 batch_size = len(actual_seq_lengths_kv)
                 query_seq_len = self.speculative_num_draft_tokens
-                assert q_nope.shape[0] == batch_size * query_seq_len, (
-                    "FIAS V2 target verify requires one fixed draft block per request"
-                )
+                assert (
+                    q_nope.shape[0] == batch_size * query_seq_len
+                ), "FIAS V2 target verify requires one fixed draft block per request"
                 if batch_size == 0:
                     attn_output = torch.empty_like(q_nope)
                 else:
-                    q_nope_bnsd = (
-                        q_nope.view(
-                            batch_size,
-                            query_seq_len,
-                            num_query_heads,
-                            self.kv_lora_rank,
-                        )
-                        .transpose(1, 2)
-                        .contiguous()
+                    q_nope_fia = q_nope.view(
+                        batch_size,
+                        query_seq_len,
+                        num_query_heads,
+                        self.kv_lora_rank,
                     )
-                    q_rope_bnsd = (
-                        q_rope.view(
-                            batch_size,
-                            query_seq_len,
-                            num_query_heads,
-                            self.qk_rope_head_dim,
-                        )
-                        .transpose(1, 2)
-                        .contiguous()
+                    q_rope_fia = q_rope.view(
+                        batch_size,
+                        query_seq_len,
+                        num_query_heads,
+                        self.qk_rope_head_dim,
                     )
+                    if self.mla_verify_bsnd:
+                        query_layout = "BSND"
+                        q_nope_fia = q_nope_fia.contiguous()
+                        q_rope_fia = q_rope_fia.contiguous()
+                    else:
+                        query_layout = "BNSD"
+                        q_nope_fia = q_nope_fia.transpose(1, 2).contiguous()
+                        q_rope_fia = q_rope_fia.transpose(1, 2).contiguous()
                     attn_output, _ = torch_npu.npu_fused_infer_attention_score_v2(
-                        q_nope_bnsd,
+                        q_nope_fia,
                         c_kv_cache,
                         c_kv_cache,
-                        query_rope=q_rope_bnsd,
+                        query_rope=q_rope_fia,
                         key_rope=k_rope_cache,
                         num_query_heads=num_query_heads,
                         num_key_value_heads=layer.tp_k_head_num,
-                        input_layout="BNSD",
+                        input_layout=query_layout,
                         softmax_scale=layer.scaling,
                         block_table=block_table,
                         block_size=self.page_size,
@@ -2141,10 +2133,10 @@ class AscendAttnBackend(AttentionBackend):
                         pre_tokens=FULL_ATTENTION_WINDOW,
                         next_tokens=0,
                     )
-                    attn_output = (
-                        attn_output.transpose(1, 2)
-                        .contiguous()
-                        .reshape(-1, num_query_heads, self.kv_lora_rank)
+                    if not self.mla_verify_bsnd:
+                        attn_output = attn_output.transpose(1, 2).contiguous()
+                    attn_output = attn_output.reshape(
+                        -1, num_query_heads, self.kv_lora_rank
                     )
             else:
                 workspace = (
@@ -2824,7 +2816,7 @@ class AscendAttnBackend(AttentionBackend):
                 attn_output = attn_output[:, :, : layer.tp_q_head_num, :]
             else:
                 assert (
-                    self.graph_mode == False
+                    not self.graph_mode
                 )  # _npu_paged_attention_mla not support graph mode
                 if q_rope is not None:
                     q = torch.cat([q, q_rope], dim=-1)
