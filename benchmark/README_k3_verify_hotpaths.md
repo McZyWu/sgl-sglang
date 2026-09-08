@@ -28,6 +28,17 @@ is applied exactly once in either mode. This specialization requires at most
 Set the variables identically on every rank **before starting the service**.
 Restart between variants so graphs are captured with the intended path.
 
+For the supplied TP32/DP1, BS32, K=V=128 profile, use **BV64**. Across
+69 matched target layers, the BV32 run increased recurrent-kernel time from
+50.118 to 64.929 microseconds per layer and doubled the grid from 192 to
+384 programs. This is an observed stacked-run regression, not an isolated
+tile-only benchmark. Updated kernel PR10 removes its forced BV32/two-warp
+retile and retains the dense SiTU change; kernel PR3 already defaults to
+BV64/one warp. The launcher here now defaults to 64. An explicit exported
+`SGLANG_NPU_KDA_VERIFY_VALUE_BLOCK_SIZE=32` still takes precedence, so change
+it to 64 in the actual serving script. Keep chunk-KDA precision and canonical
+state-layout fixes on both sides of any performance comparison.
+
 ```bash
 # Reference: retain the verified framework dispatch.
 export SGLANG_NPU_KDA_VERIFY_PARALLEL_GATES=0
@@ -75,23 +86,43 @@ for sampling batches, eliminating the intermediate stack and copy. Greedy
 batches skip these stores. The public greedy mask remains boolean for mixed
 target acceptance; the kernel loads it without per-step casts.
 
-Sampling mode and noise values are persistent graph inputs, so greedy/mixed
-transitions and smaller live batches reuse the captured graph. Every Markov
+At DP1, each draft batch-size bucket now captures two variants in the same
+graph memory pool: native ArgMax for an all-greedy batch, and the existing
+two-pass sampler for a mixed or stochastic batch. Staging the request's
+`sampling_info.is_all_greedy` selects the appropriate recorded graph before
+replay, without a device-to-host read or recapture. Merely branching on that
+host flag inside the captured tail would freeze the first sampling mode and
+be incorrect on later requests. Both variants retain the same TP sync site,
+and graph input updates finish on the selected variant before replay.
+
+This targets the supplied profile's greedy ArgMax+Cast of 13.405 microseconds
+versus 34.065 microseconds for the two-pass sampler per Markov step. It does
+not establish the new full-graph or TPOT improvement; compare native ArgMax
+and two-pass replay using the benchmark below. DP sizes above one retain the
+single graph with device sampling inputs, because independent DP batches may
+have different sampling modes. CUDA and greedy-only folding are unchanged.
+
+Sampling parameters and noise remain persistent graph inputs. Every Markov
 step receives independent noise; one `[batch, vocab]` draw reused across steps
 would change the joint proposal distribution. AUTO's memory estimate includes
 all gamma noise planes. BS32/gamma7/vocab163840 requires 140 MiB of noise and
-70 MiB of BF16 corrected logits, plus capture headroom.
+70 MiB of BF16 corrected logits, plus capture headroom. DP1 records two graphs
+per bucket, increasing capture time and graph metadata/output storage; the
+sampling buffers and graph pool are shared. Check peak capture memory with the
+full model in addition to replay latency.
 
-After restarting to recapture, look for both startup messages:
+After restarting to recapture, look for these startup messages at DP1:
 
 ```text
 DSpark draft proposal (greedy + sampling) folded into the draft cuda graph.
 DSpark NPU folded sampling: per-step noise staged before replay; greedy skips RNG and corrected-logit stores.
+DSpark NPU DP1 captures separate greedy ArgMax and mixed sampling graphs for each batch size.
 ```
 
-In profiling, `_sample_partial_kernel` and `_sample_combine_kernel` should
-appear in the draft graph. Greedy replay should have no exponential RNG or
-corrected-logit stack/copy. Non-greedy replay has one noise refresh before the
+In profiling, DP1 greedy replay should use native ArgMax without
+`_sample_partial_kernel` / `_sample_combine_kernel`, exponential RNG, or
+corrected-logit stack/copy. Mixed/stochastic replay retains the two sampling
+kernels and has one noise refresh before the
 draft graph, with a distinct plane consumed at each step. Setting an environment
 variable alone is not proof that the graph was selected.
 
@@ -109,11 +140,22 @@ PYTHONPATH=python python3 benchmark/bench_dspark_npu_folded_sampling.py --bs 32 
 ```
 
 The benchmark checks proposal IDs and times captured sampling tails, including
-the original corrected-logit stack/copy versus the new direct store. Both
+native ArgMax for greedy batches and the original corrected-logit stack/copy
+versus the new direct store. Inputs are contiguous per-step logits, matching
+the Markov add output. All
 tails consume the same precomputed noise; it excludes RNG, Markov/model
 computation, communication, and acceptance. The original complete folded
 sampler cannot capture on this CANN RNG implementation. These measurements
 therefore are not an old-versus-new complete graph or a TPOT measurement.
+
+On a shared A3 device with torch/torch_npu 2.10.0 and CANN 9.0, the updated
+benchmark (BS32/gamma7/vocab163840, BF16 contiguous step logits, five
+alternating rounds of 30 replays) measured 0.397206 ms for the existing
+8192-element two-pass greedy tail and 0.189489 ms for native ArgMax: a
+0.207717 ms reduction, or 52.3%. Proposal IDs matched. The stochastic
+two-pass tail measured 0.428563 ms and remains the selected stochastic path.
+These timings include the token stack but exclude model/Markov computation,
+RNG, TP synchronization, and acceptance; no full-model TPOT is implied.
 
 ## Speculative scheduler synchronization at DP1
 
@@ -171,8 +213,9 @@ on both sides, toggling only `FUSED_LOCAL_TOP1`. Do not attribute changes from
 enabling graph folding and top1 together solely to top1.
 
 The repository `run_32p_mix_dspark.sh` still targets its original TP64/DP4
-layout. It prints the gate settings and does not enable experimental gates
-via `HOTPATH_BUNDLE`. For the supplied TP32/DP1/block-7 workload, add the flags
+layout. It defaults the V tile to 64, prints the gate settings, and does not
+enable experimental gates via `HOTPATH_BUNDLE`. For the supplied
+TP32/DP1/block-7 workload, add the flags
 above to the original serving script instead of treating that launcher as an
 equivalent workload.
 
@@ -185,6 +228,12 @@ check the actual kernel body with tensor/pointer adapters. Neither test mode
 compiles Triton or runs an NPU graph for KDA. The separate folded-sampling NPU
 tests compile and capture the actual sampling kernels, verify BS32/gamma7 with
 the production vocabulary, greedy/mixed/shrinking batches, independent random
-draws across repeated replay, and near-tie/tail handling. They use a small
+draws across repeated replay, near-tie/tail handling, and selection of native
+greedy versus mixed graphs through `NPUCudaGraphBackend`. The four tests passed
+on A3 with torch/torch_npu 2.10.0 and CANN 9.0 after the variant change,
+including the new backend variant test. Peak allocated memory was 495 MiB
+(778 MiB reserved) with a 1.5% per-process allocator limit on a shared device.
+The 87 CPU tests also passed: 11 sampler, 3 graph routing/order, 66 KDA
+contracts, and 7 bucket alignment cases. These checks use a small
 synthetic Markov model, not loaded K3 weights. Full-model acceptance, TPOT, and
 four-machine performance still require an isolated serving benchmark.

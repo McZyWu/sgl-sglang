@@ -39,9 +39,12 @@ if TYPE_CHECKING:
 
 
 class NPUCudaGraphBackend(BaseCudaGraphBackend):
-    """One torch.npu.NPUGraph per shape; attention metadata captured
-    inside the graph. replay_with_input_update substitutes fresh
-    seq_lens without re-recording."""
+    """Capture attention metadata inside each shape's torch.npu.NPUGraph.
+
+    A folded tail can provide capture contexts and a host-selected replay
+    variant (DSpark DP1 uses greedy/sampling). replay_with_input_update
+    substitutes fresh seq_lens in the selected graph without re-recording.
+    """
 
     def __init__(
         self,
@@ -55,6 +58,9 @@ class NPUCudaGraphBackend(BaseCudaGraphBackend):
         self._device_module = cuda_graph_runner.device_module
         self._device_id = self._device_module.current_device()
         self._tp_group = cuda_graph_runner.model_runner.tp_group
+        self._variant_provider = getattr(
+            cuda_graph_runner.model_runner, "npu_graph_variant_provider", None
+        )
         self._capture_stream = None
         self._memory_saver_adapter: Optional[Any] = TorchMemorySaverAdapter.create(
             enable=enable_memory_saver
@@ -89,6 +95,18 @@ class NPUCudaGraphBackend(BaseCudaGraphBackend):
         capture_inputs: Optional[Any] = None,
         post_warmup_hook: Optional[Callable[[], None]] = None,
     ) -> None:
+        # The provider's capture context selects Python branches while recording;
+        # its replay property uses already-staged host metadata, without a D2H
+        # read or recapture. Variants share the graph pool and run exclusively.
+        provider = self._variant_provider
+        if provider is None:
+            self._capture_one(shape_key, forward_fn, post_warmup_hook)
+            return
+        for variant in provider.npu_graph_variants:
+            with provider.npu_graph_capture_variant(variant):
+                self._capture_one((shape_key, variant), forward_fn, post_warmup_hook)
+
+    def _capture_one(self, graph_key, forward_fn, post_warmup_hook) -> None:
         import torch_npu  # noqa: F401  (verifies NPU availability)
 
         # Two warmups so kernels are loaded and one-time setup is paid before capture.
@@ -130,11 +148,16 @@ class NPUCudaGraphBackend(BaseCudaGraphBackend):
         ):
             out = forward_fn()
 
-        self._graphs[shape_key] = graph
-        self._outputs[shape_key] = out
+        self._graphs[graph_key] = graph
+        self._outputs[graph_key] = out
+
+    def _replay_key(self, shape_key):
+        if self._variant_provider is None:
+            return shape_key
+        return (shape_key, self._variant_provider.npu_graph_variant)
 
     def can_run(self, forward_batch: ForwardBatch, shape_key: ShapeKey) -> bool:
-        return shape_key in self._graphs
+        return self._replay_key(shape_key) in self._graphs
 
     @contextmanager
     def replay_session(self):
@@ -146,8 +169,9 @@ class NPUCudaGraphBackend(BaseCudaGraphBackend):
         static_forward_batch: ForwardBatch,
         **kwargs,
     ) -> Any:
-        self._graphs[shape_key].replay()
-        return self._outputs[shape_key]
+        graph_key = self._replay_key(shape_key)
+        self._graphs[graph_key].replay()
+        return self._outputs[graph_key]
 
     def replay_with_input_update(
         self,
@@ -173,14 +197,15 @@ class NPUCudaGraphBackend(BaseCudaGraphBackend):
                 seq_lens = torch.from_numpy(np.array(seq_lens).astype(np.int32))
             cpu_update_input = [{attr_name: seq_lens}]
 
-        graph = self._graphs[shape_key]
+        graph_key = self._replay_key(shape_key)
+        graph = self._graphs[graph_key]
 
         update_future = self._update_executor.submit(
             graph.update, cpu_update_input=cpu_update_input
         )
         update_future.result()
         graph.replay()
-        return self._outputs[shape_key]
+        return self._outputs[graph_key]
 
     def cleanup(self) -> None:
         self._update_executor.shutdown(wait=True, cancel_futures=True)

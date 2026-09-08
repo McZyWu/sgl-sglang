@@ -151,6 +151,60 @@ def test_greedy_near_tie_keeps_direct_logit_order():
     assert actual.item() == 1
 
 
+def test_greedy_graph_uses_native_argmax_without_sampling_kernels(folded):
+    sampler, model = folded
+    hidden = torch.randn(12, 8)
+    ids = torch.zeros(12, dtype=torch.long)
+    # Transition from mixed staging, including stale noise and logits.
+    sampler.stage_sampling_params(bs=4, sampling_info=_sampling_info([False] * 4))
+    sampler.stage_sampling_params(bs=2, sampling_info=_sampling_info([True] * 2))
+    sampler.corrected_out.fill_(17)
+    base, _ = model.compute_base_logits(hidden)
+    expected, _ = model.markov_head.sample_block(
+        base.view(4, 3, 17),
+        first_prev_tokens=ids.view(4, 3)[:, 0],
+        hidden_states=hidden.view(4, 3, 8),
+        sampler=lambda logits, _: logits.argmax(-1),
+    )
+    with (
+        sampler.npu_graph_capture_variant("greedy"),
+        patch.object(
+            npu_ops, "sample_step_tokens_npu", side_effect=AssertionError("sampling")
+        ),
+        patch.object(torch.Tensor, "exponential_", side_effect=AssertionError("RNG")),
+        patch.object(torch, "argmax", wraps=torch.argmax) as argmax,
+    ):
+        sampler(hidden, ids)
+    assert argmax.call_count == sampler.gamma
+    torch.testing.assert_close(sampler.out.view(4, 3), expected, rtol=0, atol=0)
+    assert (sampler.corrected_out == 17).all()
+    assert not sampler._capture_greedy
+
+
+def test_npu_variant_tracks_staged_mode_and_restores_capture_context(folded):
+    sampler, _ = folded
+    assert sampler.npu_graph_variants == ("sampling", "greedy")
+    for bs, greedy, expected in (
+        (4, [True] * 4, "greedy"),
+        (4, [True, False] * 2, "sampling"),
+        (2, [True] * 2, "greedy"),
+        (2, [False] * 2, "sampling"),
+    ):
+        sampler.stage_sampling_params(bs=bs, sampling_info=_sampling_info(greedy))
+        assert sampler.npu_graph_variant == expected
+        # Capturing one specialization must not overwrite the staged mode.
+        with sampler.npu_graph_capture_variant("greedy"):
+            assert sampler._capture_greedy
+            assert sampler.npu_graph_variant == expected
+    with pytest.raises(RuntimeError, match="capture failed"):
+        with sampler.npu_graph_capture_variant("greedy"):
+            raise RuntimeError("capture failed")
+    assert not sampler._capture_greedy
+    with pytest.raises(ValueError, match="Unsupported"):
+        with sampler.npu_graph_capture_variant("unknown"):
+            pass
+
+
 @pytest.mark.parametrize(
     "mode", [DsparkFoldedSampling.AUTO, DsparkFoldedSampling.FORCE]
 )
@@ -211,6 +265,7 @@ def test_non_npu_keeps_original_noise_layout_and_sampler(monkeypatch):
     assert sampler.exp_noise.shape == (4, 17)
     assert sampler.greedy_mask.dtype == torch.bool
     assert sampler.write_corrected_logits is None
+    assert sampler.npu_graph_variants == ()
 
 
 if __name__ == "__main__":

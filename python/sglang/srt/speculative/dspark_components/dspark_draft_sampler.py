@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from typing import Optional
 
 import torch
@@ -83,6 +84,9 @@ class DsparkDraftSampler:
         self.corrected_out = None
         self.write_corrected_logits = None
         self._staged_all_greedy = True
+        # Only capture specialization may change this branch. Staging a host
+        # boolean alone cannot change operators in an already captured graph.
+        self._capture_greedy = False
         if folded_sampling:
             vocab = int(model.lm_head.org_vocab_size)
             self.temperatures = torch.ones(
@@ -109,6 +113,29 @@ class DsparkDraftSampler:
                 dtype=_base_logits_dtype(model),
                 device=device,
             )
+
+    @property
+    def npu_graph_variants(self):
+        return (
+            ("sampling", "greedy")
+            if self._npu_sampling and self.folded_sampling
+            else ()
+        )
+
+    @property
+    def npu_graph_variant(self):
+        return "greedy" if self._staged_all_greedy else "sampling"
+
+    @contextmanager
+    def npu_graph_capture_variant(self, variant):
+        if variant not in self.npu_graph_variants:
+            raise ValueError(f"Unsupported DSpark NPU graph variant: {variant}")
+        previous = self._capture_greedy
+        self._capture_greedy = variant == "greedy"
+        try:
+            yield
+        finally:
+            self._capture_greedy = previous
 
     def stage_sampling_params(self, *, bs: int, sampling_info) -> None:
         """Host-side refresh of the static sampling params; must run before
@@ -184,7 +211,7 @@ class DsparkDraftSampler:
                 )
 
         if draft_tokens is None:
-            if self.folded_sampling and self._npu_sampling:
+            if self.folded_sampling and self._npu_sampling and not self._capture_greedy:
                 from sglang.kernels.ops.speculative.dspark.dspark_draft_sampling_npu import (
                     sample_step_tokens_npu,
                 )
@@ -204,7 +231,7 @@ class DsparkDraftSampler:
                         ),
                     )
 
-            elif self.folded_sampling:
+            elif self.folded_sampling and not self._npu_sampling:
 
                 def sampler(step_logits: torch.Tensor, step_idx: int) -> torch.Tensor:
                     del step_idx
@@ -225,7 +252,11 @@ class DsparkDraftSampler:
 
                 def sampler(step_logits: torch.Tensor, step_idx: int) -> torch.Tensor:
                     return self._tp_sync.sync(
-                        SpecTpSyncSite.DSPARK_GRAPH_GREEDY,
+                        (
+                            SpecTpSyncSite.DSPARK_GRAPH_SAMPLE
+                            if self.folded_sampling
+                            else SpecTpSyncSite.DSPARK_GRAPH_GREEDY
+                        ),
                         greedy_step_sampler(step_logits, step_idx),
                     )
 

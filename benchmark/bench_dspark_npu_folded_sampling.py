@@ -26,6 +26,8 @@ def main(args):
         torch.npu.set_per_process_memory_fraction(args.memory_fraction)
     bs, gamma, vocab = args.bs, args.gamma, args.vocab
     logits = torch.randn(bs, gamma, vocab, device="npu", dtype=torch.bfloat16)
+    # Markov's add produces a contiguous step matrix in the production tail.
+    step_logits = [logits[:, step].contiguous() for step in range(gamma)]
     noise = torch.empty(bs, gamma, vocab, device="npu").exponential_()
     original_noise = [noise[:, step].contiguous() for step in range(gamma)]
     temperatures = torch.ones(bs, device="npu")
@@ -36,21 +38,21 @@ def main(args):
     def original():
         tokens = [
             sample_step_tokens_triton(
-                step_logits=logits[:, step],
+                step_logits=step_logits[step],
                 temperatures=temperatures,
                 greedy_mask=mask,
                 exp_noise=original_noise[step],
             )
             for step in range(gamma)
         ]
-        corrected.copy_(torch.stack([logits[:, step] for step in range(gamma)], dim=1))
+        corrected.copy_(torch.stack(step_logits, dim=1))
         return torch.stack(tokens, dim=1)
 
     def optimized():
         return torch.stack(
             [
                 npu_ops.sample_step_tokens_npu(
-                    step_logits=logits[:, step],
+                    step_logits=step_logits[step],
                     temperatures=temperatures,
                     greedy_mask=mask,
                     exp_noise=noise[:, step],
@@ -86,6 +88,9 @@ def main(args):
         return begin.elapsed_time(end) / repeats
 
     baseline, before = capture(original)
+    native_greedy, greedy_tokens = capture(
+        lambda: torch.stack([values.argmax(-1) for values in step_logits], dim=1)
+    )
     variants = {}
     for tile in args.tiles:
         npu_ops._BLOCK_V = tile
@@ -105,6 +110,11 @@ def main(args):
         baseline.replay()
         torch.npu.synchronize()
         samples = {"original": []} | {str(tile): [] for tile in variants}
+        if greedy:
+            native_greedy.replay()
+            torch.npu.synchronize()
+            torch.testing.assert_close(greedy_tokens, before, rtol=0, atol=0)
+            samples["native_argmax"] = []
         for tile, (graph, after) in variants.items():
             graph.replay()
             torch.npu.synchronize()
@@ -113,6 +123,8 @@ def main(args):
             pairs = [("original", baseline)] + [
                 (str(t), g) for t, (g, _) in variants.items()
             ]
+            if greedy:
+                pairs.append(("native_argmax", native_greedy))
             if round_idx % 2:
                 pairs.reverse()
             for label, graph in pairs:

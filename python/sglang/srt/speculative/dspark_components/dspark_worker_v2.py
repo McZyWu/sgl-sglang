@@ -413,6 +413,20 @@ class DSparkWorkerV2(BaseSpecWorker):
                         available_memory_gb=available_mem
                     )
                     if self._draft_sampler is not None:
+                        # DP1 ranks share sampling mode. Keep the existing
+                        # device-selected graph for independent DP batches.
+                        if (
+                            self._draft_sampler.npu_graph_variants
+                            and get_parallel().attn_dp_size == 1
+                        ):
+                            self.draft_model_runner.npu_graph_variant_provider = (
+                                self._draft_sampler
+                            )
+                            if self.ps.tp_rank == 0:
+                                logger.info(
+                                    "DSpark NPU DP1 captures separate greedy ArgMax "
+                                    "and mixed sampling graphs for each batch size."
+                                )
                         self.draft_model_runner.capture_tail_hooks.append(
                             make_draft_sampler_capture_hook(self._draft_sampler)
                         )

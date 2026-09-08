@@ -9,6 +9,10 @@ import torch.nn.functional as F
 from sglang.kernels.ops.speculative.dspark.dspark_draft_sampling_npu import (
     sample_step_tokens_npu,
 )
+from sglang.srt.hardware_backend.npu.graph_runner.npu_cudagraph_backend import (
+    NPUCudaGraphBackend,
+)
+from sglang.srt.model_executor.runner.shape_key import ShapeKey
 from sglang.srt.models.dspark import VanillaMarkov
 from sglang.srt.sampling.sampling_params import TOP_K_ALL
 from sglang.srt.speculative.dspark_components.dspark_draft_sampler import (
@@ -107,6 +111,13 @@ class TestNpuDsparkFoldedSampling(unittest.TestCase):
 
     @torch.inference_mode()
     def test_capture_once_replay_greedy_mixed_and_smaller_batch(self):
+        self._check_capture_replay(use_variants=False)
+
+    @torch.inference_mode()
+    def test_backend_selects_greedy_and_mixed_graphs(self):
+        self._check_capture_replay(use_variants=True)
+
+    def _check_capture_replay(self, *, use_variants):
         device = "npu"
         # Production vocabulary, BS32 and gamma7 exercise multi-tile reduction,
         # independent step noise, and the strided corrected-logit destinations.
@@ -144,9 +155,26 @@ class TestNpuDsparkFoldedSampling(unittest.TestCase):
         ids = torch.zeros(bs * gamma, device=device, dtype=torch.long)
         sampler(hidden, ids)
         torch.npu.synchronize()
-        graph = torch.npu.NPUGraph()
-        with torch.npu.graph(graph):
-            sampler(hidden, ids)
+        if use_variants:
+            runner = SimpleNamespace(
+                device_module=torch.npu,
+                model_runner=SimpleNamespace(
+                    tp_group=SimpleNamespace(barrier=lambda: None),
+                    npu_graph_variant_provider=sampler,
+                ),
+            )
+            backend = NPUCudaGraphBackend(runner)
+            self.addCleanup(backend.cleanup)
+            key = ShapeKey(size=bs)
+            with backend.capture_session(torch.npu.Stream()):
+                backend.capture_one(key, lambda: sampler(hidden, ids))
+            self.assertEqual(len(backend._graphs), 2)
+            replay = lambda: backend.replay(key, None)
+        else:
+            graph = torch.npu.NPUGraph()
+            with torch.npu.graph(graph):
+                sampler(hidden, ids)
+            replay = graph.replay
         base, _ = model.compute_base_logits(hidden)
         base = base.view(bs, gamma, vocab)
         anchors = ids.view(bs, gamma)[:, 0]
@@ -188,7 +216,11 @@ class TestNpuDsparkFoldedSampling(unittest.TestCase):
                     ).log()
                 ).argmax(-1),
             )
-            graph.replay()
+            if use_variants:
+                self.assertEqual(
+                    sampler.npu_graph_variant, "sampling" if mixed else "greedy"
+                )
+            replay()
             torch.npu.synchronize()
             torch.testing.assert_close(
                 sampler.out.view(bs, gamma), expected, rtol=0, atol=0
