@@ -254,9 +254,7 @@ class DFlashAttention(nn.Module):
             attn_type=self.attn_type,
         )
 
-    def forward_prepare_npu(self, positions, hidden_states):
-        qkv, _ = self.qkv_proj(hidden_states)
-
+    def forward_prepare_npu(self, positions, qkv):
         if self.attn.layer_id == 0:
             self.rotary_emb.get_cos_sin_with_position(positions)
         q, k, v = split_qkv_rmsnorm_rope(
@@ -282,7 +280,7 @@ class DFlashAttention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         if _is_npu:
-            q, k, v = self.forward_prepare_npu(positions, hidden_states)
+            q, k, v = self.forward_prepare_npu(positions, qkv)
         elif self.use_table_qk_norm_rope and qkv.dtype == torch.bfloat16:
             from sglang.srt.speculative.dflash_utils import table_qk_norm_rope_
 
