@@ -191,16 +191,35 @@ class DsparkDraftSampler:
                 bs=bs,
                 gamma=self.gamma,
             )
-        base_logits, confidence_tap = self.model.compute_base_logits(model_hidden)
-        base_logits = base_logits.view(bs, self.gamma, -1)
         anchor = input_ids.view(bs, self.query_token_num)[:, 0]
+        draft_tokens = None
+        confidence_tap = None
+        # Select this only while capturing the greedy variant. Live host flags
+        # cannot turn a captured stochastic graph into a sharded greedy graph.
+        if self._npu_sampling and (not self.folded_sampling or self._capture_greedy):
+            greedy_proposal = getattr(self.model, "compute_greedy_proposal", None)
+            if greedy_proposal is not None:
+                site = (
+                    SpecTpSyncSite.DSPARK_GRAPH_SAMPLE
+                    if self.folded_sampling
+                    else SpecTpSyncSite.DSPARK_GRAPH_GREEDY
+                )
+                draft_tokens = greedy_proposal(
+                    model_hidden,
+                    first_prev_tokens=anchor,
+                    sync=lambda values: self._tp_sync.sync(site, values),
+                )
+        if draft_tokens is None:
+            base_logits, confidence_tap = self.model.compute_base_logits(model_hidden)
+            base_logits = base_logits.view(bs, self.gamma, -1)
 
         # Fused greedy fast path: only valid for the greedy (non-sampling) fold.
         # Heads without a compatible implementation return None and fall
         # through to the block sampler below.
-        draft_tokens = None
-        if not self.folded_sampling and (
-            self._fused_greedy or envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get()
+        if (
+            draft_tokens is None
+            and not self.folded_sampling
+            and (self._fused_greedy or envs.SGLANG_DSPARK_FUSED_LOCAL_TOP1.get())
         ):
             sample_block_greedy_fused = getattr(
                 self.markov_head, "sample_block_greedy_fused", None
