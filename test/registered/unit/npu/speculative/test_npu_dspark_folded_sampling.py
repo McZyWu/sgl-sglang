@@ -16,7 +16,7 @@ from sglang.srt.speculative.dspark_components.dspark_draft_sampler import (
 )
 from sglang.test.ci.ci_register import register_npu_ci
 
-register_npu_ci(est_time=35, suite="stage-a-unit-test-npu")
+register_npu_ci(est_time=35, suite="base-b-test-1-npu-a3")
 
 
 class _IdentitySync:
