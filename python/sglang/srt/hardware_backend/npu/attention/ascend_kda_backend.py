@@ -601,7 +601,14 @@ class AscendKDAAttnBackend(KDAAttnBackend):
                 gate_bias=layer.dt_bias,
                 lower_bound=layer.lower_bound,
             )
-            verify_b = dense_b.float().sigmoid()
+            if not dense_b.is_contiguous():
+                from sglang.kernels.ops.attention.fla.kda_verify_beta_npu import (
+                    cast_strided_kda_beta_to_fp32,
+                )
+
+                verify_b = cast_strided_kda_beta_to_fp32(dense_b).sigmoid()
+            else:
+                verify_b = dense_b.float().sigmoid()
         out = kda_target_verify_npu(
             A_log=layer.A_log,
             dt_bias=layer.dt_bias,

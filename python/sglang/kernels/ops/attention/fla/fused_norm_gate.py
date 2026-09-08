@@ -46,6 +46,10 @@ def layer_norm_gated_fwd_kernel(
     HAS_WEIGHT: tl.constexpr,
     HAS_BIAS: tl.constexpr,
     USE_GDC: tl.constexpr = False,
+    STRIDED_GATE: tl.constexpr = False,
+    GATE_HEADS: tl.constexpr = 1,
+    GATE_TOKEN_STRIDE: tl.constexpr = 0,
+    GATE_HEAD_STRIDE: tl.constexpr = 0,
 ):
     # PDL: x is the producer's output (e.g. the fused KDA verify kernel, which
     # triggers its dependents right after the o store), so every load sits
@@ -98,8 +102,22 @@ def layer_norm_gated_fwd_kernel(
         b_y = b_y + b_b[None, :]
 
     # swish/sigmoid output gate
-    p_g = tl.make_block_ptr(g, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
-    b_g = tl.load(p_g, boundary_check=(0, 1)).to(tl.float32)
+    if STRIDED_GATE:
+        # K3 QKVGBFA exposes g as [tokens, heads, D] within a wider projection.
+        # Flattening tokens/heads would copy the complete gate before RMSNorm.
+        rows = i_t * BT + tl.arange(0, BT)
+        gate_rows = (
+            rows // GATE_HEADS * GATE_TOKEN_STRIDE
+            + rows % GATE_HEADS * GATE_HEAD_STRIDE
+        )
+        b_g = tl.load(
+            g + gate_rows[:, None] + o_d[None, :],
+            mask=(rows[:, None] < T) & m_d[None, :],
+            other=0.0,
+        ).to(tl.float32)
+    else:
+        p_g = tl.make_block_ptr(g, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
+        b_g = tl.load(p_g, boundary_check=(0, 1)).to(tl.float32)
     if ACTIVATION == "swish" or ACTIVATION == "silu":
         b_y = b_y * b_g * tl.sigmoid(b_g)
     elif ACTIVATION == "sigmoid":
@@ -191,6 +209,7 @@ def layer_norm_gated_fwd(
     out_dtype: torch.dtype = None,
     residual_dtype: torch.dtype = None,
     is_rms_norm: bool = False,
+    gate_layout: tuple[int, int, int] | None = None,
 ):
     if residual is not None:
         residual_dtype = residual.dtype
@@ -248,6 +267,10 @@ def layer_norm_gated_fwd(
             HAS_RESIDUAL=residual is not None,
             HAS_WEIGHT=weight is not None,
             HAS_BIAS=bias is not None,
+            STRIDED_GATE=gate_layout is not None,
+            GATE_HEADS=gate_layout[0] if gate_layout is not None else 1,
+            GATE_TOKEN_STRIDE=gate_layout[1] if gate_layout is not None else 0,
+            GATE_HEAD_STRIDE=gate_layout[2] if gate_layout is not None else 0,
             num_warps=4,
             **pdl_kwargs,
         )
@@ -296,7 +319,19 @@ class LayerNormGatedFunction(torch.autograd.Function):
         g_shape_og = g.shape
         # reshape input data into 2D tensor
         x = x.reshape(-1, x.shape[-1])
-        g = g.reshape(-1, g.shape[-1])
+        gate_layout = None
+        if (
+            _is_npu
+            and g.ndim == 3
+            and g.shape[-1] <= 512
+            and g.stride(-1) == 1
+            and g.numel() == x.numel()
+            and g.shape[-1] == x.shape[-1]
+            and not g.is_contiguous()
+        ):
+            gate_layout = (g.shape[-2], g.stride(0), g.stride(1))
+        else:
+            g = g.reshape(-1, g.shape[-1])
         if residual is not None:
             assert residual.shape == x_shape_og
             residual = residual.reshape(-1, residual.shape[-1])
@@ -315,6 +350,7 @@ class LayerNormGatedFunction(torch.autograd.Function):
             residual=residual,
             residual_dtype=residual_dtype,
             is_rms_norm=is_rms_norm,
+            gate_layout=gate_layout,
         )
         ctx.save_for_backward(residual_out, g, weight, bias, mean, rstd)
         ctx.x_shape_og = x_shape_og
