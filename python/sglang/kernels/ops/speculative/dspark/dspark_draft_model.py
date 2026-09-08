@@ -24,6 +24,17 @@ class SampleStepTokens:
         greedy_mask: torch.Tensor,
         exp_noise: torch.Tensor,
     ) -> torch.Tensor:
+        if step_logits.device.type == "npu":
+            from sglang.kernels.ops.speculative.dspark.dspark_draft_sampling_npu import (
+                sample_step_tokens_npu,
+            )
+
+            return sample_step_tokens_npu(
+                step_logits=step_logits,
+                temperatures=temperatures,
+                greedy_mask=greedy_mask,
+                exp_noise=exp_noise,
+            )
         if step_logits.is_cuda:
             return cls.triton(
                 step_logits=step_logits,

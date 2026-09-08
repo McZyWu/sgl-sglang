@@ -1,4 +1,4 @@
-# Kimi-K3 verify gate and DSpark top1 A/B
+# Kimi-K3 verify gates and DSpark folded sampling
 
 Framework [PR31](https://github.com/zhaozx-cn/sglang/pull/31) is paired with
 updated [kernel PR3](https://github.com/zhaozx-cn/sgl-kernel-npu/pull/3). Use both
@@ -44,11 +44,76 @@ gate preparation in the timing. Output and every state snapshot are checked
 before and after graph replay. Test BV=32/64/128 separately; a larger tile can
 reduce duplicated work but also increase local-memory pressure.
 
-The old profiles measured 59.559 us/layer for separate activation plus verify
-and 75.083 us/layer for raw fused verify. These are historical observations,
-not measured performance of the new specialization. Compare against the
-same-run standalone baseline, then measure full-round time, acceptance length,
-and TPOT on the same model, request set, sampling mode, and software stack.
+The earlier raw-gate excerpt is not the user's corrected baseline, which
+already uses standalone activation. It cannot establish a speedup for this PR.
+Compare against a same-run standalone baseline, then measure full-round time,
+acceptance length, and TPOT on the same model, request set, sampling mode, and
+software stack.
+
+## Enabled NPU folded proposal and sampling
+
+For the K3 `DSparkDraftModel` with a vanilla Markov head, retain both folds:
+
+```bash
+export SGLANG_DSPARK_FOLDED_PROPOSAL=1
+export SGLANG_DSPARK_FOLDED_SAMPLING=1
+```
+
+On torch_npu 2.10.0/CANN 9.0, the previous `exponential_()` inside the captured
+tail fails with `Cannot call ...philox_engine_inputs during NPU graph capture`.
+The NPU path now stages independent `[batch, gamma, vocab]` noise outside the
+graph immediately before replay. Greedy batches generate no noise. The graph
+still performs every Markov step, selects proposals, and synchronizes tokens.
+No new environment variable or sampling fallback is required.
+
+Adapted from the first commit of upstream PR34944, stochastic selection uses
+`argmax(logits - temperature * log(exponential_noise))`. Greedy rows use direct
+logit argmax, preserving near-tie order. A two-pass reduction uses 8192-element
+tiles to amortize A3 vector tasks; a 16384-element trial exceeded the A3 192 KiB
+UB budget. The partial kernel directly writes gamma-strided corrected logits
+for sampling batches, eliminating the intermediate stack and copy. Greedy
+batches skip these stores. The public greedy mask remains boolean for mixed
+target acceptance; the kernel loads it without per-step casts.
+
+Sampling mode and noise values are persistent graph inputs, so greedy/mixed
+transitions and smaller live batches reuse the captured graph. Every Markov
+step receives independent noise; one `[batch, vocab]` draw reused across steps
+would change the joint proposal distribution. AUTO's memory estimate includes
+all gamma noise planes. BS32/gamma7/vocab163840 requires 140 MiB of noise and
+70 MiB of BF16 corrected logits, plus capture headroom.
+
+After restarting to recapture, look for both startup messages:
+
+```text
+DSpark draft proposal (greedy + sampling) folded into the draft cuda graph.
+DSpark NPU folded sampling: per-step noise staged before replay; greedy skips RNG and corrected-logit stores.
+```
+
+In profiling, `_sample_partial_kernel` and `_sample_combine_kernel` should
+appear in the draft graph. Greedy replay should have no exponential RNG or
+corrected-logit stack/copy. Non-greedy replay has one noise refresh before the
+draft graph, with a distinct plane consumed at each step. Setting an environment
+variable alone is not proof that the graph was selected.
+
+If the integration also contains PR29, do not pass
+`--speculative-dspark-draft-prefetch` for this comparison: that implementation
+skips construction of the folded sampler. The K3 generic vanilla Markov head
+also does not read the DSv4 W2 TP-sharding switches below; those exports do not
+remove its full-logit AllGather.
+
+Run the native replay test and the isolated tail benchmark:
+
+```bash
+PYTHONPATH=python python3 test/registered/unit/npu/speculative/test_npu_dspark_folded_sampling.py
+PYTHONPATH=python python3 benchmark/bench_dspark_npu_folded_sampling.py --bs 32 --gamma 7 --vocab 163840
+```
+
+The benchmark checks proposal IDs and times captured sampling tails, including
+the original corrected-logit stack/copy versus the new direct store. Both
+tails consume the same precomputed noise; it excludes RNG, Markov/model
+computation, communication, and acceptance. The original complete folded
+sampler cannot capture on this CANN RNG implementation. These measurements
+therefore are not an old-versus-new complete graph or a TPOT measurement.
 
 ## Preserved optional operators
 
@@ -59,7 +124,7 @@ coverage. PR31 retains their dispatch and the dense Conv3D option. The supplied
 dense/static profiles did not exercise all of these paths; no new TPOT benefit
 is claimed for them.
 
-To select the DSpark fused top1 path:
+To select the DSv4 TP-sharded fused top1 path on a compatible Markov head:
 
 ```bash
 export SGLANG_DSPARK_FOLDED_PROPOSAL=1
@@ -94,9 +159,13 @@ equivalent workload.
 
 ## Validation limits
 
-Framework CPU contract tests check both dispatch modes, gate precision and
+Framework CPU contract tests check both gate dispatch modes, gate precision and
 lower-bound placement, all V-tile overrides, metadata reuse, Conv2D/Conv3D,
 padding-index sharing, and graph-bucket alignment. Kernel CPU semantic tests
 check the actual kernel body with tensor/pointer adapters. Neither test mode
-compiles Triton or runs an NPU graph. NPU correctness, compiler memory usage,
-acceptance length, and TPOT remain to be measured before changing defaults.
+compiles Triton or runs an NPU graph for KDA. The separate folded-sampling NPU
+tests compile and capture the actual sampling kernels, verify BS32/gamma7 with
+the production vocabulary, greedy/mixed/shrinking batches, independent random
+draws across repeated replay, and near-tie/tail handling. They use a small
+synthetic Markov model, not loaded K3 weights. Full-model acceptance, TPOT, and
+four-machine performance still require an isolated serving benchmark.

@@ -13,8 +13,10 @@ from sglang.srt.speculative.dspark_components.dspark_draft import (
     select_draft_hidden_without_anchor,
 )
 from sglang.srt.speculative.spec_tp_sync import SpecTpSync, SpecTpSyncSite
+from sglang.srt.utils import is_npu
 
 logger = logging.getLogger(__name__)
+_is_npu = is_npu()
 
 # Same free-memory floor init_cuda_graphs requires before draft capture.
 _CAPTURE_HEADROOM_GB = 1.0
@@ -73,20 +75,35 @@ class DsparkDraftSampler:
             else None
         )
         self.folded_sampling = folded_sampling
+        self._npu_sampling = _is_npu
         self._tp_sync = tp_sync
         self.temperatures = None
         self.greedy_mask = None
         self.exp_noise = None
         self.corrected_out = None
+        self.write_corrected_logits = None
+        self._staged_all_greedy = True
         if folded_sampling:
             vocab = int(model.lm_head.org_vocab_size)
             self.temperatures = torch.ones(
                 (max_bs,), dtype=torch.float32, device=device
             )
+            # This buffer also feeds mixed target acceptance; retain its
+            # boolean contract and let the NPU kernel load it directly.
             self.greedy_mask = torch.ones((max_bs,), dtype=torch.bool, device=device)
-            self.exp_noise = torch.empty(
-                (max_bs, vocab), dtype=torch.float32, device=device
-            )
+            if self._npu_sampling:
+                # Each Markov step needs independent noise. A single [B, V]
+                # buffer reused across steps changes the joint proposal law.
+                self.exp_noise = torch.ones(
+                    (max_bs, self.gamma, vocab), dtype=torch.float32, device=device
+                )
+                self.write_corrected_logits = torch.zeros(
+                    (), dtype=torch.int32, device=device
+                )
+            else:
+                self.exp_noise = torch.empty(
+                    (max_bs, vocab), dtype=torch.float32, device=device
+                )
             self.corrected_out = torch.empty(
                 (max_bs * self.gamma, vocab),
                 dtype=_base_logits_dtype(model),
@@ -98,6 +115,9 @@ class DsparkDraftSampler:
         the draft graph replay that consumes them."""
         if not self.folded_sampling:
             return
+        if self._npu_sampling:
+            self._stage_npu_sampling_params(bs=bs, sampling_info=sampling_info)
+            return
         if sampling_info is None:
             self.temperatures[:bs].fill_(1.0)
             self.greedy_mask[:bs].fill_(True)
@@ -108,6 +128,30 @@ class DsparkDraftSampler:
             out=self.temperatures[:bs],
         )
         self.greedy_mask[:bs].copy_((sampling_info.top_ks <= 1).view(-1)[:bs])
+
+    def _stage_npu_sampling_params(self, *, bs: int, sampling_info) -> None:
+        all_greedy = sampling_info is None or sampling_info.is_all_greedy
+        if all_greedy:
+            if not self._staged_all_greedy:
+                self.greedy_mask.fill_(True)
+                self.write_corrected_logits.zero_()
+                self._staged_all_greedy = True
+            return
+        torch.clamp(
+            sampling_info.temperatures.view(-1)[:bs].to(torch.float32),
+            min=1e-5,
+            out=self.temperatures[:bs],
+        )
+        live_greedy = (sampling_info.top_ks <= 1).view(-1)[:bs]
+        self.greedy_mask[:bs].copy_(live_greedy)
+        self.greedy_mask[bs:].fill_(True)
+        if self._staged_all_greedy:
+            self.write_corrected_logits.fill_(1)
+        self._staged_all_greedy = False
+        # This hook runs on the caller's stream immediately before forward /
+        # replay. The live prefix is contiguous, so one RNG launch refreshes
+        # every live row and every step; graph buckets keep the same pointers.
+        self.exp_noise[:bs].exponential_(1)
 
     def __call__(self, hidden_states, input_ids):
         bs = hidden_states.shape[0] // self.query_token_num
@@ -140,7 +184,27 @@ class DsparkDraftSampler:
                 )
 
         if draft_tokens is None:
-            if self.folded_sampling:
+            if self.folded_sampling and self._npu_sampling:
+                from sglang.kernels.ops.speculative.dspark.dspark_draft_sampling_npu import (
+                    sample_step_tokens_npu,
+                )
+
+                def sampler(step_logits: torch.Tensor, step_idx: int) -> torch.Tensor:
+                    return self._tp_sync.sync(
+                        SpecTpSyncSite.DSPARK_GRAPH_SAMPLE,
+                        sample_step_tokens_npu(
+                            step_logits=step_logits,
+                            temperatures=self.temperatures[:bs],
+                            greedy_mask=self.greedy_mask[:bs],
+                            exp_noise=self.exp_noise[:bs, step_idx, :],
+                            corrected_logits_out=self.corrected_out.view(
+                                -1, self.gamma, step_logits.shape[-1]
+                            )[:bs, step_idx, :],
+                            write_corrected_logits=self.write_corrected_logits,
+                        ),
+                    )
+
+            elif self.folded_sampling:
 
                 def sampler(step_logits: torch.Tensor, step_idx: int) -> torch.Tensor:
                     del step_idx
@@ -170,9 +234,9 @@ class DsparkDraftSampler:
                 first_prev_tokens=anchor,
                 hidden_states=sample_hidden,
                 sampler=sampler,
-                collect_corrected=self.folded_sampling,
+                collect_corrected=self.folded_sampling and not self._npu_sampling,
             )
-            if self.folded_sampling:
+            if self.folded_sampling and not self._npu_sampling:
                 self.corrected_out[: bs * self.gamma].copy_(
                     corrected_logits.reshape(bs * self.gamma, -1)
                 )
@@ -211,7 +275,7 @@ def _resolve_folded_sampling(
             )
         return False
     vocab = int(model.lm_head.org_vocab_size)
-    noise_bytes = max_bs * vocab * 4
+    noise_bytes = max_bs * vocab * 4 * (gamma if _is_npu else 1)
     logits_bytes = max_bs * gamma * vocab * _base_logits_dtype(model).itemsize
     need_gb = (noise_bytes + logits_bytes) / (1 << 30)
     if available_memory_gb - need_gb >= _CAPTURE_HEADROOM_GB:
@@ -268,6 +332,11 @@ def maybe_build_draft_sampler(
             "DSpark draft proposal (%s) folded into the draft cuda graph.",
             "greedy + sampling" if folded_sampling else "greedy only",
         )
+        if _is_npu and folded_sampling:
+            logger.info(
+                "DSpark NPU folded sampling: per-step noise staged before replay; "
+                "greedy skips RNG and corrected-logit stores."
+            )
     return DsparkDraftSampler(
         model=draft_model,
         gamma=gamma,
