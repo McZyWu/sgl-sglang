@@ -570,6 +570,9 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
         # write into the NZ-addressed view below so ordinary MLA (including
         # Kimi-K3 MTP) can use FIA NZ without MLAPO.
         self.use_fia_nz = get_bool_env_var("SGLANG_USE_FIA_NZ")
+        self.use_fused_mla_nz_indices = get_bool_env_var(
+            "SGLANG_NPU_FUSED_MLA_NZ_INDICES"
+        )
         super(MLATokenToKVPool, self).__init__(
             size=size,
             page_size=page_size,
@@ -754,9 +757,28 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
     ) -> None:
         """Store MLA latent and RoPE KV tensors in FIA's NZ tile order."""
 
-        def scatter(cache: torch.Tensor, values: torch.Tensor, head_dim: int):
+        indices_pair = None
+        if (
+            self.use_fused_mla_nz_indices
+            and loc.dtype == torch.int32
+            and loc.numel() in (32, 256)
+            and (self.page_size, self.kv_lora_rank, self.qk_rope_head_dim)
+            == (128, 512, 64)
+        ):
+            from sgl_kernel_npu.mem_cache.mla_nz_indices import (
+                build_mla_nz_scatter_indices,
+            )
+
+            indices_pair = build_mla_nz_scatter_indices(
+                loc, self.kv_lora_rank, self.qk_rope_head_dim, self.page_size
+            )
+
+        def scatter(
+            cache: torch.Tensor, values: torch.Tensor, head_dim: int, indices=None
+        ):
             num_tiles = head_dim // 16
-            indices = _mla_fia_nz_scatter_indices(loc, head_dim, self.page_size)
+            if indices is None:
+                indices = _mla_fia_nz_scatter_indices(loc, head_dim, self.page_size)
             # Destination rows are ordered [page, tile, slot]. Source rows use
             # the matching [token, tile] order after this reshape.
             dst = cache.view(-1, 1, num_tiles, self.page_size, 16).view(-1, 16)
@@ -764,8 +786,11 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
             torch_npu.npu_scatter_nd_update_(dst, indices, src)
 
         offset = layer_id - self.start_layer
-        scatter(self.k_buffer[offset], cache_k, self.kv_lora_rank)
-        scatter(self.v_buffer[offset], cache_v, self.qk_rope_head_dim)
+        k_indices, r_indices = (
+            indices_pair if indices_pair is not None else (None, None)
+        )
+        scatter(self.k_buffer[offset], cache_k, self.kv_lora_rank, k_indices)
+        scatter(self.v_buffer[offset], cache_v, self.qk_rope_head_dim, r_indices)
 
     def set_index_k_buffer(
         self,
