@@ -152,6 +152,11 @@ class MLPSyncBatchInfo:
         self.tp0_info_cpu = self._get_local_tensor(device="cpu").view(1, -1)
         self.global_num_tokens = [self.num_tokens]
         self.global_num_tokens_for_logprob = [self.num_tokens_for_logprob]
+        # DP1 skips the collective but must publish the same scheduling votes.
+        # Defaults would drop prefill priority and incorrectly reuse an invalid
+        # decode probe (including stale is_extend_in_batch from the last prefill).
+        self.global_prefill_priority = self.local_prefill_priority
+        self.global_decode_probe_valid = self.local_decode_probe_valid
         if _ENABLE_METRICS_DP_ATTENTION:
             self.dp_cooperation_info = DPCooperationInfo.create(
                 self.tp0_info_cpu[:, 5].tolist()

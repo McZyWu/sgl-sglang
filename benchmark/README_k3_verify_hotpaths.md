@@ -115,6 +115,25 @@ computation, communication, and acceptance. The original complete folded
 sampler cannot capture on this CANN RNG implementation. These measurements
 therefore are not an old-versus-new complete graph or a TPOT measurement.
 
+## Speculative scheduler synchronization at DP1
+
+PR31 includes the PR27 fused scheduler-sync prerequisite and repairs its DP1
+local finalization. Keep `SGLANG_SPECULATIVE_FUSED_DP_MLP_SYNC=1` when testing
+this combination. No additional environment switch is needed for the repair.
+
+Without DP attention, no collective is needed, but both scheduling decisions
+must still be published: whether prefill takes priority and whether the decode
+probe remains valid. Previously the local path left these at `False` and `True`.
+That could discard prefill work or skip a required metadata refresh after a
+finished/retracted request. Stale `is_extend_in_batch` then routes a nonempty
+DSpark decode batch into prefill and can trigger
+`extend-idle conversion expects an empty rank` in hybrid KDA padding.
+
+Local finalization now copies both decisions. DP1 still performs no scheduler
+collective, stable decode retains the fused fast path, and an invalid probe
+requests the existing post-update metadata refresh. The hybrid empty-rank
+assertion and both folded graph modes remain enabled.
+
 ## Preserved optional operators
 
 Metadata reuse, the once-per-forward int64 padding mask, and the shared `-1`
