@@ -38,10 +38,7 @@ from torch.profiler import ProfilerActivity, profile
 
 from sglang.srt.compilation import torch_compile_decoration
 from sglang.srt.compilation.torch_compile_decoration import set_torch_compile_config
-from sglang.srt.distributed.parallel_state import (
-    graph_capture,
-    set_pdmux_status,
-)
+from sglang.srt.distributed.parallel_state import graph_capture, set_pdmux_status
 from sglang.srt.dllm.config import DllmConfig
 from sglang.srt.environ import envs
 from sglang.srt.layers.attention.base_attn_backend import (
@@ -84,12 +81,8 @@ from sglang.srt.model_executor.runner_backend.breakable_cuda_graph_backend impor
     BreakableCudaGraphBackend,
 )
 from sglang.srt.model_executor.runner_backend.utils import resolve_decode_backend
-from sglang.srt.model_executor.runner_backend_utils import (
-    CUDA_GRAPH_CAPTURE_FAILED_MSG,
-)
-from sglang.srt.model_executor.runner_utils.buffers import (
-    DecodeInputBuffers,
-)
+from sglang.srt.model_executor.runner_backend_utils import CUDA_GRAPH_CAPTURE_FAILED_MSG
+from sglang.srt.model_executor.runner_utils.buffers import DecodeInputBuffers
 from sglang.srt.model_executor.runner_utils.capture_mode import (
     _set_capture_dsa_variant,
     _set_capture_lora_variant,
@@ -103,17 +96,13 @@ from sglang.srt.model_executor.runner_utils.pool import (
 )
 from sglang.srt.model_executor.runner_utils.shared_read_event import make_external_event
 from sglang.srt.multiplex.pdmux_context import get_current_stream_idx, get_stream_groups
-from sglang.srt.runtime_context import (
-    get_exec,
-    get_flags,
-    get_parallel,
-    get_spec,
-)
+from sglang.srt.runtime_context import get_exec, get_flags, get_parallel, get_spec
 from sglang.srt.speculative.ragged_verify import resolve_ragged_verify_layout
 from sglang.srt.utils import (
     empty_context,
     get_available_gpu_memory,
     is_hip,
+    is_npu,
     require_attn_tp_gather,
     require_mlp_tp_gather,
 )
@@ -272,10 +261,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # DeepSeek-V3.2). CUDA can opt in later once validated there.
         self.dsa_dual_graph = False
         self.dsa_index_topk: Optional[int] = None
-        from sglang.srt.configs.model_config import (
-            get_dsa_index_topk,
-            is_deepseek_dsa,
-        )
+        from sglang.srt.configs.model_config import get_dsa_index_topk, is_deepseek_dsa
 
         hf_config = model_runner.model_config.hf_config
         if is_hip() and is_deepseek_dsa(hf_config):
@@ -1216,8 +1202,19 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                     self.model_runner.spec_algorithm.is_dflash_family()
                     and self.model_runner.is_draft_worker
                     and "input_embeds" in inspect.signature(forward).parameters
-                    and not hasattr(self.model_runner.model, "forward_embed")
+                    and (
+                        not hasattr(self.model_runner.model, "forward_embed")
+                        or (
+                            is_npu()
+                            and self.model_runner.spec_algorithm.is_dspark()
+                            and not envs.SGLANG_DSPARK_EMBED_IN_GRAPH.get()
+                        )
+                    )
                 ):
+                    # DSpark's proposer stages eager embeddings when the NPU
+                    # graph-embedding switch is off. Capture that same input
+                    # even when the model exposes forward_embed; otherwise the
+                    # graph silently embeds again and retains its AllReduce.
                     kwargs["input_embeds"] = self.buffers.input_embeds[:num_tokens]
 
                 out = forward(
