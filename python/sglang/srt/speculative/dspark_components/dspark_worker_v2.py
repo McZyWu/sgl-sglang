@@ -413,19 +413,22 @@ class DSparkWorkerV2(BaseSpecWorker):
                         available_memory_gb=available_mem
                     )
                     if self._draft_sampler is not None:
-                        # DP1 ranks share sampling mode. Keep the existing
-                        # device-selected graph for independent DP batches.
+                        # Each dense draft uses its own attention-TP group.
+                        # Those ranks share sampling mode, while other DP
+                        # groups may independently select another variant.
                         if (
                             self._draft_sampler.npu_graph_variants
-                            and get_parallel().attn_dp_size == 1
+                            and self._can_select_npu_draft_graph_variant()
                         ):
                             self.draft_model_runner.npu_graph_variant_provider = (
                                 self._draft_sampler
                             )
                             if self.ps.tp_rank == 0:
                                 logger.info(
-                                    "DSpark NPU DP1 captures separate greedy ArgMax "
-                                    "and mixed sampling graphs for each batch size."
+                                    "DSpark NPU captures separate greedy ArgMax "
+                                    "and mixed sampling graphs within draft TP%d "
+                                    "for each batch size.",
+                                    self._draft_graph_group.world_size,
                                 )
                         self.draft_model_runner.capture_tail_hooks.append(
                             make_draft_sampler_capture_hook(self._draft_sampler)
@@ -434,6 +437,13 @@ class DSparkWorkerV2(BaseSpecWorker):
             self._draft_worker.init_cuda_graphs(
                 capture_decode_cuda_graph=capture_decode_cuda_graph
             )
+
+    def _can_select_npu_draft_graph_variant(self):
+        parallel = get_parallel()
+        return parallel.attn_dp_size == 1 or (
+            self._draft_dp_context_enabled
+            and self._draft_graph_group is parallel.attn_tp_group
+        )
 
     def _maybe_build_draft_sampler(self, *, available_memory_gb: float):
         return maybe_build_draft_sampler(

@@ -130,5 +130,34 @@ def test_non_specialized_model_retains_single_graph(backend):
     assert events[-1] == ("replay", None)
 
 
+@pytest.mark.parametrize(
+    "dp_size,dense_draft,local_group,expected",
+    [
+        (1, False, False, True),
+        (4, True, True, True),
+        (4, True, False, False),
+        (4, False, True, False),
+    ],
+)
+def test_host_variant_selection_requires_dp_local_draft(
+    monkeypatch, dp_size, dense_draft, local_group, expected
+):
+    from sglang.srt.speculative.dspark_components import dspark_worker_v2 as worker
+
+    attn_group = object()
+    monkeypatch.setattr(
+        worker,
+        "get_parallel",
+        lambda: SimpleNamespace(attn_dp_size=dp_size, attn_tp_group=attn_group),
+    )
+    instance = SimpleNamespace(
+        _draft_dp_context_enabled=dense_draft,
+        _draft_graph_group=attn_group if local_group else object(),
+    )
+    assert (
+        worker.DSparkWorkerV2._can_select_npu_draft_graph_variant(instance) is expected
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

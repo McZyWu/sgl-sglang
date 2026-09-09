@@ -260,5 +260,35 @@ def test_generic_model_attach_activates_only_supported_opt_in_path(
         )
 
 
+@pytest.mark.parametrize("dp_rank", range(4))
+def test_dp_local_head_uses_attention_group(monkeypatch, dp_rank):
+    monkeypatch.setattr(dspark, "_is_npu", True)
+    monkeypatch.setenv("SGLANG_DSPARK_OPT_MARKOV_W2_TP_SHARD", "1")
+    monkeypatch.setenv("SGLANG_DSPARK_FUSED_LOCAL_TOP1", "1")
+    monkeypatch.setattr(dspark, "should_apply_lm_head_quant_method", lambda *a: False)
+    group = SimpleNamespace(world_size=16, rank_in_group=7)
+    global_group = SimpleNamespace(world_size=64, rank_in_group=dp_rank * 16 + 7)
+    monkeypatch.setattr(
+        dspark,
+        "get_parallel",
+        lambda: SimpleNamespace(
+            tp_group=global_group,
+            attn_tp_group=group,
+            attn_dp_size=4,
+            attn_cp_size=1,
+        ),
+    )
+    model = SimpleNamespace(
+        is_nemotron_35_draft=False,
+        markov_head=dspark.VanillaMarkov(vocab_size=128, markov_rank=4).bfloat16(),
+    )
+    lm = make_lm(128, 8, 7, 16)
+    lm.quant_method = None
+    lm.use_attn_tp_group = True
+    dspark.DSparkDraftMixin.attach_shared_modules(model, embed_tokens=None, lm_head=lm)
+    assert model._npu_greedy_shard.group is group
+    assert (model._npu_greedy_shard.start, model._npu_greedy_shard.end) == (56, 64)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

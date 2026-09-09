@@ -540,7 +540,13 @@ class DSparkDraftMixin:
                 if getattr(lm_head, "use_attn_tp_group", False)
                 else parallel.tp_group
             )
-            if parallel.attn_dp_size == 1 and parallel.attn_cp_size == 1:
+            # A DP-local LM head has the same vocabulary partition on each
+            # attention-TP group. Its top-1 exchange never crosses DP groups.
+            # A global TP head under DP still requires the existing fallback.
+            if parallel.attn_cp_size == 1 and (
+                parallel.attn_dp_size == 1
+                or getattr(lm_head, "use_attn_tp_group", False)
+            ):
                 self._npu_greedy_shard = VanillaMarkovGreedyShard.create(
                     self.markov_head, lm_head, group
                 )
