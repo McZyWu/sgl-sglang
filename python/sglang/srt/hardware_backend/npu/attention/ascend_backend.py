@@ -585,9 +585,15 @@ class AscendAttnBackend(AttentionBackend):
         self.graph_mode = False
 
     def init_cuda_graph_state(self, max_bs: int, max_num_tokens: int):
-        total_context_len = self.max_context_len + self.page_size - 1
+        total_context_len = self.max_context_len
         if self.speculative_num_draft_tokens is not None:
             total_context_len += self.speculative_num_draft_tokens
+        # The request pool includes page-aligned speculative reserve and can
+        # be shared with a target supporting longer sequences than the draft.
+        # Cover its full width before capture so replay keeps stable views.
+        total_context_len = (
+            max(total_context_len, self.req_to_token.shape[1]) + self.page_size - 1
+        )
         self.graph_metadata = {
             "block_tables": torch.empty(
                 (max_bs, total_context_len // self.page_size),
