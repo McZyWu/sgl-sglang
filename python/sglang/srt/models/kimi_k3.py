@@ -3459,8 +3459,13 @@ class KimiK3ForConditionalGeneration(nn.Module):
         # shard work across ranks image-wise via the DP runner.
         self.use_data_parallel = True
 
-        self.vision_tower = KimiK3VisionTower(config.vision_config)
-        self.mm_projector = KimiK3MultiModalProjector(config.vision_config)
+        # Language-only loading already skips these checkpoint tensors. Avoid
+        # allocating their replicated parameters as well.
+        self.vision_tower = None
+        self.mm_projector = None
+        if not config.language_only:
+            self.vision_tower = KimiK3VisionTower(config.vision_config)
+            self.mm_projector = KimiK3MultiModalProjector(config.vision_config)
 
         self.language_model = None
         if not config.encoder_only:
@@ -3549,6 +3554,8 @@ class KimiK3ForConditionalGeneration(nn.Module):
         )
 
     def get_image_feature(self, items: List[MultimodalDataItem]) -> torch.Tensor:
+        if self.vision_tower is None:
+            raise ValueError("Image input is unavailable in language-only mode")
         device = self.vision_tower.device
         target_dtype = self.vision_tower.patch_embed.proj.weight.dtype
         image_grid_thws = []
