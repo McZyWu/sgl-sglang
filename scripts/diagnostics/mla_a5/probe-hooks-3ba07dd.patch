@@ -1,0 +1,30 @@
+diff --git a/python/sglang/srt/hardware_backend/npu/attention/ascend_backend.py b/python/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
+--- a/python/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
++++ b/python/sglang/srt/hardware_backend/npu/attention/ascend_backend.py
+@@ -7,0 +8 @@
++from sglang.srt.hardware_backend.npu.attention import _mla_a5_diag as _mla_diag
+@@ -1862,0 +1864,4 @@
++                    _mla_ctx = _mla_diag.begin(
++                        layer, self, forward_batch, q_nope, q_rope,
++                        k_nope, k_rope, v, cu_query_lens,
++                    )
+@@ -1882,0 +1888 @@
++                    _mla_diag.current(_mla_ctx, attn_output, attn_lse)
+@@ -1963 +1969,6 @@
+-                    attn_output, _ = torch_npu.npu_attention_update(
++                    _mla_diag.prefix(
++                        _mla_ctx, self, layer, kv_cached, k_rope_cached,
++                        k_nope, k_rope, v, prefix_output, prefix_lse,
++                    )
++                    attn_output, _ = _mla_diag.merge(
++                        _mla_ctx,
+diff --git a/python/sglang/srt/hardware_backend/npu/modules/deepseek_v2_attention_mla_npu.py b/python/sglang/srt/hardware_backend/npu/modules/deepseek_v2_attention_mla_npu.py
+--- a/python/sglang/srt/hardware_backend/npu/modules/deepseek_v2_attention_mla_npu.py
++++ b/python/sglang/srt/hardware_backend/npu/modules/deepseek_v2_attention_mla_npu.py
+@@ -4,0 +5 @@
++from sglang.srt.hardware_backend.npu.attention import _mla_a5_diag as _mla_diag
+@@ -112,0 +114,4 @@
++        _mla_diag.record_cache(
++            m.layer_id, kv_a, k_pe, ckv_cache, k_rope_cache,
++            forward_batch.out_cache_loc, forward_batch.global_num_token_non_padded_cpu,
++        )

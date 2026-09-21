@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "revision": "1344e1e2a5ca3e07bf6140b8c606e38465fbc55c",
+      "install": "passed",
+      "syntax": "passed",
+      "restore_byte_identical": true,
+      "protect_post_install_edits": true,
+      "anchor_guard_without_writes": true
+    },
+    {
+      "revision": "3ba07ddc43d55782e2195f5cd2457297b1eef9fd",
+      "install": "passed",
+      "syntax": "passed",
+      "restore_byte_identical": true,
+      "protect_post_install_edits": true,
+      "anchor_guard_without_writes": true
+    }
+  ],
+  "script_sha256": "155e5ee4cd94f2341887e980fd6a021748e821477d857620c5afa661a7ef7551",
+  "npu_runtime_tested": false,
+  "cpu_torch_reference_executed": false
+}
