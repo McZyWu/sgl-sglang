@@ -1,0 +1,2474 @@
+{
+  "date": "2026-10-20",
+  "framework_commit": "d07bde5338485bb3f6344683e21dccdd02b5a5cb",
+  "kernel_commit": "674b503190c98c4114fa6c26806d36824cb736aa",
+  "machine": "151",
+  "hardware": "Ascend910_9362, TP=1",
+  "environment": "CANN 9.1.0 (A3 B083 image), PyTorch 2.10.0+cpu, torch-npu 2.10.0.post6",
+  "timing": "sum of synchronized Engine.generate wall times, includes prefill and detokenization; excludes loading and disjoint training warmup",
+  "dataset": {
+    "name": "GSM8K",
+    "test_sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+    "train_corpus_sha256": "efcecf703902f9c61bc9a04fdc94aed3249abe0747d4cbfc233a1af498ef6204",
+    "seed": 42,
+    "shots": 5,
+    "template": "raw completion, training examples 0..4 with arithmetic annotations removed",
+    "warning": "performance subset, not full GSM8K or official Qwen/DeepSeek accuracy evaluation"
+  },
+  "protocol": {
+    "batch_size": 1,
+    "max_new_tokens": 1024,
+    "temperature": 0,
+    "radix_cache": "enabled for all cases",
+    "warmup": "4 disjoint training questions 512..515, 128 generated tokens each",
+    "cold": "unseen shuffled test questions after disjoint train warmup",
+    "reused": "same test questions in same order after cold phase; online trie retains previous outputs",
+    "native": "ASCEND_USE_FIA=false, full decode graph and overlap enabled",
+    "fia": "ASCEND_USE_FIA=true, full decode graph and overlap enabled",
+    "ngram": "ASCEND_USE_FIA=true, NGRAM, eager/synchronous, D=12, capacity=10M, no external corpus",
+    "external4": "NGRAM plus first 256 training documents, external SAM budget=4",
+    "external11": "NGRAM plus same training documents, external SAM budget=11",
+    "qwen_4b_repeats": "2 fresh-engine runs on physical devices 0/2 with reversed case order",
+    "qwen_06b": "64 test questions, 1 run per case",
+    "mla": "16 test questions, 1 pilot per case"
+  },
+  "interpretation": {
+    "positive_scope": "Qwen3-4B identical-request replay throughput only",
+    "negative_scope": "unseen first pass on all tested models; Qwen3-0.6B expanded subset and MLA pilot even on replay",
+    "accuracy_caveat": "Qwen3-4B replay: NGRAM 53/64 versus native/FIA 54/64 in both runs. 2/64 output sequences differ from FIA; one baseline-correct answer reaches the output cap without a strict final answer. This does not establish accuracy-preserving acceleration."
+  },
+  "measurements": [
+    {
+      "file": "confirm-mha-b1-r0-external4.json",
+      "file_sha256": "183e987f340a9fffd0c595295506b50582081159a11bd83717484cf4975b838c",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "external4",
+      "phase": "cold",
+      "seconds": 179.11670210724697,
+      "tokens": 8536,
+      "tokens_per_second": 47.65608064226769,
+      "requests_per_second": 0.35730894577145406,
+      "correct": 20,
+      "accuracy": 0.3125,
+      "truncated": 4,
+      "accept_length": 2.083984375,
+      "accept_rate": 0.09774502840909091,
+      "verify_calls": 4096,
+      "batch_latency_ms": {
+        "mean": 2798.698470425734,
+        "p50": 1600.177844054997,
+        "p95": 14322.446083393816
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.31431348085538585,
+        "request_throughput_ratio": 0.2106224356247431,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          608,
+          1132,
+          945,
+          730,
+          176,
+          479,
+          896,
+          480,
+          275,
+          172,
+          413,
+          454,
+          280,
+          177,
+          677,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          1273,
+          143,
+          464,
+          259,
+          90,
+          998
+        ],
+        "final_answer_differs": [
+          945,
+          896,
+          480,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969
+        ],
+        "lost_correct": [
+          896,
+          480
+        ],
+        "gained_correct": [
+          356
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.34520672246821227,
+        "request_throughput_ratio": 0.30917354654047363,
+        "output_ids_differ": [
+          906,
+          945,
+          275,
+          177,
+          1176,
+          356,
+          1273,
+          464,
+          259,
+          998
+        ],
+        "final_answer_differs": [
+          906,
+          945,
+          177,
+          1176,
+          998
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          906,
+          998
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-external4.json",
+      "file_sha256": "183e987f340a9fffd0c595295506b50582081159a11bd83717484cf4975b838c",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "external4",
+      "phase": "reused",
+      "seconds": 93.12972044246271,
+      "tokens": 9473,
+      "tokens_per_second": 101.71833390021392,
+      "requests_per_second": 0.6872134877666727,
+      "correct": 21,
+      "accuracy": 0.328125,
+      "truncated": 5,
+      "accept_length": 4.659616330545991,
+      "accept_rate": 0.3343469123105129,
+      "verify_calls": 2033,
+      "batch_latency_ms": {
+        "mean": 1455.1518819134799,
+        "p50": 451.43712498247623,
+        "p95": 8913.903836603273
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.7501537029576713,
+        "request_throughput_ratio": 0.5243869757189591,
+        "output_ids_differ": [
+          289,
+          608,
+          1132,
+          176,
+          896,
+          480,
+          187,
+          275,
+          868,
+          413,
+          454,
+          280,
+          177,
+          1176,
+          21,
+          356,
+          969,
+          1273,
+          143,
+          464,
+          259,
+          90,
+          998,
+          989
+        ],
+        "final_answer_differs": [
+          896,
+          177,
+          21,
+          356,
+          969,
+          1273,
+          989
+        ],
+        "lost_correct": [
+          896
+        ],
+        "gained_correct": [
+          356
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.7774165283669138,
+        "request_throughput_ratio": 0.7032283576033025,
+        "output_ids_differ": [
+          906,
+          618,
+          730,
+          479,
+          1122,
+          480,
+          187,
+          275,
+          868,
+          172,
+          280,
+          1176,
+          356,
+          100,
+          969,
+          1273,
+          464,
+          259,
+          998,
+          989
+        ],
+        "final_answer_differs": [
+          906,
+          1122,
+          480,
+          1176,
+          100,
+          1273,
+          998,
+          989
+        ],
+        "lost_correct": [
+          1176
+        ],
+        "gained_correct": [
+          906,
+          480,
+          998
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-fia.json",
+      "file_sha256": "d19759649bf53bd3414928319aaf3746ff4f3a4dfa7dc41163b9f9d5b32f13f9",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "fia",
+      "phase": "cold",
+      "seconds": 55.37814603513107,
+      "tokens": 7645,
+      "tokens_per_second": 138.05084762408129,
+      "requests_per_second": 1.155690549109379,
+      "correct": 18,
+      "accuracy": 0.28125,
+      "truncated": 3,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 865.2835317989229,
+        "p50": 424.1695334203541,
+        "p95": 1643.7884127721152
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.9105079953485808,
+        "request_throughput_ratio": 0.6812433922032547,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          608,
+          1132,
+          730,
+          176,
+          479,
+          896,
+          480,
+          172,
+          413,
+          454,
+          280,
+          177,
+          677,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          143,
+          464,
+          259,
+          90,
+          998
+        ],
+        "final_answer_differs": [
+          906,
+          896,
+          480,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          998
+        ],
+        "lost_correct": [
+          906,
+          896,
+          480,
+          998
+        ],
+        "gained_correct": [
+          356
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-fia.json",
+      "file_sha256": "d19759649bf53bd3414928319aaf3746ff4f3a4dfa7dc41163b9f9d5b32f13f9",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "fia",
+      "phase": "reused",
+      "seconds": 65.49146035080776,
+      "tokens": 8569,
+      "tokens_per_second": 130.8414861128427,
+      "requests_per_second": 0.9772266438583185,
+      "correct": 19,
+      "accuracy": 0.296875,
+      "truncated": 4,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1023.3040679813712,
+        "p50": 451.13392639905214,
+        "p95": 7358.02085802421
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.9649315078668158,
+        "request_throughput_ratio": 0.7456851960665252,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          608,
+          1132,
+          730,
+          176,
+          479,
+          896,
+          1122,
+          480,
+          172,
+          413,
+          454,
+          280,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          143,
+          464,
+          259,
+          90,
+          998
+        ],
+        "final_answer_differs": [
+          906,
+          896,
+          1122,
+          480,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          998
+        ],
+        "lost_correct": [
+          906,
+          896,
+          480,
+          998
+        ],
+        "gained_correct": [
+          1176,
+          356
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-native.json",
+      "file_sha256": "e6960b5ec535d0648109b251462572f7ed88d782f440762c5213107691ab85da",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "native",
+      "phase": "cold",
+      "seconds": 37.72599605889991,
+      "tokens": 5720,
+      "tokens_per_second": 151.61958854763225,
+      "requests_per_second": 1.6964429487846964,
+      "correct": 21,
+      "accuracy": 0.328125,
+      "truncated": 1,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 589.4686884203111,
+        "p50": 438.2908761035651,
+        "p95": 1024.1522545693426
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.098287994293952,
+        "request_throughput_ratio": 1.4679041462198015,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          608,
+          1132,
+          730,
+          176,
+          479,
+          896,
+          480,
+          172,
+          413,
+          454,
+          280,
+          177,
+          677,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          143,
+          464,
+          259,
+          90,
+          998
+        ],
+        "final_answer_differs": [
+          906,
+          896,
+          480,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          998
+        ],
+        "lost_correct": [
+          356
+        ],
+        "gained_correct": [
+          906,
+          896,
+          480,
+          998
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-native.json",
+      "file_sha256": "e6960b5ec535d0648109b251462572f7ed88d782f440762c5213107691ab85da",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "native",
+      "phase": "reused",
+      "seconds": 48.836012452375144,
+      "tokens": 6622,
+      "tokens_per_second": 135.59665639076843,
+      "requests_per_second": 1.3105083070083325,
+      "correct": 21,
+      "accuracy": 0.328125,
+      "truncated": 2,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 763.0626945683616,
+        "p50": 425.34490628167987,
+        "p95": 1257.521393639035
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0363429858464364,
+        "request_throughput_ratio": 1.3410484816850066,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          608,
+          1132,
+          730,
+          176,
+          479,
+          896,
+          1122,
+          480,
+          172,
+          413,
+          454,
+          280,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          143,
+          464,
+          259,
+          90,
+          998
+        ],
+        "final_answer_differs": [
+          906,
+          896,
+          1122,
+          480,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          998
+        ],
+        "lost_correct": [
+          1176,
+          356
+        ],
+        "gained_correct": [
+          906,
+          896,
+          480,
+          998
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-ngram.json",
+      "file_sha256": "4671ea9f0433dec2d78dea03a25c4ed04b284bd39c7d31efd5578b44cdee4db9",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "ngram",
+      "phase": "cold",
+      "seconds": 158.65141622442752,
+      "tokens": 7612,
+      "tokens_per_second": 47.97940151528242,
+      "requests_per_second": 0.4034001178373719,
+      "correct": 21,
+      "accuracy": 0.328125,
+      "truncated": 3,
+      "accept_length": 2.112683874548987,
+      "accept_rate": 0.10019428254232583,
+      "verify_calls": 3603,
+      "batch_latency_ms": {
+        "mean": 2478.92837850668,
+        "p50": 1585.8867317438126,
+        "p95": 4487.2496228665095
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.316445928754182,
+        "request_throughput_ratio": 0.23779173837019457,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          1132,
+          730,
+          176,
+          479,
+          896,
+          480,
+          275,
+          172,
+          413,
+          454,
+          280,
+          177,
+          677,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          1273,
+          143,
+          464,
+          259,
+          90,
+          998,
+          989
+        ],
+        "final_answer_differs": [
+          896,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          1273,
+          998,
+          989
+        ],
+        "lost_correct": [
+          896,
+          998
+        ],
+        "gained_correct": [
+          356,
+          1273
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.3475487643939174,
+        "request_throughput_ratio": 0.34905547869042286,
+        "output_ids_differ": [
+          906,
+          608,
+          480,
+          275,
+          280,
+          1273,
+          143,
+          464,
+          259,
+          998,
+          989
+        ],
+        "final_answer_differs": [
+          906,
+          480,
+          1273,
+          989
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          906,
+          480,
+          1273
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha-b1-r0-ngram.json",
+      "file_sha256": "4671ea9f0433dec2d78dea03a25c4ed04b284bd39c7d31efd5578b44cdee4db9",
+      "label": "confirm",
+      "model": "mha",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "ngram",
+      "phase": "reused",
+      "seconds": 73.01653989218175,
+      "tokens": 8608,
+      "tokens_per_second": 117.89109717758211,
+      "requests_per_second": 0.8765137336623205,
+      "correct": 19,
+      "accuracy": 0.296875,
+      "truncated": 4,
+      "accept_length": 5.546391752577319,
+      "accept_rate": 0.4107895970009372,
+      "verify_calls": 1552,
+      "batch_latency_ms": {
+        "mean": 1140.88343581534,
+        "p50": 340.99226142279804,
+        "p95": 7974.4091660482445
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.8694248096932298,
+        "request_throughput_ratio": 0.6688349314345455,
+        "output_ids_differ": [
+          906,
+          618,
+          289,
+          608,
+          1132,
+          730,
+          176,
+          479,
+          896,
+          1122,
+          480,
+          172,
+          413,
+          454,
+          280,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          143,
+          464,
+          259,
+          90,
+          998
+        ],
+        "final_answer_differs": [
+          906,
+          896,
+          1122,
+          480,
+          177,
+          1176,
+          21,
+          356,
+          100,
+          969,
+          259,
+          998
+        ],
+        "lost_correct": [
+          906,
+          896,
+          480,
+          998
+        ],
+        "gained_correct": [
+          1176,
+          356
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.9010223032464515,
+        "request_throughput_ratio": 0.8969400692981927,
+        "output_ids_differ": [
+          480,
+          280,
+          1176,
+          464,
+          259,
+          998
+        ],
+        "final_answer_differs": [
+          259,
+          998
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-external4.json",
+      "file_sha256": "17af1327d5810cebb54a7d8cec1fc058ea972ca5b4308f398a436e0e609b2d77",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "external4",
+      "phase": "cold",
+      "seconds": 200.83030168432742,
+      "tokens": 6897,
+      "tokens_per_second": 34.34242712457288,
+      "requests_per_second": 0.31867700971040513,
+      "correct": 55,
+      "accuracy": 0.859375,
+      "truncated": 2,
+      "accept_length": 1.9671990872789504,
+      "accept_rate": 0.08709744334387803,
+      "verify_calls": 3506,
+      "batch_latency_ms": {
+        "mean": 3137.973463817616,
+        "p50": 2342.828667489812,
+        "p95": 6567.272277921424
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.3606099606178844,
+        "request_throughput_ratio": 0.3581002784213267,
+        "output_ids_differ": [
+          906,
+          1252,
+          608,
+          463,
+          15,
+          1122,
+          1005,
+          921,
+          413,
+          177,
+          923,
+          356,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          177,
+          1089
+        ],
+        "lost_correct": [
+          1252
+        ],
+        "gained_correct": [
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.35818960011871775,
+        "request_throughput_ratio": 0.33019711143320396,
+        "output_ids_differ": [
+          57,
+          906,
+          616,
+          1122,
+          1005,
+          177,
+          923,
+          356
+        ],
+        "final_answer_differs": [
+          1122,
+          177,
+          923
+        ],
+        "lost_correct": [
+          923
+        ],
+        "gained_correct": [
+          1122
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-external4.json",
+      "file_sha256": "17af1327d5810cebb54a7d8cec1fc058ea972ca5b4308f398a436e0e609b2d77",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "external4",
+      "phase": "reused",
+      "seconds": 68.51524969935417,
+      "tokens": 6128,
+      "tokens_per_second": 89.43994259511197,
+      "requests_per_second": 0.9340986171813261,
+      "correct": 53,
+      "accuracy": 0.828125,
+      "truncated": 1,
+      "accept_length": 5.193220338983051,
+      "accept_rate": 0.38235747303543915,
+      "verify_calls": 1180,
+      "batch_latency_ms": {
+        "mean": 1070.550776552409,
+        "p50": 603.5465151071548,
+        "p95": 2729.934862162916
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.9856358153310487,
+        "request_throughput_ratio": 1.10192411403933,
+        "output_ids_differ": [
+          1252,
+          616,
+          463,
+          15,
+          1122,
+          172,
+          1191,
+          413,
+          177,
+          923,
+          1176,
+          969,
+          1089,
+          989
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          177,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1176
+        ],
+        "gained_correct": [
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.9267300152508025,
+        "request_throughput_ratio": 0.8496033331721619,
+        "output_ids_differ": [
+          57,
+          608,
+          463,
+          921,
+          172,
+          1191,
+          413,
+          177,
+          923,
+          1176,
+          132,
+          989
+        ],
+        "final_answer_differs": [
+          177,
+          923,
+          1176
+        ],
+        "lost_correct": [
+          923
+        ],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-fia.json",
+      "file_sha256": "29dde85c5b3e143ee1b46440391164cea6689864ca1ce3674889483e9a5c5a8c",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "fia",
+      "phase": "cold",
+      "seconds": 66.31358550442383,
+      "tokens": 6358,
+      "tokens_per_second": 95.87778962088927,
+      "requests_per_second": 0.9651114400341166,
+      "correct": 55,
+      "accuracy": 0.859375,
+      "truncated": 1,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1036.1497735066223,
+        "p50": 733.6358500178903,
+        "p95": 1643.677590577861
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0067572048389022,
+        "request_throughput_ratio": 1.0845045762726708,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1122,
+          923,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1122
+        ],
+        "gained_correct": [
+          923,
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-fia.json",
+      "file_sha256": "29dde85c5b3e143ee1b46440391164cea6689864ca1ce3674889483e9a5c5a8c",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "fia",
+      "phase": "reused",
+      "seconds": 58.210784517694265,
+      "tokens": 5618,
+      "tokens_per_second": 96.51132597761679,
+      "requests_per_second": 1.0994526277264995,
+      "correct": 54,
+      "accuracy": 0.84375,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 909.5435080889729,
+        "p50": 729.9303412437439,
+        "p95": 1667.1947417780734
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0635630648741905,
+        "request_throughput_ratio": 1.296986571280363,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          923,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1176
+        ],
+        "gained_correct": [
+          923,
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-native.json",
+      "file_sha256": "6b45a784e32ec998f78e0b7c2b86e1b882a5f932f87cc46a3ef86bd91c8cefad",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "native",
+      "phase": "cold",
+      "seconds": 71.91738694859669,
+      "tokens": 6849,
+      "tokens_per_second": 95.23427213638,
+      "requests_per_second": 0.889909974701171,
+      "correct": 55,
+      "accuracy": 0.859375,
+      "truncated": 2,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1123.7091710718232,
+        "p50": 724.6813799720258,
+        "p95": 1616.4821308571823
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.9932881485164207,
+        "request_throughput_ratio": 0.9220800187279022,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1122,
+          923,
+          1089
+        ],
+        "lost_correct": [
+          923,
+          1089
+        ],
+        "gained_correct": [
+          1252,
+          1122
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-native.json",
+      "file_sha256": "6b45a784e32ec998f78e0b7c2b86e1b882a5f932f87cc46a3ef86bd91c8cefad",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "native",
+      "phase": "reused",
+      "seconds": 75.49860582314432,
+      "tokens": 6851,
+      "tokens_per_second": 90.74339751449828,
+      "requests_per_second": 0.8476977727233821,
+      "correct": 54,
+      "accuracy": 0.84375,
+      "truncated": 2,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1179.66571598663,
+        "p50": 731.2235024292022,
+        "p95": 2583.7493237806475
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.9402357349804081,
+        "request_throughput_ratio": 0.7710180060020337,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          923,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          923,
+          1089
+        ],
+        "gained_correct": [
+          1252,
+          1176
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-ngram.json",
+      "file_sha256": "e575da70d6324669cbf942ca62d3a5b0e5517b5dad9b2ec124619d4fb25c2b83",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "ngram",
+      "phase": "cold",
+      "seconds": 206.49486048473045,
+      "tokens": 6831,
+      "tokens_per_second": 33.08072648377187,
+      "requests_per_second": 0.3099350746539891,
+      "correct": 54,
+      "accuracy": 0.84375,
+      "truncated": 2,
+      "accept_length": 2.0055783910745744,
+      "accept_rate": 0.09010836491752522,
+      "verify_calls": 3406,
+      "batch_latency_ms": {
+        "mean": 3226.4821950739133,
+        "p50": 2287.1470861136913,
+        "p95": 6432.68553118686
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.3473615720651353,
+        "request_throughput_ratio": 0.34827688582551775,
+        "output_ids_differ": [
+          1252,
+          616,
+          463,
+          15,
+          1122,
+          1005,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1122,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1122
+        ],
+        "gained_correct": [
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.34503013278233147,
+        "request_throughput_ratio": 0.3211391574044889,
+        "output_ids_differ": [
+          57,
+          608,
+          15,
+          1122,
+          1005,
+          413,
+          923,
+          1176
+        ],
+        "final_answer_differs": [
+          923
+        ],
+        "lost_correct": [
+          923
+        ],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r0-ngram.json",
+      "file_sha256": "e575da70d6324669cbf942ca62d3a5b0e5517b5dad9b2ec124619d4fb25c2b83",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 0,
+      "case": "ngram",
+      "phase": "reused",
+      "seconds": 46.860581459477544,
+      "tokens": 6179,
+      "tokens_per_second": 131.859225975317,
+      "requests_per_second": 1.3657534329859669,
+      "correct": 53,
+      "accuracy": 0.828125,
+      "truncated": 1,
+      "accept_length": 8.227696404793608,
+      "accept_rate": 0.6494371141508292,
+      "verify_calls": 751,
+      "batch_latency_ms": {
+        "mean": 732.1965853043366,
+        "p50": 438.95588209852576,
+        "p95": 1272.3663979908433
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.4530999454175115,
+        "request_throughput_ratio": 1.6111325013845883,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1176
+        ],
+        "gained_correct": [
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.3662564951796248,
+        "request_throughput_ratio": 1.2422121686226142,
+        "output_ids_differ": [
+          923,
+          1176
+        ],
+        "final_answer_differs": [
+          923
+        ],
+        "lost_correct": [
+          923
+        ],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r1-fia.json",
+      "file_sha256": "07437c87baa53edc51d16f61dc962ac043eaf1ca253d0d1b517f92fbd640afe8",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 1,
+      "case": "fia",
+      "phase": "cold",
+      "seconds": 68.6098094866611,
+      "tokens": 6358,
+      "tokens_per_second": 92.66896450479288,
+      "requests_per_second": 0.9328112186704537,
+      "correct": 55,
+      "accuracy": 0.859375,
+      "truncated": 1,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1072.0282732290798,
+        "p50": 750.0677714124322,
+        "p95": 1675.9627403225727
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.9395497856453994,
+        "request_throughput_ratio": 1.0121070276636268,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1122,
+          923,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1122
+        ],
+        "gained_correct": [
+          923,
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r1-fia.json",
+      "file_sha256": "07437c87baa53edc51d16f61dc962ac043eaf1ca253d0d1b517f92fbd640afe8",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 1,
+      "case": "fia",
+      "phase": "reused",
+      "seconds": 59.62671428453177,
+      "tokens": 5618,
+      "tokens_per_second": 94.21951330726618,
+      "requests_per_second": 1.0733444022187675,
+      "correct": 54,
+      "accuracy": 0.84375,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 931.6674106958089,
+        "p50": 741.9803435914218,
+        "p95": 1672.852686536496
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.9353892354112677,
+        "request_throughput_ratio": 1.1406820312927366,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          923,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1176
+        ],
+        "gained_correct": [
+          923,
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r1-native.json",
+      "file_sha256": "655f5b2d7fe584f23d573268f9b600e7d67d2ef6165488ac9bad9765744b4011",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 1,
+      "case": "native",
+      "phase": "cold",
+      "seconds": 69.44047034811229,
+      "tokens": 6849,
+      "tokens_per_second": 98.63124436895735,
+      "requests_per_second": 0.9216527434097344,
+      "correct": 55,
+      "accuracy": 0.859375,
+      "truncated": 2,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1085.0073491892545,
+        "p50": 720.992638496682,
+        "p95": 1721.8687364365876
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0643395541973073,
+        "request_throughput_ratio": 0.9880377990343817,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1122,
+          923,
+          1089
+        ],
+        "lost_correct": [
+          923,
+          1089
+        ],
+        "gained_correct": [
+          1252,
+          1122
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r1-native.json",
+      "file_sha256": "655f5b2d7fe584f23d573268f9b600e7d67d2ef6165488ac9bad9765744b4011",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 1,
+      "case": "native",
+      "phase": "reused",
+      "seconds": 68.01512156939134,
+      "tokens": 6851,
+      "tokens_per_second": 100.72760059702865,
+      "requests_per_second": 0.9409672220420134,
+      "correct": 54,
+      "accuracy": 0.84375,
+      "truncated": 2,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 1062.7362745217397,
+        "p50": 715.7908065710217,
+        "p95": 1607.1751746349014
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0690736670283838,
+        "request_throughput_ratio": 0.876668495309511,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          923,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          923,
+          1089
+        ],
+        "gained_correct": [
+          1252,
+          1176
+        ]
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r1-ngram.json",
+      "file_sha256": "2f73fe7e13b012c5bfce659fb63cceed445dd5f699d89af7530e02fe1d6de612",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 1,
+      "case": "ngram",
+      "phase": "cold",
+      "seconds": 185.45462250290439,
+      "tokens": 6831,
+      "tokens_per_second": 36.83380822655429,
+      "requests_per_second": 0.3450978958424059,
+      "correct": 54,
+      "accuracy": 0.84375,
+      "truncated": 2,
+      "accept_length": 2.0055783910745744,
+      "accept_rate": 0.09010836491752522,
+      "verify_calls": 3406,
+      "batch_latency_ms": {
+        "mean": 2897.728476607881,
+        "p50": 2348.036539973691,
+        "p95": 4618.186038010753
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.37344969600877465,
+        "request_throughput_ratio": 0.37443375317875827,
+        "output_ids_differ": [
+          1252,
+          616,
+          463,
+          15,
+          1122,
+          1005,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1122,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1122
+        ],
+        "gained_correct": [
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.39747728296509915,
+        "request_throughput_ratio": 0.3699547013749232,
+        "output_ids_differ": [
+          57,
+          608,
+          15,
+          1122,
+          1005,
+          413,
+          923,
+          1176
+        ],
+        "final_answer_differs": [
+          923
+        ],
+        "lost_correct": [
+          923
+        ],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "confirm-mha4b-b1-r1-ngram.json",
+      "file_sha256": "2f73fe7e13b012c5bfce659fb63cceed445dd5f699d89af7530e02fe1d6de612",
+      "label": "confirm",
+      "model": "mha4b",
+      "batch": 1,
+      "questions": 64,
+      "repeat": 1,
+      "case": "ngram",
+      "phase": "reused",
+      "seconds": 43.61528723407537,
+      "tokens": 6179,
+      "tokens_per_second": 141.67051031530352,
+      "requests_per_second": 1.4673754102895977,
+      "correct": 53,
+      "accuracy": 0.828125,
+      "truncated": 1,
+      "accept_length": 8.227696404793608,
+      "accept_rate": 0.6494371141508292,
+      "verify_calls": 751,
+      "batch_latency_ms": {
+        "mean": 681.4888630324276,
+        "p50": 419.6927254088223,
+        "p95": 1279.3298979988303
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.4064716073409838,
+        "request_throughput_ratio": 1.5594330768559763,
+        "output_ids_differ": [
+          57,
+          1252,
+          608,
+          616,
+          463,
+          15,
+          1122,
+          921,
+          413,
+          923,
+          1176,
+          132,
+          969,
+          1089
+        ],
+        "final_answer_differs": [
+          1252,
+          15,
+          1176,
+          1089
+        ],
+        "lost_correct": [
+          1252,
+          1176
+        ],
+        "gained_correct": [
+          1089
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.5036217588313303,
+        "request_throughput_ratio": 1.36710584902321,
+        "output_ids_differ": [
+          923,
+          1176
+        ],
+        "final_answer_differs": [
+          923
+        ],
+        "lost_correct": [
+          923
+        ],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-eager.json",
+      "file_sha256": "dc5e5f3c6bd1d5f8628bf4151e58b1d72005b49adcdb15d358a8590dfef2a535",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "eager",
+      "phase": "cold",
+      "seconds": 68.75448231585324,
+      "tokens": 942,
+      "tokens_per_second": 13.700924918211419,
+      "requests_per_second": 0.23271210052163768,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 4297.155144740827,
+        "p50": 3716.55989298597,
+        "p95": 8313.49204678554
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.16866014975036103,
+        "request_throughput_ratio": 0.16866014975036103,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.16707548256982066,
+        "request_throughput_ratio": 0.1670754825698207,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-eager.json",
+      "file_sha256": "dc5e5f3c6bd1d5f8628bf4151e58b1d72005b49adcdb15d358a8590dfef2a535",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "eager",
+      "phase": "reused",
+      "seconds": 71.0337118008174,
+      "tokens": 990,
+      "tokens_per_second": 13.937044466661362,
+      "requests_per_second": 0.22524516309755735,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 4439.6069875510875,
+        "p50": 3592.9641854017973,
+        "p95": 10249.387336196378
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.17022010768760362,
+        "request_throughput_ratio": 0.17022010768760362,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.16847390359218442,
+        "request_throughput_ratio": 0.16847390359218445,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-external11.json",
+      "file_sha256": "f51da6bf69357b6177b3ec597d8674ea1c6d728fb611947714772bd31e79bff8",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "external11",
+      "phase": "cold",
+      "seconds": 48.08459390467033,
+      "tokens": 906,
+      "tokens_per_second": 18.841793731193448,
+      "requests_per_second": 0.33274690916014915,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": 1.532994923857868,
+      "accept_rate": 0.050915243808644824,
+      "verify_calls": 591,
+      "batch_latency_ms": {
+        "mean": 3005.2871190418955,
+        "p50": 2522.3391361068934,
+        "p95": 5481.035393080674
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.23194490672994308,
+        "request_throughput_ratio": 0.24116126063974214,
+        "output_ids_differ": [
+          618,
+          608,
+          672
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.2297656398317904,
+        "request_throughput_ratio": 0.23889540035490792,
+        "output_ids_differ": [
+          618,
+          608,
+          672
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-external11.json",
+      "file_sha256": "f51da6bf69357b6177b3ec597d8674ea1c6d728fb611947714772bd31e79bff8",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "external11",
+      "phase": "reused",
+      "seconds": 112.5404091803357,
+      "tokens": 1819,
+      "tokens_per_second": 16.16308322715638,
+      "requests_per_second": 0.14217115537905559,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 1,
+      "accept_length": 1.588646288209607,
+      "accept_rate": 0.05462485113140135,
+      "verify_calls": 1145,
+      "batch_latency_ms": {
+        "mean": 7033.775573770981,
+        "p50": 2596.8184324447066,
+        "p95": 21844.140974455513
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.197407834499744,
+        "request_throughput_ratio": 0.10744021778710641,
+        "output_ids_differ": [
+          618,
+          672
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.1953827249298222,
+        "request_throughput_ratio": 0.10633804160556569,
+        "output_ids_differ": [
+          618,
+          672
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-external4.json",
+      "file_sha256": "a856221230f8bcae79151e7d60bba611e415e055192ef4a5c97125a39ac911ff",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "external4",
+      "phase": "cold",
+      "seconds": 39.828316502738744,
+      "tokens": 885,
+      "tokens_per_second": 22.22037177843417,
+      "requests_per_second": 0.40172423554231274,
+      "correct": 6,
+      "accuracy": 0.375,
+      "truncated": 0,
+      "accept_length": 1.8950749464668095,
+      "accept_rate": 0.07942378820323145,
+      "verify_calls": 467,
+      "batch_latency_ms": {
+        "mean": 2489.2697814211715,
+        "p50": 2280.7912253774703,
+        "p95": 4076.2620016466826
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.2735356374866292,
+        "request_throughput_ratio": 0.29115318701966636,
+        "output_ids_differ": [
+          618,
+          608,
+          672,
+          1132
+        ],
+        "final_answer_differs": [
+          618,
+          672,
+          1132
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          618
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.270965599762396,
+        "request_throughput_ratio": 0.288417621442008,
+        "output_ids_differ": [
+          618,
+          608,
+          672,
+          1132
+        ],
+        "final_answer_differs": [
+          618,
+          672,
+          1132
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          618
+        ]
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-external4.json",
+      "file_sha256": "a856221230f8bcae79151e7d60bba611e415e055192ef4a5c97125a39ac911ff",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "external4",
+      "phase": "reused",
+      "seconds": 17.722696020267904,
+      "tokens": 865,
+      "tokens_per_second": 48.807472577015076,
+      "requests_per_second": 0.9027971806153078,
+      "correct": 6,
+      "accuracy": 0.375,
+      "truncated": 0,
+      "accept_length": 4.325,
+      "accept_rate": 0.29954545454545456,
+      "verify_calls": 200,
+      "batch_latency_ms": {
+        "mean": 1107.668501266744,
+        "p50": 824.3105891160667,
+        "p95": 2454.693014267832
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.5961101191786226,
+        "request_throughput_ratio": 0.682253199984782,
+        "output_ids_differ": [
+          906,
+          1252,
+          618,
+          599,
+          608,
+          400,
+          237,
+          672,
+          1132
+        ],
+        "final_answer_differs": [
+          906,
+          618,
+          599,
+          608,
+          672,
+          1132
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          618
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.5899949195963212,
+        "request_throughput_ratio": 0.6752543010408764,
+        "output_ids_differ": [
+          906,
+          1252,
+          618,
+          599,
+          608,
+          400,
+          237,
+          672,
+          1132
+        ],
+        "final_answer_differs": [
+          906,
+          618,
+          599,
+          608,
+          672,
+          1132
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          618
+        ]
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-fia.json",
+      "file_sha256": "b2396157484625fc1b5c7c994ac9c7b62890b41761408aaea6114052edd53f42",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "fia",
+      "phase": "cold",
+      "seconds": 11.487188311759382,
+      "tokens": 942,
+      "tokens_per_second": 82.00440128901508,
+      "requests_per_second": 1.392856072849513,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 717.9492694849614,
+        "p50": 630.3788649383932,
+        "p95": 1254.6757237287238
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.009484738012821,
+        "request_throughput_ratio": 1.0094847380128207,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-fia.json",
+      "file_sha256": "b2396157484625fc1b5c7c994ac9c7b62890b41761408aaea6114052edd53f42",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "fia",
+      "phase": "reused",
+      "seconds": 11.967326713725924,
+      "tokens": 990,
+      "tokens_per_second": 82.72524212650764,
+      "requests_per_second": 1.336973610125376,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 747.9579196078703,
+        "p50": 621.2727739475667,
+        "p95": 1620.3722734935582
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.01036483430482,
+        "request_throughput_ratio": 1.0103648343048197,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-native.json",
+      "file_sha256": "f5cd8ea93b0cd30fbff0da30ca270470151fa65eff9e023f4d0f2428354c42a1",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "native",
+      "phase": "cold",
+      "seconds": 11.596141283400357,
+      "tokens": 942,
+      "tokens_per_second": 81.23391885095899,
+      "requests_per_second": 1.3797693223092822,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 724.7588302125223,
+        "p50": 631.6530969925225,
+        "p95": 1266.7973977513611
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.9906043770097094,
+        "request_throughput_ratio": 0.9906043770097094,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-native.json",
+      "file_sha256": "f5cd8ea93b0cd30fbff0da30ca270470151fa65eff9e023f4d0f2428354c42a1",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "native",
+      "phase": "reused",
+      "seconds": 12.091366072185338,
+      "tokens": 990,
+      "tokens_per_second": 81.87660468550118,
+      "requests_per_second": 1.3232582575434535,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": null,
+      "accept_rate": null,
+      "verify_calls": 0,
+      "batch_latency_ms": {
+        "mean": 755.7103795115836,
+        "p50": 630.7835399638861,
+        "p95": 1636.0967853106558
+      },
+      "vs_native": {
+        "token_throughput_ratio": 1.0,
+        "request_throughput_ratio": 1.0,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.9897414934161367,
+        "request_throughput_ratio": 0.9897414934161368,
+        "output_ids_differ": [],
+        "final_answer_differs": [],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-ngram.json",
+      "file_sha256": "f70cdec4f32d09b65fd7d96462b68ab69d4e5602b42275aa2f7bba2d625af5d8",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "ngram",
+      "phase": "cold",
+      "seconds": 43.594665988348424,
+      "tokens": 935,
+      "tokens_per_second": 21.44757801906082,
+      "requests_per_second": 0.3670173778662814,
+      "correct": 6,
+      "accuracy": 0.375,
+      "truncated": 0,
+      "accept_length": 1.750936329588015,
+      "accept_rate": 0.06554307116104868,
+      "verify_calls": 534,
+      "batch_latency_ms": {
+        "mean": 2724.6666242717765,
+        "p50": 2253.390326630324,
+        "p95": 5369.537198799662
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.2640224468108081,
+        "request_throughput_ratio": 0.26599908545003337,
+        "output_ids_differ": [
+          618,
+          608,
+          400,
+          672,
+          1132
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          618
+        ]
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.26154179143959966,
+        "request_throughput_ratio": 0.26349985832738276,
+        "output_ids_differ": [
+          618,
+          608,
+          400,
+          672,
+          1132
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": [
+          618
+        ]
+      }
+    },
+    {
+      "file": "pilot-fixed-mla-b1-r0-ngram.json",
+      "file_sha256": "f70cdec4f32d09b65fd7d96462b68ab69d4e5602b42275aa2f7bba2d625af5d8",
+      "label": "pilot-fixed",
+      "model": "mla",
+      "batch": 1,
+      "questions": 16,
+      "repeat": 0,
+      "case": "ngram",
+      "phase": "reused",
+      "seconds": 18.206753278151155,
+      "tokens": 1021,
+      "tokens_per_second": 56.07809280445633,
+      "requests_per_second": 0.8787947941932432,
+      "correct": 5,
+      "accuracy": 0.3125,
+      "truncated": 0,
+      "accept_length": 4.932367149758454,
+      "accept_rate": 0.35046113306982873,
+      "verify_calls": 207,
+      "batch_latency_ms": {
+        "mean": 1137.9220798844472,
+        "p50": 540.2151518501341,
+        "p95": 4446.2541721295565
+      },
+      "vs_native": {
+        "token_throughput_ratio": 0.6849098472006707,
+        "request_throughput_ratio": 0.6641143474325798,
+        "output_ids_differ": [
+          618,
+          672
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      },
+      "vs_fia": {
+        "token_throughput_ratio": 0.6778836950238099,
+        "request_throughput_ratio": 0.6573015260270048,
+        "output_ids_differ": [
+          618,
+          672
+        ],
+        "final_answer_differs": [
+          618,
+          672
+        ],
+        "lost_correct": [],
+        "gained_correct": []
+      }
+    }
+  ]
+}
