@@ -17,6 +17,11 @@ from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.budget import (
     resolve_sparse_kv_budget,
     sparse_batch_capacity,
 )
+from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.c8 import (
+    C8Cache,
+    c8_write_slots,
+    forward_c8_offload,
+)
 from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.lim import (
     LIMDecodeAdapter,
     prepare_lim_rows,
@@ -28,6 +33,310 @@ register_cpu_ci(est_time=3, stage="base-a")
 
 
 class TestLIMState(CustomTestCase):
+    def test_c8_ragged_prefill_keeps_request_pages_and_query_heads_separate(self):
+        # Different partial-page lengths would alias if packed TND rows were
+        # passed as page-aligned PA storage. The vendor boundary consumes the
+        # actual gathered bytes and page table, producing observable values.
+        host = torch.zeros(3, 256, 1, 656, dtype=torch.int8)
+        for request, positions, values in (
+            (1, [0, 1, 2], [1.0, 2.0, 3.0]),
+            (2, [0, 128, 129], [4.0, 5.0, 6.0]),
+        ):
+            for position, value in zip(positions, values):
+                host[request, position, 0, :512] = (
+                    torch.full((512,), value).to(torch.float8_e4m3fn).view(torch.int8)
+                )
+                host[request, position, 0, 640:] = torch.ones(4).view(torch.int8)
+        manager = SimpleNamespace(
+            size=3,
+            max_context_len=256,
+            start_layer=0,
+            host_kv_buffer=[host],
+            dev_ptr_list=[123],
+            sparse_context_len=2048,
+            c8_cache=SimpleNamespace(query=torch.empty(2, 8, 576)),
+        )
+        backend = SimpleNamespace(
+            device="cpu",
+            sparse_kv_manager=manager,
+            forward_metadata=SimpleNamespace(actual_seq_lengths_q=torch.tensor([1, 2])),
+        )
+        forward = SimpleNamespace(
+            forward_mode=SimpleNamespace(
+                is_decode=lambda: False, is_extend_without_speculative=lambda: True
+            ),
+            req_pool_indices=torch.tensor([1, 2]),
+            req_pool_indices_cpu=torch.tensor([1, 2]),
+            seq_lens=torch.tensor([3, 130]),
+            seq_lens_cpu=torch.tensor([3, 130]),
+            extend_seq_lens=torch.ones(2, dtype=torch.int32),
+        )
+
+        def byte_copy(
+            src, dst, source_ids, destination_ids, valid, src_ndims, dst_ndims, **kwargs
+        ):
+            dst.view(-1, 656).index_copy_(
+                0, destination_ids[valid], src.view(-1, 656)[source_ids[valid]]
+            )
+
+        def vendor_attention(**args):
+            packed = args["key"].view(torch.int8).view(-1, 656)
+            output = []
+            for row in range(2):
+                ids = args["sparse_indices"][row, 0]
+                ids = ids[ids >= 0].long()
+                physical = args["block_table"][row, ids // 128].long() * 128 + ids % 128
+                payload = packed[physical].contiguous()
+                values = payload[:, :512].contiguous().view(torch.float8_e4m3fn).float()
+                scales = (
+                    payload[:, 640:]
+                    .contiguous()
+                    .view(torch.float32)
+                    .repeat_interleave(128, -1)
+                )
+                output.append(
+                    (values * scales).mean(0).expand(args["query"].shape[1], -1)
+                )
+            return torch.stack(output).to(torch.bfloat16)
+
+        external = ModuleType("torch_npu")
+        external.npu_kv_quant_sparse_flash_attention = vendor_attention
+        manager_module = ModuleType(
+            "sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.manager"
+        )
+        manager_module.unidex_copy_inplace = byte_copy
+        ids = torch.full((2, 2048), -1, dtype=torch.int32)
+        ids[0, :3] = torch.tensor([0, 1, 2])
+        ids[1, :3] = torch.tensor([0, 128, 129])
+        with (
+            patch.dict(
+                "sys.modules",
+                {external.__name__: external, manager_module.__name__: manager_module},
+            ),
+            patch.object(
+                torch,
+                "npu",
+                SimpleNamespace(current_stream=lambda device: None),
+                create=True,
+            ),
+        ):
+            result = forward_c8_offload(
+                backend,
+                torch.zeros(2, 4, 512, dtype=torch.bfloat16),
+                None,
+                SimpleNamespace(layer_id=0, tp_q_head_num=4, scaling=1.0),
+                forward,
+                False,
+                torch.zeros(2, 4, 64, dtype=torch.bfloat16),
+                None,
+                ids,
+            )
+        self.assertEqual(result.shape, (2, 4, 512))
+        torch.testing.assert_close(result[0], torch.full_like(result[0], 2))
+        torch.testing.assert_close(result[1], torch.full_like(result[1], 5))
+
+    def test_c8_decode_exposes_tail_address_space_and_zeros_padding(self):
+        # The external native boundary reads resident slots. Check actual output
+        # values so a wrong C, block table, layer, or padding mask changes evidence.
+        batch, capacity, rows, heads = 3, 2048, 3, 8
+        physical = capacity + 256
+
+        def ints(*shape):
+            return torch.empty(*shape, dtype=torch.int32)
+
+        manager = SimpleNamespace(
+            hbm_tokens_per_request=physical,
+            cache_capacity=capacity,
+            size=rows,
+            max_context_len=4224,
+            start_layer=7,
+            planner_actual_seq_lengths_kv=ints(batch),
+            planner_num_cache_tokens=ints(batch),
+            planner_actual_seq_lengths_query=torch.arange(
+                1, batch + 1, dtype=torch.int32
+            ),
+            hbm_page_offsets=torch.arange(physical // 128, dtype=torch.int32),
+            dram_page_offsets=torch.arange(33, dtype=torch.int32),
+            planner_hbm_block_table=ints(batch, physical // 128),
+            planner_dram_block_table=ints(batch, 33),
+            planner_attn_out=torch.full((batch, heads, 512), 123, dtype=torch.bfloat16),
+            device_kv_buffer=[torch.zeros(rows, physical, 1, 656, dtype=torch.int8)],
+            host_kv_buffer=[torch.zeros(rows, 4224, 1, 656, dtype=torch.int8)],
+            dev_ptr_list=[1234],
+        )
+        plan = SimpleNamespace(
+            valid_rows=torch.tensor([True, False, True]),
+            sparse_rows=torch.tensor([True, False, False]),
+            seq_lens=torch.tensor([2050, 0, 130], dtype=torch.int32),
+            request_slots=torch.tensor([1, 0, 2], dtype=torch.int32),
+            topk_misses=torch.zeros(batch, dtype=torch.int32),
+            miss_counts=torch.zeros(batch, dtype=torch.int32),
+            source_ids=torch.full((batch, capacity), -1, dtype=torch.int32),
+            device_slots=torch.full((batch, capacity), -1, dtype=torch.int32),
+            miss_sources=ints(batch, 32768),
+            miss_slots=ints(batch, 32768),
+        )
+        plan.source_ids[0, :2] = torch.tensor([0, 2049])
+        plan.device_slots[0, :2] = torch.tensor([0, capacity + 1])
+        plan.source_ids[2, :2] = plan.device_slots[2, :2] = torch.tensor([0, 1])
+        plan.device_slots[1].fill_(123)
+        for request, slots, values in (
+            (1, [0, capacity + 1], [1.0, 2.0]),
+            (2, [0, 1], [3.0, 4.0]),
+        ):
+            for slot, value in zip(slots, values):
+                manager.device_kv_buffer[0][request, slot, 0, :512] = (
+                    torch.full((512,), value).to(torch.float8_e4m3fn).view(torch.int8)
+                )
+
+        def external_attention(
+            query,
+            hbm,
+            dram,
+            pointer,
+            hbm_table,
+            dram_table,
+            dst,
+            src,
+            topk_misses,
+            ends,
+            lengths,
+            resident_lengths,
+            misses,
+            miss_slots,
+            miss_counts,
+            scale,
+            output,
+        ):
+            self.assertEqual(pointer, 1234)
+            self.assertEqual(resident_lengths.tolist(), [2304, 0, 0])
+            self.assertEqual(lengths.tolist(), [2050, 0, 130])
+            self.assertTrue(torch.all(dst[1] == -1))
+            self.assertEqual(misses.stride(), (32768, 32768, 1))
+            for row in (0, 2):
+                logical = dst[row, 0, :2].long()
+                physical_rows = (
+                    hbm_table[row, logical // 128].long() * 128 + logical % 128
+                )
+                values = (
+                    hbm.view(-1, 656)[physical_rows, :512]
+                    .contiguous()
+                    .view(torch.float8_e4m3fn)
+                    .float()
+                )
+                output[row].copy_(values.mean(0).expand(heads, -1))
+
+        cache = C8Cache.__new__(C8Cache)
+        cache.query = torch.empty(batch, heads, 576, dtype=torch.bfloat16)
+        cache.operator = external_attention
+        forward = SimpleNamespace(batch_size=batch)
+        output = cache.decode(
+            manager,
+            SimpleNamespace(layer_id=7),
+            forward,
+            torch.zeros(batch, heads, 512, dtype=torch.bfloat16),
+            torch.zeros(batch, heads, 64, dtype=torch.bfloat16),
+            plan,
+            heads,
+            1.0,
+        )
+        torch.testing.assert_close(output[0], torch.full_like(output[0], 1.5))
+        torch.testing.assert_close(output[1], torch.zeros_like(output[1]))
+        torch.testing.assert_close(output[2], torch.full_like(output[2], 3.5))
+        short_heads = cache.decode(
+            manager,
+            SimpleNamespace(layer_id=7),
+            forward,
+            torch.zeros(batch, 4, 512, dtype=torch.bfloat16),
+            torch.zeros(batch, 4, 64, dtype=torch.bfloat16),
+            plan,
+            4,
+            1.0,
+        )
+        self.assertEqual(short_heads.shape, (batch, 4 * 512))
+        torch.testing.assert_close(short_heads[0], torch.full_like(short_heads[0], 1.5))
+
+    def test_c8_tail_writes_are_unique_and_do_not_overwrite_sparse_slots(self):
+        # Chunked prefill has many rows per modulo slot. Only its final 256
+        # may be published into the ring, and sparse resident slots are LIM-owned.
+        positions = torch.arange(2050)
+        requests = torch.ones_like(positions)
+        slots, dense, tail_slots, tail = c8_write_slots(
+            requests, positions, torch.full_like(positions, 2050), 2048, 3
+        )
+        self.assertFalse(dense.any())
+        self.assertEqual(tail.sum().item(), 256)
+        self.assertEqual(tail_slots[tail].unique().numel(), 256)
+        self.assertTrue(
+            torch.all((tail_slots[tail] >= 2048) & (tail_slots[tail] < 2304))
+        )
+        _, dense, _, tail = c8_write_slots(
+            torch.tensor([1, 1, 0, 3]),
+            torch.tensor([0, 129, 0, 0]),
+            torch.tensor([130, 130, 130, 130]),
+            2048,
+            3,
+        )
+        self.assertEqual(dense.tolist(), [True, True, False, False])
+        self.assertEqual(tail.tolist(), [True, True, False, False])
+
+    def test_c8_budget_charges_tail_and_bf16_compute_workspaces(self):
+        budget = resolve_sparse_kv_budget(
+            request_rows=3,
+            context_len=4097,
+            num_layers=2,
+            top_k=2048,
+            kv_bytes_per_token=656,
+            copy_sfa=True,
+            copy_sfa_query_heads=8,
+            graph_batch_capacity=16,
+            indexer_impl="lim",
+            packed_c8=True,
+        )
+        self.assertEqual(budget.device_kv_bytes, 3 * 2 * 2304 * 656)
+        self.assertEqual(budget.host_kv_bytes, 3 * 2 * 4224 * 656)
+        self.assertGreaterEqual(budget.copy_sfa_bytes, 16 * 8 * (512 + 576) * 2)
+        with self.assertRaisesRegex(ValueError, "exceeding"):
+            resolve_sparse_kv_budget(
+                request_rows=3,
+                context_len=4097,
+                num_layers=2,
+                top_k=2048,
+                kv_bytes_per_token=656,
+                copy_sfa=True,
+                copy_sfa_query_heads=8,
+                graph_batch_capacity=16,
+                indexer_impl="lim",
+                packed_c8=True,
+                hbm_budget_bytes=budget.managed_hbm_bytes - 1,
+            )
+        with self.assertRaisesRegex(ValueError, "source pages"):
+            resolve_sparse_kv_budget(
+                request_rows=3,
+                context_len=262145,
+                num_layers=2,
+                top_k=2048,
+                kv_bytes_per_token=656,
+                copy_sfa=True,
+                indexer_impl="lim",
+                packed_c8=True,
+            )
+
+        for rows, context, capacity in ((64, 131072, 2048), (202, 4096, 32384)):
+            with self.subTest(rows=rows, context=context, capacity=capacity):
+                with self.assertRaisesRegex(ValueError, "uint32 byte addressing"):
+                    resolve_sparse_kv_budget(
+                        request_rows=rows,
+                        context_len=context,
+                        num_layers=1,
+                        top_k=2048,
+                        kv_bytes_per_token=656,
+                        cache_tokens=capacity,
+                        copy_sfa=True,
+                        indexer_impl="lim",
+                        packed_c8=True,
+                    )
+
     def test_prefill_gather_shape_ignores_padding_and_checks_host_bounds(self):
         # Host row order and total must match the ragged KV payload, including
         # interior padding. Device-side nonzero would require a stream sync.

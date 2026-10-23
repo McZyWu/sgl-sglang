@@ -1,0 +1,68 @@
+{
+  "wheel": "sgl_kernel_npu-2026.9.0-cp312-cp312-linux_aarch64.whl",
+  "bytes": 3442158,
+  "sha256": "18c859f634f60c8c89b53948e23d392e2eae4075070b75ca3c1e61cfd6dbbdd5",
+  "hardware": "Ascend910_9362, arch=2201 (A3)",
+  "CANN": "9.1.0",
+  "torch": "2.10.0+cpu",
+  "torch_npu": "2.10.0.post6",
+  "python": "3.12.13",
+  "platform": "linux-aarch64",
+  "cpu_tests": {
+    "passed": 114,
+    "final_affected_rerun_passed": 29,
+    "final_affected_rerun_seconds": 13.9
+  },
+  "a5_tests_on_a3": {
+    "passed_meta": 24,
+    "skipped_numerical": 129
+  },
+  "preflight": {
+    "exit_code": 2,
+    "expected": true,
+    "reason": "A5-only hardware gate"
+  },
+  "a3_host_registration": {
+    "exit_code": 0
+  },
+  "a5_build": {
+    "exit_code": 0,
+    "seconds": 33.80499720573425,
+    "description": "Final incremental host rebuild, CMake install and clean wheel packaging; includes both compiled arch35 device libraries."
+  },
+  "source_snapshot": "c8/kernel + c8/src; task-owned isolated output only",
+  "repositories": {
+    "sglang": {
+      "base": "e8cdcb37c1170bfc36f30349a2cb52f64f03111f",
+      "branch": "feat/hisparse-lim-copysfa-c8-a5"
+    },
+    "kernel": {
+      "base": "632971ef8d337e3f797e38f6636f7351e69ece3a",
+      "revision": "442023d60afe29182dd8f7e8f2c67ece186a0060",
+      "branch": "feat/hisparse-lim-copysfa-c8-a5"
+    }
+  },
+  "build_note": "CANN preprocess output was already linked in place as ET_EXEC. Task-local generated build.make reused six completed preprocess stamps; no SDK or checked-in build-system workaround was changed. New device libraries were compiled separately after the direct-entry fixes.",
+  "not_run": {
+    "a5_numerical_graph_and_model": "217 is A3; 129 A5 numerical cases skipped. Framework and model/GPQA/performance need A5 hardware.",
+    "a3_npu_regression": "Another active TP16 service owns all 16 NPUs; respected the request to wait rather than interrupt it."
+  },
+  "simt": {
+    "enabled": false,
+    "path": "donor vector postprocess and victim-unpack",
+    "reason": "direct launcher has no donor OPP 216 KiB user-UB launch reservation"
+  },
+  "checks": {
+    "ruff": "passed for changed Python files",
+    "format": "passed",
+    "registered_test_admission": "passed",
+    "shell_syntax": "passed",
+    "a3_registration_syntax": "passed",
+    "a5_wheel_load_and_meta": "passed"
+  },
+  "commands": {
+    "cpu": "PYTHONPATH=/task/c8/src/python:/task/deps python3 -m pytest -q /task/c8/src/test/registered/unit/hardware_backend/test_npu_lim_state.py /task/c8/src/test/manual/npu/test_sparse_kv_offload_cache.py /task/c8/src/test/registered/unit/kernels/test_kernels_namespace.py",
+    "a5_test_collection_on_a3": "source /usr/local/Ascend/ascend-toolkit/set_env.sh; export PYTHONPATH=/task/c8/a5-wheel:/task/c8/src/python:/task/deps:$PYTHONPATH; python3 -m pytest -q /task/c8/kernel/tests/test_fused_quant_lightning_indexer_manage_a5.py /task/c8/kernel/tests/test_fused_quant_scatter_copy_sparse_flash_attention.py /task/c8/kernel/tests/test_lim_copy_sfa_c8.py",
+    "a5_runtime": "KERNEL_SOURCE_DIR=/path/to/sgl-kernel-npu bash benchmark/hisparse/lim_copy_sfa_c8_a5/validate.sh"
+  }
+}

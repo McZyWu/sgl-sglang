@@ -333,13 +333,20 @@ class DSANPUIndexerMixin:
                 and manager is not None
                 and manager.lim_adapter is not None
             ):
+                lim_query = q.view(-1, self.n_heads, self.head_dim)
+                lim_query_scale = lim_key_scale = None
                 if use_quant_indexer:
-                    raise ValueError(
-                        "LIM/reference decode does not support quantized index keys."
+                    if not manager.packed_c8:
+                        raise ValueError("Quantized LIM requires the A5 C8 manager.")
+                    lim_query, lim_query_scale = _quantize_npu_indexer_activation(
+                        lim_query, pool.indexer_hadamard_128, pool.dtype
                     )
+                    lim_key_scale = pool.get_index_k_scale_buffer(layer_id)
                 plan = manager.lim_adapter.select(
                     manager,
-                    query=q.view(-1, self.n_heads, self.head_dim),
+                    query=lim_query,
+                    query_scale=lim_query_scale,
+                    key_scale=lim_key_scale,
                     weights=weights,
                     key=past_key_states,
                     block_table=block_table,

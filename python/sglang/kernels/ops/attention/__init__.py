@@ -550,3 +550,17 @@ register_kernel(
         ),
     )
 )
+
+for _name in (
+    "fused_quant_lightning_indexer_manage",
+    "fused_quant_scatter_copy_sparse_flash_attention",
+):
+    register_kernel(
+        KernelSpec(
+            op=f"attention.{_name}",
+            backend=KernelBackend.AOT,
+            target=f"sglang.kernels.ops.attention.npu_quant_sparse:{_name}",
+            capabilities=frozenset({CapabilityRequirement.NPU}),
+        )
+    )
+del _name

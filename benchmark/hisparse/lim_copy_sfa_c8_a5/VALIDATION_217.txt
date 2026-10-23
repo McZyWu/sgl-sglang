@@ -1,0 +1,40 @@
+A5 C8 migration / 217 validation receipt (2026-10-23)
+
+Both repositories branch from feat/hisparse-lim-copysfa-opt-217 onto
+feat/hisparse-lim-copysfa-c8-a5. Matching kernel revision:
+442023d60afe29182dd8f7e8f2c67ece186a0060.
+
+217 hardware: Ascend910_9362 / A3, architecture 2201, 16 logical NPUs.
+Software: CANN 9.1.0, torch 2.10.0+cpu, torch_npu 2.10.0.post6,
+Python 3.12.13, linux-aarch64.
+
+PASS: 114 CPU tests (LIM/request lifecycle, cache policies, C8 decode/prefill
+payload boundaries, head padding, budgets, and kernel namespace).
+PASS: final affected 29 CPU cases rerun after the uint32 buffer-limit guard.
+PASS: both new arch35 native device targets compile with CANN.
+PASS: full Ascend950 CMake target compilation/link/install and normal wheel.
+PASS: wheel load and PrivateUse1/Meta registration; 24 Meta cases pass.
+PASS: A3 host registration syntax check with A3-only build definitions.
+PASS: shell syntax, changed Python lint/format, registered-test admission.
+PASS: preflight exits 2 and reports A3 hardware before model allocation.
+SKIP: 129 numerical A5 operator cases on A3, as expected.
+NOT RUN: A5 numerical graph/framework/model/GPQA/performance; A5 is required.
+NOT RUN: A3 NPU regression while another TP16 service owns all NPUs.
+The service was not interrupted.
+
+Build cache detail: after the initial compilation, CANN had linked its
+preprocess objects in place as ET_EXEC. The resumed task-local generated
+build.make reused six completed preprocessing stamps. No SDK files or
+checked-in workaround were modified. Final device entry points compiled;
+host objects were explicitly rebuilt after changes; the final library was
+relinked, packaged, loaded, and exercised through Meta. This receipt does
+not claim a second clean rebuild from an empty CANN cache.
+
+Current direct-launch LIM uses the donor vector path. SIMT postprocess and
+victim unpack stay disabled until direct launch supports the donor 216 KiB
+user-UB reservation. No donor SIMT performance parity is claimed.
+
+The launcher and validation commands are in README.txt. Use matching SGLang
+and Ascend950 kernel branches together. The A5 wheel was loaded only from
+an isolated extraction; the installed A3 kernel package was not replaced.
+Machine-readable details and wheel SHA256 are in validation_217.json.

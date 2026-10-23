@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional
 import torch
 import torch.nn.functional as F
 
+from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.utils import is_npu_arch35, npu_format_cast
 from sglang.srt.model_executor.forward_context import (
     get_attn_backend,
@@ -19,7 +20,11 @@ if TYPE_CHECKING:
 
 @lru_cache(maxsize=1)
 def is_mla_preprocess_enabled() -> bool:
-    return get_bool_env_var("SGLANG_NPU_USE_MLAPO")
+    # A5 offload has an index-only native pool. MLAProlog requires native
+    # resident KV buffers; use the compact Q/K producer feeding the manager.
+    return envs.SGLANG_NPU_USE_MLAPO.get() and not (
+        envs.SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD.get() and is_npu_arch35()
+    )
 
 
 @lru_cache(maxsize=1)

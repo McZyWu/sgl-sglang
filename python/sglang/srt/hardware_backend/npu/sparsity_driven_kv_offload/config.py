@@ -17,7 +17,10 @@ from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.budget import (
 )
 from sglang.srt.runtime_context import (
     attention_backends,
+    get_disagg,
     get_exec,
+    get_memory,
+    get_model,
     get_parallel,
     get_schedule,
     get_spec,
@@ -29,8 +32,10 @@ if TYPE_CHECKING:
 
 
 def is_copy_sfa_decode_graph_eligible(seq_lens_cpu) -> bool:
-    """Fixed-window Copy-SFA graphs require every live row to contain 2048 KV."""
+    """BF16 graphs need 2048 KV per live row; A5 C8 also supports dense rows."""
     if not envs.SGLANG_NPU_ENABLE_COPY_SFA.get():
+        return True
+    if get_model().kv_cache_dtype == "fp8_e4m3":
         return True
     return seq_lens_cpu is not None and not any(
         0 < int(length) < 2048 for length in seq_lens_cpu.tolist()
@@ -91,6 +96,26 @@ def is_sparsity_driven_kv_offload_enabled(
             raise ValueError(
                 "LIM/reference framework integration currently supports Q1 decode without speculation."
             )
+    if get_model().kv_cache_dtype == "fp8_e4m3":
+        from sglang.srt.hardware_backend.npu.utils import is_npu_arch35
+
+        if not is_npu_arch35():
+            raise ValueError("C8 sparse KV offload requires Ascend950 (A5).")
+        if get_parallel().attn_cp_size != 1:
+            raise ValueError("A5 C8 offload currently requires prefill CP=1.")
+        if (
+            get_disagg().disaggregation_mode != "null"
+            or get_disagg().enable_pd_role_switch
+        ):
+            raise ValueError("A5 C8 offload requires colocated prefill/decode.")
+        if not get_memory().disable_radix_cache:
+            raise ValueError(
+                "A5 C8 offload requires --disable-radix-cache; host KV is request-owned."
+            )
+        if indexer_impl != "lim" or not envs.SGLANG_NPU_ENABLE_COPY_SFA.get():
+            raise ValueError(
+                "A5 C8 offload requires INDEXER=lim and ENABLE_COPY_SFA=1."
+            )
     return True
 
 
@@ -150,7 +175,9 @@ def get_sparsity_driven_kv_offload_cell_size(
     index_head_dim = get_sparsity_driven_kv_offload_index_head_dim(
         model_config=model_config
     )
-    return index_head_dim * num_layers * element_size
+    return (
+        index_head_dim * element_size + (4 if element_size == 1 else 0)
+    ) * num_layers
 
 
 def get_sparse_kv_budget(
@@ -162,6 +189,7 @@ def get_sparse_kv_budget(
     kv_bytes_per_token: int,
     copy_sfa_query_heads: int = 128,
     graph_batch_capacity: Optional[int] = None,
+    packed_c8: bool = False,
 ) -> SparseKVBudget:
     if graph_batch_capacity is None:
         # Reserve before admission determines the final request-pool size.
@@ -186,4 +214,5 @@ def get_sparse_kv_budget(
         copy_sfa=envs.SGLANG_NPU_ENABLE_COPY_SFA.get(),
         copy_sfa_query_heads=copy_sfa_query_heads,
         graph_batch_capacity=sparse_batch_capacity(request_rows, graph_batch_capacity),
+        packed_c8=packed_c8,
     )

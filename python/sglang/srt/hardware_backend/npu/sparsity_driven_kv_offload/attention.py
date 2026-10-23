@@ -85,6 +85,23 @@ def forward_sparsity_driven_kv_offload(
             "Sparsity-driven KV offload requires q_rope, k_rope, and topk_indices."
         )
 
+    if getattr(backend.sparse_kv_manager, "packed_c8", False):
+        from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.c8 import (
+            forward_c8_offload,
+        )
+
+        return forward_c8_offload(
+            backend,
+            q,
+            k,
+            layer,
+            forward_batch,
+            save_kv_cache,
+            q_rope,
+            k_rope,
+            topk_indices,
+        )
+
     is_prefill = forward_batch.forward_mode.is_extend_without_speculative()
 
     q_nope, q_pe = q, q_rope

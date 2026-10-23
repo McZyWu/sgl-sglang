@@ -1,0 +1,52 @@
+A5 C8 LIM + Copy-SFA integration
+
+Both repositories use feat/hisparse-lim-copysfa-c8-a5, based on the validated
+feat/hisparse-lim-copysfa-opt-217 pair. Install matching SGLang and Ascend950
+sgl-kernel-npu code/wheel together.
+
+The integration selects TopK over the full causal-visible range. Stable-prefix
+sources use the persistent C-token cache; selected tail sources hit an additional
+256-slot ring. C8 KV is an opaque 656-byte record, while index query/key are FP8
+with real FP32 scales and attention query/output stay BF16.
+
+Initial framework scope:
+  - Ascend950/A5, BF16 model compute and --kv-cache-dtype fp8_e4m3;
+  - native LIM + Copy-SFA, K=2048, page size 128;
+  - Q1, PP=1, DCP=1, prefill CP=1, colocated prefill/decode;
+  - --disable-radix-cache, because host KV is owned by each request;
+  - C is a multiple of 128 in [2048,32384], plus 256 caller-managed tail slots;
+  - aligned physical source capacity, including allocation padding, <=262144.
+  - each layer's host/HBM byte-copy extent must fit uint32 addressing (<4 GiB).
+
+Build and install the matching kernel on an Ascend950 build environment:
+  bash build.sh -a kernels Ascend950
+  python3 -m pip install --no-deps --force-reinstall output/sgl_kernel_npu-*.whl
+
+Run A5 operator and framework validation:
+  KERNEL_SOURCE_DIR=/path/to/sgl-kernel-npu \
+    bash benchmark/hisparse/lim_copy_sfa_c8_a5/validate.sh
+
+The operator suites include donor TopK/scale/stride/lifecycle checks and packed
+CPU attention/payload oracles. The paired suite covers dense/sparse/padding,
+tail slots, request reuse and graph replay. check_lim_copy_sfa_c8.py runs the real
+SRT manager/registered host buffers and IndexShare payloads with fixed projections.
+
+Launch a server after choosing an A5-compatible model and parallel topology:
+  MODEL_PATH=/models/your-model TP_SIZE=8 EP_SIZE=8 ATTN_DP_SIZE=1 \
+    LIM_EVAL_MODE=lim_copy_sfa \
+    bash benchmark/hisparse/lim_copy_sfa_c8_a5/launch_server.sh
+
+Optional WEIGHT_QUANTIZATION supplies --quantization. Other server arguments may
+be appended. Launch the same command with LIM_EVAL_MODE=baseline for ordinary C8
+LI/SFA without offload. Both modes use the ordinary Q/K producer (MLAPO disabled)
+so the projection path stays the same. The launcher checks hardware/APIs before
+allocating model weights. No task-specific container, PID or model path is fixed.
+
+The normal-wheel port retains the donor vector management path; its SIMT
+postprocess is disabled until the direct launcher can provide the donor's user-UB
+reservation. Operator workspaces, allocator overhead and graph pools still require
+headroom outside the persistent sparse-manager budget.
+
+217 is an A3 machine. Its CPU tests, cross-compilation and A3 rejection checks
+must be reported separately from A5 numerical/model/performance execution.
+This directory does not claim a C8 GPQA score or model throughput result.

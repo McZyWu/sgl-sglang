@@ -46,6 +46,7 @@ def resolve_sparse_kv_budget(
     copy_sfa: bool = False,
     copy_sfa_query_heads: int = 128,
     graph_batch_capacity: int = 0,
+    packed_c8: bool = False,
 ) -> SparseKVBudget:
     """Size persistent manager allocations, including padding and one workspace.
 
@@ -73,12 +74,23 @@ def resolve_sparse_kv_budget(
     if indexer_impl not in ("legacy", "li_reference", "lim"):
         raise ValueError(f"Unknown sparse indexer implementation: {indexer_impl}.")
     if copy_sfa:
-        if top_k != 2048 or cache_tokens not in (0, 2048):
+        if top_k != 2048 or (not packed_c8 and cache_tokens not in (0, 2048)):
             raise ValueError("Copy-SFA requires K=C=2048.")
         if copy_sfa_query_heads <= 0 or copy_sfa_query_heads > 128:
             raise ValueError("Copy-SFA padded query heads must be in [1,128].")
         context_len = (context_len + 127) // 128 * 128
-        cache_tokens = 2048
+        cache_tokens = cache_tokens or 2048
+    if packed_c8:
+        if not copy_sfa or indexer_impl != "lim" or kv_bytes_per_token != 656:
+            raise ValueError(
+                "A5 C8 offload requires native LIM, Copy-SFA and 656-byte KV rows."
+            )
+        if context_len > 2048 * 128:
+            raise ValueError(
+                "C8 Copy-SFA supports at most 2048 source pages per request."
+            )
+        if copy_sfa_query_heads not in (8, 16, 32, 64, 128):
+            raise ValueError("C8 Copy-SFA padded query heads must be 8,16,32,64,128.")
     experimental = indexer_impl != "legacy"
     native = indexer_impl == "lim"
     batch_rows = sparse_batch_capacity(request_rows, graph_batch_capacity)
@@ -131,11 +143,12 @@ def resolve_sparse_kv_budget(
     elif cache_tokens == 0:
         cache_tokens = top_k
     if experimental:
+        limit = 32384 if packed_c8 else 32640
         if auto_capacity:
-            cache_tokens = min(32640, cache_tokens // 128 * 128)
-        if cache_tokens > 32640 or cache_tokens % 128:
+            cache_tokens = min(limit, cache_tokens // 128 * 128)
+        if cache_tokens > limit or cache_tokens % 128:
             raise ValueError(
-                "LIM/reference cache capacity must be a multiple of 128 and <= 32640."
+                f"LIM/reference cache capacity must be a multiple of 128 and <= {limit}."
             )
     if cache_tokens < top_k:
         raise ValueError(
@@ -149,16 +162,36 @@ def resolve_sparse_kv_budget(
         else 0
     ) + slot_ids_bytes
     copy_sfa_bytes = 0
+    resident_tokens = cache_tokens + (256 if packed_c8 else 0)
+    if (
+        packed_c8
+        and request_rows * max(context_len, resident_tokens) * kv_bytes_per_token
+        > 2**32 - 1
+    ):
+        raise ValueError(
+            "C8 row-copy buffers must fit uint32 byte addressing per layer; "
+            "reduce max_running_requests or context length."
+        )
     if copy_sfa:
         copy_sfa_bytes = (
             num_layers * (request_rows + 1) * cache_tokens * 4
             + batch_rows * (4 * top_k + 5) * 4
-            + (batch_rows + 1) * ((cache_tokens + context_len) // 128) * 4
-            + batch_rows * copy_sfa_query_heads * 512 * (kv_bytes_per_token // 576)
+            + (batch_rows + 1) * ((resident_tokens + context_len) // 128) * 4
+            + batch_rows
+            * copy_sfa_query_heads
+            * 512
+            * (2 if packed_c8 else kv_bytes_per_token // 576)
         )
+        if packed_c8:
+            copy_sfa_bytes += (
+                batch_rows * copy_sfa_query_heads * 576 * 2 + (request_rows + 1) * 4
+            )
     result = SparseKVBudget(
         cache_tokens=cache_tokens,
-        device_kv_bytes=request_rows * num_layers * cache_tokens * kv_bytes_per_token,
+        device_kv_bytes=request_rows
+        * num_layers
+        * resident_tokens
+        * kv_bytes_per_token,
         slot_map_bytes=slot_map_bytes,
         policy_bytes=policy_bytes,
         selected_kv_bytes=selected_kv_bytes,

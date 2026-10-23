@@ -1,7 +1,9 @@
 """Q1 framework bridge from the DSA indexer to native LIM cache plans.
 
 By default LIM selects a page-aligned prefix and appends its visible tail.
-With Copy-SFA, Q1 and C=K=2048 select over the complete visible sequence.
+With BF16 Copy-SFA, Q1 and C=K=2048 select over the complete visible sequence.
+A5 C8 also selects full-visible TopK, with a separate page-aligned prefix
+and caller-managed tail slots beyond the persistent C-token capacity.
 Runtime state belongs to this manager-owned adapter, while the current plan
 travels on Ascend ForwardMetadata for IndexShare consumers.
 """
@@ -15,6 +17,10 @@ import torch
 from sglang.kernels.ops.attention.npu_lim import (
     fused_lightning_indexer_manage,
     load_fused_lim_operator,
+)
+from sglang.kernels.ops.attention.npu_quant_sparse import (
+    fused_quant_lightning_indexer_manage,
+    load_quant_lim_operator,
 )
 
 
@@ -59,10 +65,12 @@ class LIMDecodeAdapter:
         self.batch_capacity = manager.batch_capacity
         self.top_k = manager.sparse_context_len
         self.full_visible = manager.copy_sfa_enabled
+        self.packed_c8 = getattr(manager, "packed_c8", False)
         self.source_capacity = (manager.max_context_len + 127) // 128 * 128
         self.width = self.top_k if self.full_visible else self.top_k + 128
         device = manager.device
-        self.operator = load_fused_lim_operator() if self.is_native else None
+        loader = load_quant_lim_operator if self.packed_c8 else load_fused_lim_operator
+        self.operator = loader() if self.is_native else None
         self.source_ids = torch.empty(
             (self.batch_capacity, 1, self.top_k), dtype=torch.int32, device=device
         )
@@ -104,15 +112,21 @@ class LIMDecodeAdapter:
         # does not read its values, but its ABI requires the complete PA shape.
         # Its variable 4 bytes/index-token are charged to the indexer pool coeff.
         key = manager.paged_kv_cache.get_index_k_buffer(manager.start_layer)
-        if key.dtype != torch.bfloat16 or manager.store_dtype != torch.bfloat16:
+        if (
+            self.packed_c8
+            and (key.dtype != torch.float8_e4m3fn or manager.store_dtype != torch.int8)
+        ) or (
+            not self.packed_c8
+            and (key.dtype != torch.bfloat16 or manager.store_dtype != torch.bfloat16)
+        ):
             raise ValueError(
-                "LIM/reference framework integration requires BF16 indexer and KV caches."
+                "LIM/reference requires BF16 indexer/KV or matching A5 FP8 indexer/C8 storage."
             )
         if key.ndim != 4 or key.shape[1:] != (128, 1, 128):
             raise ValueError("LIM/reference requires PA index keys [pages,128,1,128].")
         self.key_scale = (
             torch.empty(key.shape[:3], dtype=torch.float32, device=device)
-            if self.is_native
+            if self.is_native and not self.packed_c8
             else None
         )
 
@@ -130,6 +144,8 @@ class LIMDecodeAdapter:
         forward_batch,
         layer_id,
         reference_indexer=None,
+        query_scale=None,
+        key_scale=None,
     ):
         batch = query.shape[0]
         if (
@@ -153,10 +169,12 @@ class LIMDecodeAdapter:
             self.last_prefix[layer_index],
             self.capacity,
             self.rows,
-            full_visible=self.full_visible,
+            full_visible=self.full_visible and not self.packed_c8,
         )
-        if self.full_visible and not getattr(
-            forward_batch, "sparse_kv_copy_sfa_capture", False
+        if (
+            self.full_visible
+            and not self.packed_c8
+            and not getattr(forward_batch, "sparse_kv_copy_sfa_capture", False)
         ):
             cpu_lengths = forward_batch.seq_lens_cpu
             # Mixed/short batches use a host gather without populating resident
@@ -174,11 +192,20 @@ class LIMDecodeAdapter:
             scale = self.query_scale.view(-1)[: batch * query.shape[1]].view(
                 batch, query.shape[1]
             )
-            fused_lightning_indexer_manage(
+            if self.packed_c8:
+                if query_scale is None or key_scale is None:
+                    raise ValueError("C8 LIM requires actual query/key dequant scales.")
+                scale = query_scale
+            launch = (
+                fused_quant_lightning_indexer_manage
+                if self.packed_c8
+                else fused_lightning_indexer_manage
+            )
+            launch(
                 weights=weights.contiguous(),
                 query_scale=scale,
                 query=query.contiguous(),
-                key_scale=self.key_scale,
+                key_scale=key_scale if self.packed_c8 else self.key_scale,
                 key=key,
                 block_table=table,
                 query_ends=self.query_ends[:batch],

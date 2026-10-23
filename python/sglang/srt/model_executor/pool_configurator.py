@@ -282,7 +282,10 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                     top_k=get_sparsity_driven_kv_offload_sparse_context_len(
                         model_config=kvc.model_config
                     ),
-                    kv_bytes_per_token=(
+                    packed_c8=kvc.kv_cache_dtype == torch.float8_e4m3fn,
+                    kv_bytes_per_token=656
+                    if kvc.kv_cache_dtype == torch.float8_e4m3fn
+                    else (
                         kvc.model_config.kv_lora_rank
                         + kvc.model_config.qk_rope_head_dim
                     )
@@ -299,7 +302,16 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                         envs.SGLANG_NPU_SPARSE_KV_HBM_BUDGET_MB.get() * 1024**2
                     )
                 self._fixed_overhead_bytes += reservation
-                if envs.SGLANG_NPU_SPARSE_KV_INDEXER.get() == "lim":
+                if kvc.kv_cache_dtype == torch.float8_e4m3fn:
+                    # Each allocated indexer layer also has one padding page
+                    # of real per-token FP32 scales in the A5 packed pool.
+                    self._fixed_overhead_bytes += (
+                        num_layers * get_schedule().page_size * 4
+                    )
+                if (
+                    envs.SGLANG_NPU_SPARSE_KV_INDEXER.get() == "lim"
+                    and kvc.kv_cache_dtype != torch.float8_e4m3fn
+                ):
                     # One FP32 dequant-scale workspace shared across indexer
                     # layers, with a row for every physical indexer token.
                     self._cell_size += 4
