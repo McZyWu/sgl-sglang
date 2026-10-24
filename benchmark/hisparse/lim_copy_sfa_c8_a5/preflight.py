@@ -44,6 +44,19 @@ def check(mode):
 
         load_quant_lim_operator()
         load_quant_copy_sfa_operator()
+        import sgl_kernel_npu
+
+        import sglang
+
+        record["sglang_source"] = sglang.__file__
+        record["kernel_package"] = sgl_kernel_npu.__file__
+        for name in (
+            "unidex_copy",
+            "shm_allocator_create_and_register",
+            "shm_allocator_free_all",
+        ):
+            if not hasattr(torch.ops.npu, name):
+                raise RuntimeError(f"Matching kernel wheel lacks npu::{name}")
     record["status"] = "ready"
     return record
 

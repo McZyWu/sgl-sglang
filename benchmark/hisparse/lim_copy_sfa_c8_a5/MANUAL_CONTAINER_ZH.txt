@@ -1,0 +1,145 @@
+A5 容器内人工部署与验证
+=====================
+
+适用：已有 CANN / torch / torch_npu 及模型依赖的 A5 SGLang 容器。
+这是容器内部流程，不创建容器。无需连接 217。所有 NPU 数值结果要由你在 A5 上执行。
+两仓均使用 feat/hisparse-lim-copysfa-c8-a5，kernel 至少包含 442023d6。
+
+1. 拉取配套代码
+--------------
+下面示例使用 /workspace，已拉取时在对应目录 git pull --ff-only 即可。
+
+  cd /workspace
+  git clone -b feat/hisparse-lim-copysfa-c8-a5 https://github.com/McZyWu/sgl-sglang.git
+  git clone -b feat/hisparse-lim-copysfa-c8-a5 https://github.com/McZyWu/sgl-kernel-npu.git
+  cd /workspace/sgl-sglang
+  export C8_SCRIPT=$PWD/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  cp benchmark/hisparse/lim_copy_sfa_c8_a5/container.env.example /workspace/c8-a5.env
+  export C8_CONFIG=/workspace/c8-a5.env
+
+编辑 /workspace/c8-a5.env：
+  - KERNEL_SOURCE_DIR、MODEL_PATH、C8_RESULTS_DIR 改为容器里的实际路径。
+  - TP_SIZE / EP_SIZE / ATTN_DP_SIZE 按容器可见的卡数设置。
+  - WEIGHT_QUANTIZATION 留空使用 checkpoint 自动识别，或填该模型实际支持的方法。
+    C8 是 KV cache 格式，与权重量化方法独立。
+  - 示例启用 DeepEP auto + hybrid，dispatch capacity=32、HCCL_BUFFSIZE=1000
+    是 217 的参考值，尚未作为 A5 通用配置验证。容量要覆盖每 rank 的 padded decode
+    token 数；增大 batch 时要重新核对。所有 EP rank 使用一致设置。
+    已设置的 DEEPEP_HCCL_BUFFSIZE 会优先配置专用 EP window，启动日志会打印有效值。
+  - 单卡/不使用 DeepEP 时设置 MOE_A2A_BACKEND=none，此时 build 不编译 DeepEP。
+
+SGLang 使用镜像已有依赖；脚本把 PYTHONPATH 指向本次拉取的 python/ 源码，
+不通过 pip 重新解析整套依赖或替换 torch/torch_npu。预检会打印实际源码和 kernel 包路径。
+此初始适配支持：BF16 compute、fp8_e4m3 KV、Q1、K=2048、page=128、
+PP=CP=DCP=1、同机 prefill/decode、禁用 radix。不要添加 MTP/speculative 参数。
+
+2. 在 kernel 仓编译并安装
+-----------------------
+确认选中的 NPU 当前可用于验证，然后执行：
+
+  bash "$C8_SCRIPT" build
+
+脚本自动初始化 kernel 的子模块。在选择 DeepEP 时，先执行：
+  cd "$KERNEL_SOURCE_DIR"
+  bash build.sh -a deepep Ascend950
+  python3 -m pip install --no-deps --force-reinstall <本轮新生成的 deep_ep wheel>
+
+随后执行：
+  bash build.sh -a kernels Ascend950
+  python3 -m pip install --no-deps --force-reinstall <本轮新生成的 sgl_kernel_npu wheel>
+
+脚本只安装本轮产生的 wheel，记录 SHA256，并显式选择 wheel 内的 deep_ep_cpp 与
+vendor OPP 路径。不要只编译 C8 wheel 后假设镜像原有 DeepEP 已包含 hybrid 修复。
+不要直接 bash build.sh 做 A5 全量构建；A5 的两个目标要分开构建。
+编译出错会中止，不会回退到旧 wheel。修复依赖/编译错误后可重跑 build。
+只重编一个目标：bash "$C8_SCRIPT" build-kernel 或 build-deepep。
+
+3. 先跑无需模型权重的测试
+-----------------------
+  bash "$C8_SCRIPT" test all
+
+按如下顺序执行，任一步失败即停止，每项有日志、pytest 项另有 JUnit XML。
+当前代码的预期数量如下；测试未来增加时以实际收集为准，不用数字判断正确性。
+
+  cpu       114 项：LIM 请求状态、C8 预算、CPU 接口及 kernel namespace。
+  lim       146 项：quant LIM 静态接口、官方 LI oracle、短序列、尾部、状态与 graph。
+  copy-sfa    5 项：C8 Copy-SFA CPU attention golden 与 656 字节 KV 逐字节比对。
+  pair        2 项：LIM -> Copy-SFA 的 eager / graph 生命周期、padding、尾部与复用。
+  framework       ：真实 SRT manager、注册 host KV、IndexShare、CPU oracle 与 graph replay。
+
+实际文件：
+  SGLang/test/registered/unit/hardware_backend/test_npu_lim_state.py
+  SGLang/test/manual/npu/test_sparse_kv_offload_cache.py
+  SGLang/test/registered/unit/kernels/test_kernels_namespace.py
+  Kernel/tests/test_fused_quant_lightning_indexer_manage_a5.py
+  Kernel/tests/test_fused_quant_scatter_copy_sparse_flash_attention.py
+  Kernel/tests/test_lim_copy_sfa_c8.py
+  SGLang/benchmark/hisparse/check_lim_copy_sfa_c8.py
+
+逐项重跑，例如：
+  bash "$C8_SCRIPT" test meta       # 24 项 Meta，快速确认 wheel ABI
+  bash "$C8_SCRIPT" test lim
+  bash "$C8_SCRIPT" test copy-sfa
+  bash "$C8_SCRIPT" test pair
+  bash "$C8_SCRIPT" test framework
+
+all 已含全部 Meta 检查，不再重复单独运行 meta。
+A5 验证要求 pytest 零 skip、零 failed/error；A3 上全 skip 不能作为通过。
+每阶段默认 3600 秒超时，可在配置中修改 C8_TEST_TIMEOUT。卡死会以非零状态退出。
+framework 成功后产生 framework.json，status 应为 pass。
+
+4. 可选：单独验证 DeepEP normal/LL 交替
+-------------------------------------
+这一步占用 DEEPEP_TEST_RANKS 张卡，模型服务尚未启动时运行：
+
+  bash "$C8_SCRIPT" deepep-test
+
+使用 kernel 仓现有 tests/python/deepep/test_normal_and_low_latency.py，默认交替
+10 轮、normal=256 tokens、LL=16 tokens。rank 数、hidden、expert 数和 TopK
+可在配置中修改，expert 数应能被 rank 数整除。这是通信检查，不能代替整网连续请求。
+
+5. 启动模型，再从第二个终端验证
+-----------------------------
+第一个终端：
+  export C8_CONFIG=/workspace/c8-a5.env
+  export C8_SCRIPT=/workspace/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  bash "$C8_SCRIPT" serve
+
+保持前台运行，等待 server ready。脚本设置 --kv-cache-dtype fp8_e4m3、
+LIM + Copy-SFA、MLAPO=0，并按配置启用 DeepEP hybrid、PrefillDelayer 与 overlap
+plan stream；默认没有关闭 overlap 调度。完整服务日志保存在结果目录的 serve-* 下。
+可追加该模型需要的启动参数，例如 bash "$C8_SCRIPT" serve --log-level debug。
+如果卡在 warmup，保留服务日志及 npu-smi 输出，不要继续把客户端超时当作精度失败。
+
+第二个终端，同一容器：
+  export C8_CONFIG=/workspace/c8-a5.env
+  export C8_SCRIPT=/workspace/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  bash "$C8_SCRIPT" smoke
+
+默认并发 8，每轮先 8 个短请求再 8 个长请求，共 10 轮，即 160 个请求、5120 个
+生成 token。短输入精确为 142/257/384/465 tokens，长输入至少 4096 tokens 且大于
+CACHE_TOKENS，每请求强制生成 32 tokens。超时、HTTP 错误、abort、token 数不符
+均失败，不自动重试；liveness.json 即使失败也会保留已完成请求和错误。
+通过标准：status=pass、160/160 请求、generated_tokens=5120。另检查 server 日志中
+短序列 eager / 长序列 graph 的实际执行记录；HTTP 成功本身不能证明 graph 路径已走到。
+这是存活性与切换检查，不做 GPQA，也不声称真实模型精度或吞吐已经验证。
+
+6. 与普通 C8 baseline 对比
+-------------------------
+先 Ctrl-C 停止本轮前台服务，等待其 NPU 进程退出，再在第一个终端运行：
+  LIM_EVAL_MODE=baseline bash "$C8_SCRIPT" serve
+
+第二个终端再运行 smoke。baseline 仍使用 C8、相同权重和通信配置、MLAPO=0，
+只关闭 sparse offload/LIM/Copy-SFA。两轮都应通过，不要求两种 TopK 的输出逐 token
+一致。再启用融合路径：LIM_EVAL_MODE=lim_copy_sfa bash "$C8_SCRIPT" serve。
+这两种 CLI 环境覆盖由示例配置中的 ${LIM_EVAL_MODE:-lim_copy_sfa} 保留。
+
+需要返回排查的材料：build 日志与 wheel SHA256、test-* 的 XML/log/framework.json、
+serve-* 的 server.log、smoke-* 的 liveness.json，以及卡数、模型路径和两仓提交号。
+结果保存在 C8_RESULTS_DIR，每次运行单独建目录。脚本不停止其他服务或容器。
+
+当前限制：direct-launch LIM 使用 vector 管理路径，SIMT 后处理/解包仍未启用。
+此前 217 的编译/Meta/CPU 记录不代表本次 A5 数值与模型验证已经执行。
+本次脚本已在本地通过 Bash 语法、Python lint/format、6 类 HTTP 客户端模拟检查、
+8 类 shell 参数/退出状态检查及 3 类构建产物选择检查。这些均为离线控制流程检查，
+没有执行 A5 构建或 NPU 数值测试；请以你在 A5 上生成的结果为准。

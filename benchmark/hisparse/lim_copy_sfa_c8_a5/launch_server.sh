@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -eo pipefail
-source /usr/local/Ascend/ascend-toolkit/set_env.sh
-if [[ -f /usr/local/Ascend/nnal/atb/set_env.sh ]]; then
-  source /usr/local/Ascend/nnal/atb/set_env.sh
+source "${CANN_ENV:-/usr/local/Ascend/ascend-toolkit/set_env.sh}"
+if [[ -f ${ATB_ENV:-/usr/local/Ascend/nnal/atb/set_env.sh} ]]; then
+  source "${ATB_ENV:-/usr/local/Ascend/nnal/atb/set_env.sh}"
 fi
 set -u
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SGLANG_SOURCE_DIR=$(cd "$SCRIPT_DIR/../../.." && pwd)
+export PYTHONPATH="$SGLANG_SOURCE_DIR/python${PYTHONPATH:+:$PYTHONPATH}"
 MODE=${LIM_EVAL_MODE:-lim_copy_sfa}
 MODEL_PATH=${MODEL_PATH:?Set MODEL_PATH to the A5-compatible checkpoint}
 TP_SIZE=${TP_SIZE:-1}
@@ -27,9 +29,30 @@ case "$MODE" in
 esac
 python3 "$SCRIPT_DIR/preflight.py" --mode "$MODE"
 extra=()
+if [[ ${ENABLE_PREFILL_DELAYER:-0} == 1 ]]; then
+  extra+=(--enable-prefill-delayer --prefill-delayer-max-delay-passes "${PREFILL_DELAYER_MAX_DELAY_PASSES:-100}")
+fi
+if [[ -n ${MAX_TOTAL_TOKENS:-} ]]; then
+  extra+=(--max-total-tokens "$MAX_TOTAL_TOKENS")
+fi
+if [[ ${MOE_A2A_BACKEND:-none} == deepep ]]; then
+  extra+=(--moe-a2a-backend deepep --deepep-mode "${DEEPEP_MODE:-auto}")
+  if [[ ${DEEPEP_MODE:-auto} == auto ]]; then
+    export DEEPEP_HYBRID_DEPLOYMENT=${DEEPEP_HYBRID_DEPLOYMENT:-1}
+    [[ "$DEEPEP_HYBRID_DEPLOYMENT" == 1 ]] || {
+      echo "DeepEP auto requires DEEPEP_HYBRID_DEPLOYMENT=1 for this normal/V2 setup" >&2; exit 2;
+    }
+  fi
+  export SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK=${SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK:-32}
+  export HCCL_BUFFSIZE=${HCCL_BUFFSIZE:-1000}
+  echo "DeepEP mode=${DEEPEP_MODE:-auto}; hybrid=${DEEPEP_HYBRID_DEPLOYMENT:-0}; dispatch capacity=$SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK; window MiB=${DEEPEP_HCCL_BUFFSIZE:-$HCCL_BUFFSIZE}; strategy=${DEEP_USE_MODE:-default}"
+elif [[ ${MOE_A2A_BACKEND:-none} != none ]]; then
+  extra+=(--moe-a2a-backend "$MOE_A2A_BACKEND")
+fi
 if [[ -n ${WEIGHT_QUANTIZATION:-} ]]; then
   extra+=(--quantization "$WEIGHT_QUANTIZATION")
 fi
+echo "Mode=$MODE; K=2048 C=$SGLANG_NPU_SPARSE_KV_CACHE_SIZE; MoE=${MOE_A2A_BACKEND:-none}"
 exec python3 -m sglang.launch_server \
   --model-path "$MODEL_PATH" --served-model-name "${SERVED_MODEL_NAME:-c8-a5}" \
   --attention-backend ascend --device npu --dtype bfloat16 --kv-cache-dtype fp8_e4m3 \

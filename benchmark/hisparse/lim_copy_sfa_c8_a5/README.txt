@@ -1,5 +1,9 @@
 A5 C8 LIM + Copy-SFA integration
 
+For the complete in-container build/install/test/serve workflow, read
+MANUAL_CONTAINER_ZH.txt and copy container.env.example outside the checkout.
+The entry point is: C8_CONFIG=/path/to/your.env bash container.sh <action>.
+
 Both repositories use feat/hisparse-lim-copysfa-c8-a5, based on the validated
 feat/hisparse-lim-copysfa-opt-217 pair. Install matching SGLang and Ascend950
 sgl-kernel-npu code/wheel together.
