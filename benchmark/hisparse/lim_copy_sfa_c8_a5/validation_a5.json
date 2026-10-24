@@ -1,0 +1,75 @@
+{
+  "date": "2026-10-24",
+  "evidence": {
+    "source": "user-provided A5 container console logs",
+    "executed_by": "user",
+    "agent_direct_machine_access": false,
+    "raw_junit_inspected_by_agent": false,
+    "lim": "preceding user message: test lim, 146 passed, zero skips",
+    "remaining_stages_log_sha256": "3475a58d89976799bfbc537a605aa7e1fdd7fb79d30c37432252f9af9489509b"
+  },
+  "repositories": {
+    "branch": "feat/hisparse-lim-copysfa-c8-a5",
+    "sglang": "375e05bda2100c25d93a12500786cf519d067f25",
+    "kernel": "988ad6d75b2752004b6c56c81552787d77b1ee16"
+  },
+  "environment": {
+    "device": "Ascend950DT_9582",
+    "architecture": 3510,
+    "acl_status": 0,
+    "python": "3.12.13",
+    "torch": "2.10.0+cpu",
+    "torch_npu": "2.10.0.post6",
+    "kernel_distribution_version": "2026.9.0",
+    "kv_format": "C8/656 bytes",
+    "sglang_source": "/mnt/share/wzy/sgl-sglang/python/sglang/__init__.py",
+    "kernel_package": "/usr/local/python3.12.13/lib/python3.12/site-packages/sgl_kernel_npu/__init__.py"
+  },
+  "pytest": {
+    "passed": 267,
+    "failed": 0,
+    "skipped": 0,
+    "stages": {
+      "lim": {
+        "passed": 146,
+        "seconds": 110.63,
+        "junit": "/workspace/c8-a5-results/test-20261024-073401-23409/quant-lim.xml"
+      },
+      "cpu": {
+        "passed": 114,
+        "seconds": 35.09,
+        "junit": "/workspace/c8-a5-results/test-20261024-074721-24691/cpu.xml"
+      },
+      "copy-sfa": {
+        "passed": 5,
+        "seconds": 8.16,
+        "junit": "/workspace/c8-a5-results/test-20261024-074822-26228/quant-copy-sfa.xml"
+      },
+      "pair": {
+        "passed": 2,
+        "seconds": 8.98,
+        "junit": "/workspace/c8-a5-results/test-20261024-074909-27509/paired-c8.xml"
+      }
+    }
+  },
+  "framework": {
+    "status": "pass",
+    "scope": "A5 C8 fixed projection framework; no model accuracy/timing claim",
+    "request_rows": 3,
+    "batch_capacity": 8,
+    "decode_path": "copy_sfa_c8",
+    "payload_bitwise": true,
+    "attention_cpu_oracle": true,
+    "graph_reset_and_padding": true,
+    "index_share_layers": 2,
+    "result": "/workspace/c8-a5-results/test-20261024-074956-28791/framework.json"
+  },
+  "pending": [
+    "A5 actual model startup and serve + smoke",
+    "A5 model accuracy and performance conclusions"
+  ],
+  "not_reported": [
+    "A5 DeepEP standalone test",
+    "GPQA score"
+  ]
+}

@@ -1,0 +1,62 @@
+A5 C8 算子与框架子路径实机复验记录（2026-10-24）
+================================================
+
+来源：用户在 A5 容器内执行命令后回传的控制台日志。代理未直连该 A5 机器，
+未读取原始 XML；下列结果按回传日志中的 pytest 及严格 JUnit 检查输出记录。
+217 的 A3 编译/检查结果单独保留在 VALIDATION_217.txt。
+
+实机与配套版本
+--------------
+设备：Ascend950DT_9582，architecture=3510，acl_status=0。
+Python 3.12.13，torch 2.10.0+cpu，torch_npu 2.10.0.post6。
+Kernel distribution version：2026.9.0；KV：C8 / 656 bytes。
+SGLang：375e05bda2100c25d93a12500786cf519d067f25。
+Kernel：988ad6d75b2752004b6c56c81552787d77b1ee16。
+两仓分支：feat/hisparse-lim-copysfa-c8-a5。
+
+容器里的 SGLang 源码：/mnt/share/wzy/sgl-sglang/python/sglang/__init__.py。
+实际 Kernel 包：/usr/local/python3.12.13/lib/python3.12/site-packages/sgl_kernel_npu/__init__.py。
+
+已通过
+------
+lim        146 passed，zero skips，110.63 秒。
+cpu        114 passed，zero skips，35.09 秒。
+copy-sfa     5 passed，zero skips，8.16 秒。
+pair         2 passed，zero skips，8.98 秒。
+pytest 合计 267 passed，0 failed，0 skipped。
+
+framework 返回 status=pass，并确认：
+  decode_path=copy_sfa_c8；payload_bitwise=true；attention_cpu_oracle=true；
+  graph_reset_and_padding=true；index_share_layers=2；
+  request_rows=3；batch_capacity=8。
+该检查使用固定投影，执行实际 SRT manager、注册 host KV 与 attention 路径。
+
+此前 LIM 的 34 项失败在本轮 146 项复验中全部消除；LIM 计数写回修正已实机通过。
+pair 和 framework 同时通过，覆盖修正后的 prefix-relative tail KV 地址，
+包括奇数页 prefix、eager/graph、padding、请求复用和 IndexShare。
+
+容器内结果路径
+--------------
+/workspace/c8-a5-results/test-20261024-073401-23409/quant-lim.xml
+/workspace/c8-a5-results/test-20261024-074721-24691/cpu.xml
+/workspace/c8-a5-results/test-20261024-074822-26228/quant-copy-sfa.xml
+/workspace/c8-a5-results/test-20261024-074909-27509/paired-c8.xml
+/workspace/c8-a5-results/test-20261024-074956-28791/framework.json
+
+范围与下一步
+------------
+至此算子和固定投影框架子路径通过；尚无实际模型的 A5 启动/整网请求结果。
+本记录不包含 A5 DeepEP 专项测试、GPQA 精度、模型吞吐或延迟结论。
+已通过的阶段无需重复执行。保留已验证代码/wheel 和现有 C8_CONFIG，
+按 MANUAL_CONTAINER_ZH.txt 的 serve + smoke 完成实际模型验证：
+
+  # 终端 1：前台启动，保持运行
+  bash "$C8_SCRIPT" serve
+
+  # 终端 2：设置相同的 C8_CONFIG 和 C8_SCRIPT，服务就绪后执行
+  bash "$C8_SCRIPT" smoke
+
+默认 smoke 为 10 轮，每轮两组、每组并发 8，共 160 请求；每请求生成 32 token。
+短输入为 142/257/384/465 token，长输入默认 max(4096, C+256)。
+smoke 用于整网请求完成性和路径切换检查，不执行 GPQA，也不替代模型精度评估。
+机器可读记录见 validation_a5.json。

@@ -8,6 +8,11 @@ Both repositories use feat/hisparse-lim-copysfa-c8-a5, based on the validated
 feat/hisparse-lim-copysfa-opt-217 pair. Install matching SGLang and Ascend950
 sgl-kernel-npu code/wheel together.
 
+A5 execution results reported by the user on 2026-10-24 are recorded in
+VALIDATION_A5.txt and validation_a5.json: 267 pytest cases pass with zero skips,
+and the fixed-projection framework check passes. Tested revisions are SGLang
+375e05bd and kernel 988ad6d. Actual model serve/smoke is the next validation step.
+
 The integration selects TopK over the full causal-visible range. Stable-prefix
 sources use the persistent C-token cache; selected tail sources hit an additional
 prefix-relative tail region at C+(source-P). The framework reserves 256 slots;
