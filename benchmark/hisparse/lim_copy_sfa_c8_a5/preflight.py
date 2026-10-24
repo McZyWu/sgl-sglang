@@ -45,12 +45,14 @@ def check(mode, kernel_source=None):
         raise RuntimeError(
             f"C8 offload requires Ascend950/A5 (arch35); detected {record}"
         )
-    if not hasattr(torch_npu, "npu_quant_lightning_indexer") or not hasattr(
+    if not hasattr(torch.ops.npu, "npu_quant_lightning_indexer") or not hasattr(
         torch_npu, "npu_kv_quant_sparse_flash_attention"
     ):
         raise RuntimeError(
-            "torch_npu lacks the A5 quant LI / quant sparse attention APIs."
+            "torch_npu lacks native npu::npu_quant_lightning_indexer "
+            "or the A5 quant sparse attention API."
         )
+    record["prefill_indexer"] = str(torch.ops.npu.npu_quant_lightning_indexer)
     if mode == "lim_copy_sfa":
         from sglang.kernels.ops.attention.npu_quant_sparse import (
             load_quant_copy_sfa_operator,

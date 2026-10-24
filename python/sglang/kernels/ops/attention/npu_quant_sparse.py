@@ -50,7 +50,7 @@ def fused_quant_lightning_indexer_manage(
     miss_counts,
     operator=None,
 ):
-    """Run FP8 index retrieval; tail hits are caller-owned slots C + source % 256."""
+    """Run FP8 index retrieval; tail hits use caller-owned slots C + (source-P)."""
     if query.dtype != torch.float8_e4m3fn or key.dtype != query.dtype:
         raise ValueError("A5 C8 LIM requires FP8 E4M3FN query and index keys.")
     if weights.dtype != torch.bfloat16:

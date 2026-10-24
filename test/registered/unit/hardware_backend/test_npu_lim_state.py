@@ -33,6 +33,137 @@ register_cpu_ci(est_time=3, stage="base-a")
 
 
 class TestLIMState(CustomTestCase):
+    def test_c8_prefill_uses_native_indexer_after_custom_ops_shadow(self):
+        """A third-party alias must not change the prefill operator's ABI.
+
+        The real Q/K producer and prefill branch run on CPU. Only NPU execution
+        boundaries are replaced: the native op computes a tiny causal TopK,
+        while the overwritten torch_npu alias rejects the incompatible call.
+        """
+        from sglang.srt.layers.attention.dsa import dsa_npu_indexer as indexer
+
+        tokens, heads = 3, 32
+        key = torch.zeros(1, 128, 1, 128, dtype=torch.float8_e4m3fn)
+        key_scale = torch.ones(1, 128, 1)
+
+        def save_key(_layer, _locations, values):
+            key[0, :tokens].copy_(values.view(tokens, 1, 128))
+
+        def save_scale(_layer, _locations, values):
+            key_scale[0, :tokens].copy_(values.view(tokens, 1))
+
+        def dynamic_quant(values, *, dst_type):
+            return values.to(dst_type), torch.ones(values.shape[:-1])
+
+        def shadowed_indexer(**kwargs):
+            raise AssertionError(
+                "prefill used the custom_ops alias with a different ABI"
+            )
+
+        def native_indexer(**kwargs):
+            queries = kwargs["query"].float()
+            keys = kwargs["key"][0, :tokens, 0].float()
+            scores = torch.einsum("thd,kd->thk", queries, keys).relu()
+            scores *= kwargs["query_dequant_scale"][:, :, None]
+            scores *= kwargs["key_dequant_scale"][0, :tokens, 0]
+            scores = (scores * kwargs["weights"].float()[:, :, None]).sum(1)
+            result = torch.full((tokens, 1, 2048), -1, dtype=torch.int32)
+            for row in range(tokens):
+                visible = row + 1
+                result[row, 0, :visible] = scores[row, :visible].topk(visible).indices
+            return result
+
+        pool = SimpleNamespace(
+            dtype=torch.float8_e4m3fn,
+            start_layer=0,
+            indexer_hadamard_128=torch.eye(128, dtype=torch.bfloat16),
+            index_k_scale_buffer=[key_scale],
+            set_index_k_scale_buffer=save_scale,
+            set_index_k_buffer=save_key,
+            get_index_k_buffer=lambda _layer: key,
+            get_index_k_scale_buffer=lambda _layer: key_scale,
+        )
+
+        class Rotary:
+            is_neox_style = False
+            cos_sin_cache = torch.zeros(tokens, 128)
+
+            def __call__(self, positions, q, k):
+                return q, k
+
+        producer = SimpleNamespace(
+            hidden_size=128,
+            n_heads=heads,
+            head_dim=128,
+            rope_head_dim=64,
+            rotary_emb=Rotary(),
+            dsa_enable_prefill_cp=False,
+            weights_proj=lambda x: (torch.full((tokens, heads), 1 / heads),),
+            wq_b=lambda q: (q,),
+            wk=lambda x: (x,),
+            k_norm=lambda k: k,
+            index_topk=2048,
+        )
+        batch = SimpleNamespace(
+            forward_mode=SimpleNamespace(
+                is_extend=lambda: True,
+                is_draft_extend_v2=lambda: False,
+                is_target_verify=lambda: False,
+                is_decode=lambda: False,
+            ),
+            seq_lens=torch.tensor([tokens], dtype=torch.int32),
+            extend_seq_lens=torch.tensor([tokens], dtype=torch.int32),
+            out_cache_loc=torch.arange(tokens),
+        )
+        backend = SimpleNamespace(
+            forward_metadata=SimpleNamespace(
+                seq_lens_cpu_int=batch.seq_lens,
+                block_tables=torch.tensor([[0]], dtype=torch.int32),
+            )
+        )
+        x = torch.zeros(tokens, 128, dtype=torch.bfloat16)
+        x[:, 0] = torch.arange(1, tokens + 1)
+        q = torch.zeros(tokens, heads, 128, dtype=torch.bfloat16)
+        q[:, :, 0] = 1
+        with (
+            patch.object(indexer, "get_attn_backend", return_value=backend),
+            patch.object(indexer, "get_token_to_kv_pool", return_value=pool),
+            patch.object(
+                indexer, "get_parallel", return_value=SimpleNamespace(dcp_enabled=False)
+            ),
+            patch.object(indexer, "_use_ag_after_qlora", False),
+            patch.object(
+                indexer,
+                "envs",
+                SimpleNamespace(
+                    SGLANG_NPU_USE_MULTI_STREAM=SimpleNamespace(get=lambda: False)
+                ),
+            ),
+            patch.object(
+                indexer,
+                "torch_npu",
+                SimpleNamespace(
+                    npu_dynamic_quant=dynamic_quant,
+                    npu_quant_lightning_indexer=shadowed_indexer,
+                ),
+                create=True,
+            ),
+            patch.object(
+                torch.ops.npu,
+                "npu_quant_lightning_indexer",
+                native_indexer,
+                create=True,
+            ),
+        ):
+            actual = indexer.DSANPUIndexerMixin.forward_npu(
+                producer, x, q.reshape(tokens, -1), torch.arange(tokens), batch, 0
+            )
+        expected = torch.full((tokens, 2048), -1, dtype=torch.int32)
+        expected[0, :1] = torch.tensor([0])
+        expected[1, :2] = torch.tensor([1, 0])
+        expected[2, :3] = torch.tensor([2, 1, 0])
+        torch.testing.assert_close(actual, expected)
+
     def test_c8_ragged_prefill_keeps_request_pages_and_query_heads_separate(self):
         # Different partial-page lengths would alias if packed TND rows were
         # passed as page-aligned PA storage. The vendor boundary consumes the

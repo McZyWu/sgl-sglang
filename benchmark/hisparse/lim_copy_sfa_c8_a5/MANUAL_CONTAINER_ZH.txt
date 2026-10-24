@@ -8,6 +8,8 @@ A5 容器内人工部署与验证
 2026-10-24 修正了 A5 LIM 计数写回和框架 tail 布局；旧 kernel 442023d6 不含该修复。
 已安装过旧 wheel 时，只 git pull 后跑 test 不会更新二进制，需要执行 build-kernel。
 具体问题与复验顺序见 FIX_LIM_COUNTS_20261024.txt。
+整网 prefill warmup 的 custom_ops 同名接口覆盖问题及修正，见
+FIX_PREFILL_INDEXER_ABI_20261024.txt。此 Python 调用修正沿用 kernel 988ad6d wheel。
 
 1. 拉取配套代码
 --------------
@@ -67,7 +69,7 @@ all 会先检查 Kernel 源码和当前 Python 实际导入的 wheel，再执行
 若缺少 C8 源码或算子注册，会立即退出，不先运行 114 项 CPU 测试。
 当前代码的预期数量如下；测试未来增加时以实际收集为准，不用数字判断正确性。
 
-  cpu       114 项：LIM 请求状态、C8 预算、CPU 接口及 kernel namespace。
+  cpu       115 项：LIM 请求状态、C8 预算、原生 prefill 入口隔离及 kernel namespace。
   lim       146 项：quant LIM 静态接口、官方 LI oracle、短序列、尾部、状态与 graph。
   copy-sfa    5 项：C8 Copy-SFA CPU attention golden 与 656 字节 KV 逐字节比对。
   pair        2 项：LIM -> Copy-SFA 的 eager / graph 生命周期、padding、尾部与复用。

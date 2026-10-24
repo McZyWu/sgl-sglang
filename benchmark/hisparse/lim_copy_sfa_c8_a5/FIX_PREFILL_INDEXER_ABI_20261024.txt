@@ -1,0 +1,62 @@
+A5 整网 warmup：QuantLightningIndexer ABI 覆盖问题（2026-10-24）
+================================================================
+
+用户回传：SGLang 375e05bd、kernel 988ad6d，Ascend950DT_9582，
+torch 2.10.0+cpu / torch_npu 2.10.0.post6，TP8/EP8、attention DP1，
+GLM-5.2-W4A4C8-mxfp4-A5-0731，DeepEP auto + hybrid=1。
+
+问题边界
+--------
+08:36:54：decode NPU graph 的 bs=16 捕获已完成。
+08:36:55：HTTP application startup complete。
+08:36:56：/model_info 返回 200，之后处理启动 warmup 的 prefill 时段错误。
+Python 栈：dsa_npu_indexer.py:366 -> torch_npu.npu_quant_lightning_indexer。
+C++ 栈：cann-recipes-infer/torch_ops_extension/custom_ops/csrc/ops_common.h ->
+aclnnQuantLightningIndexerGetWorkspaceSize / aclnnInnerQuantLightningIndexerGetWorkspaceSize。
+各 rank 出现相同调用栈，随后 scheduler 以 -11 退出。
+这是 prefill 官方量化索引接口的调用问题；尚未进入该请求的 LIM decode。
+
+根因与修正
+----------
+custom_ops/__init__.py 导入后，遍历 torch.ops.custom 并 setattr(torch_npu, ...)，
+会把 torch_npu.npu_quant_lightning_indexer 指向 custom.npu_quant_lightning_indexer。
+SGLang 初始化 NPU backend/模型模块时会导入 custom_ops；原生算子测试没有这个
+相同的导入环境，因此其通过不代表整网 prefill 仍使用相同入口。
+
+在 217 的同版本 torch/torch_npu/custom_ops 环境，已直接复现：
+  导入前：npu.npu_quant_lightning_indexer
+  导入后：custom.npu_quant_lightning_indexer
+  torch.ops.npu.npu_quant_lightning_indexer 保持不变。
+
+两种 schema：
+  npu::npu_quant_lightning_indexer -> Tensor
+  custom::npu_quant_lightning_indexer -> (Tensor, Tensor)，增加 metadata、
+      cmp_ratio、return_value 等参数。
+用户 C++ 栈也确认为后一实现。这里不能用 Python 别名混用两种接口。
+
+修正 prefill 调用，显式使用 torch.ops.npu.npu_quant_lightning_indexer，
+沿用已验证的原生 Tensor 返回接口。保留其他 custom_ops 注册与模型所需算子。
+preflight 同时检查原生接口，并输出 prefill_indexer=npu.npu_quant_lightning_indexer。
+本修正不修改 kernel 二进制或 DeepEP 的构建/通信配置。
+
+回归与 A5 复验
+-------------
+新增 CPU 回归执行实际 DSANPUIndexerMixin.forward_npu 的 Q/K 产生及 prefill 分支，
+模拟被覆盖的别名，并在原生 NPU 执行边界用 CPU 计算三个 token 的 causal TopK。
+旧代码落入错误别名而失败；修正后必须得到正确索引值及 -1 padding。
+217 完整 CPU 回归：115 passed，zero skips，46.12 秒；变更文件 lint/format 通过。
+217 只用于导入/schema 检查与 CPU 回归，不在 A3 上运行 A5 数值推理。
+
+在 A5 容器沿用现有 C8_CONFIG 和 C8_SCRIPT：
+
+  git -C /mnt/share/wzy/sgl-sglang pull --ff-only https://github.com/McZyWu/sgl-sglang.git feat/hisparse-lim-copysfa-c8-a5
+  bash "$C8_SCRIPT" test cpu
+  bash "$C8_SCRIPT" serve
+
+CPU 用例由 114 增至 115。kernel 继续使用 988ad6d 的已安装 wheel。
+先确认服务完成默认 warmup、保持存活，再在第二终端执行：
+
+  bash "$C8_SCRIPT" smoke
+
+先前 267 项/固定投影框架检查的通过记录仍在 VALIDATION_A5.txt。
+本次整网 prefill 修正的 A5 结果仍需实机复验，不能以 217 的 CPU 通过替代。

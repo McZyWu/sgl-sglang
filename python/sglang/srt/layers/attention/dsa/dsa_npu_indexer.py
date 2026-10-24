@@ -363,7 +363,9 @@ class DSANPUIndexerMixin:
                     pool.indexer_hadamard_128,
                     pool.dtype,
                 )
-                topk_indices = torch_npu.npu_quant_lightning_indexer(
+                # custom_ops replaces the torch_npu alias with its different
+                # metadata/tuple ABI. This path uses the native Tensor ABI.
+                topk_indices = torch.ops.npu.npu_quant_lightning_indexer(
                     query=query,
                     key=past_key_states,
                     weights=weights,

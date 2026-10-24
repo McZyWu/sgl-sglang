@@ -12,6 +12,9 @@ A5 execution results reported by the user on 2026-10-24 are recorded in
 VALIDATION_A5.txt and validation_a5.json: 267 pytest cases pass with zero skips,
 and the fixed-projection framework check passes. Tested revisions are SGLang
 375e05bd and kernel 988ad6d. Actual model serve/smoke is the next validation step.
+FIX_PREFILL_INDEXER_ABI_20261024.txt records the subsequent startup-warmup crash:
+custom_ops overwrites the torch_npu quant-indexer alias. Prefill now explicitly
+uses the native torch.ops.npu entry; the kernel wheel remains 988ad6d.
 
 The integration selects TopK over the full causal-visible range. Stable-prefix
 sources use the persistent C-token cache; selected tail sources hit an additional
