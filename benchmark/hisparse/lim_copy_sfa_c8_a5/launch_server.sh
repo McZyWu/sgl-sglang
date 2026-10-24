@@ -53,6 +53,10 @@ if [[ -n ${WEIGHT_QUANTIZATION:-} ]]; then
   extra+=(--quantization "$WEIGHT_QUANTIZATION")
 fi
 echo "Mode=$MODE; K=2048 C=$SGLANG_NPU_SPARSE_KV_CACHE_SIZE; MoE=${MOE_A2A_BACKEND:-none}"
+if [[ -n ${C8_LAUNCH_MANIFEST:-} ]]; then
+  python3 "$SCRIPT_DIR/performance.py" capture-launch \
+    --output "$C8_LAUNCH_MANIFEST" --mode "$MODE" --pid "$$"
+fi
 exec python3 -m sglang.launch_server \
   --model-path "$MODEL_PATH" --served-model-name "${SERVED_MODEL_NAME:-c8-a5}" \
   --attention-backend ascend --device npu --dtype bfloat16 --kv-cache-dtype fp8_e4m3 \

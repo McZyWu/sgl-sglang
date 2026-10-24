@@ -142,6 +142,11 @@ CACHE_TOKENS，每请求强制生成 32 tokens。超时、HTTP 错误、abort、
 一致。再启用融合路径：LIM_EVAL_MODE=lim_copy_sfa bash "$C8_SCRIPT" serve。
 这两种 CLI 环境覆盖由示例配置中的 ${LIM_EVAL_MODE:-lim_copy_sfa} 保留。
 
+性能对比见 PERFORMANCE_ZH.txt：同一配置分别启动两种模式，第二个终端运行
+container.sh perf lim_copy_sfa / perf baseline，再用 perf-compare 汇总。
+不要用 smoke 的完成时间计算加速比；性能客户端使用独立预热、固定生成长度、
+重复测量和逐请求有效性检查，保留原始吞吐/TTFT/TPOT 结果。
+
 需要返回排查的材料：build 日志与 wheel SHA256、test-* 的 XML/log/framework.json、
 serve-* 的 server.log、smoke-* 的 liveness.json，以及卡数、模型路径和两仓提交号。
 结果保存在 C8_RESULTS_DIR，每次运行单独建目录。脚本不停止其他服务或容器。

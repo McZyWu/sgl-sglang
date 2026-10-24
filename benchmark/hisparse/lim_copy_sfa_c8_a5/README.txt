@@ -5,6 +5,11 @@ MANUAL_CONTAINER_ZH.txt and copy container.env.example outside the checkout.
 The entry point is: C8_CONFIG=/path/to/your.env bash container.sh <action>.
 Use container.sh gsm8k for the complete 1319-question repository few-shot eval;
 GSM8K_FULL_ZH.txt documents data paths, protocol and saved outputs.
+Use container.sh perf MODE and perf-compare BASE OPT for serving performance;
+PERFORMANCE_ZH.txt gives the two-terminal A/B procedure and metric definitions.
+perf-configs generates four configs for 128K/64K/16K input -> 1K output with
+C2048/C4096 and matching baselines. Default concurrency is one; long-context
+configs use context_length=132096 and max_total_tokens=147456.
 
 Both repositories use feat/hisparse-lim-copysfa-c8-a5, based on the validated
 feat/hisparse-lim-copysfa-opt-217 pair. Install matching SGLang and Ascend950
