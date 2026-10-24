@@ -3,6 +3,8 @@ A5 C8 LIM + Copy-SFA integration
 For the complete in-container build/install/test/serve workflow, read
 MANUAL_CONTAINER_ZH.txt and copy container.env.example outside the checkout.
 The entry point is: C8_CONFIG=/path/to/your.env bash container.sh <action>.
+Use container.sh gsm8k for the complete 1319-question repository few-shot eval;
+GSM8K_FULL_ZH.txt documents data paths, protocol and saved outputs.
 
 Both repositories use feat/hisparse-lim-copysfa-c8-a5, based on the validated
 feat/hisparse-lim-copysfa-opt-217 pair. Install matching SGLang and Ascend950
@@ -11,7 +13,8 @@ sgl-kernel-npu code/wheel together.
 A5 execution results reported by the user on 2026-10-24 are recorded in
 VALIDATION_A5.txt and validation_a5.json: 267 pytest cases pass with zero skips,
 and the fixed-projection framework check passes. Tested revisions are SGLang
-375e05bd and kernel 988ad6d. Actual model serve/smoke is the next validation step.
+375e05bd and kernel 988ad6d. A subsequent user-reported model smoke completed
+160 requests / 5120 generated tokens; its console excerpt did not repeat revisions.
 FIX_PREFILL_INDEXER_ABI_20261024.txt records the subsequent startup-warmup crash:
 custom_ops overwrites the torch_npu quant-indexer alias. Prefill now explicitly
 uses the native torch.ops.npu entry; the kernel wheel remains 988ad6d.

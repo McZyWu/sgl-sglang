@@ -1,0 +1,71 @@
+完整 GSM8K：复用仓库 few_shot_gsm8k.run_eval
+==========================================
+
+连接已启动的 SGLang /generate 服务。默认完整 1319 道 test 题，5-shot，
+temperature=0，max_new_tokens=512，parallel=8；不重新编译或启动模型。
+评分沿用仓库 get_answer_value：去掉逗号，取响应最后一段整数数字。
+这是仓库 few-shot completion 口径，不是 chat/math_verify 口径。
+
+数据使用原始 GSM8K JSONL，每行至少包含 question 和 answer 字符串，
+answer 含 #### 最终答案。必须恰好 1319 道不重复问题，子集会立即报错。
+原始 test.jsonl 来源：
+https://raw.githubusercontent.com/openai/grade-school-math/master/grade_school_math/data/test.jsonl
+也可以使用你现有的 /data/wzy/test.jsonl。
+
+沿用现有 C8_CONFIG / C8_SCRIPT，在同一容器的客户端终端执行：
+
+  GSM8K_DATA_PATH=/data/wzy/test.jsonl bash "$C8_SCRIPT" gsm8k
+
+结果写入 C8_RESULTS_DIR/gsm8k-时间戳-PID/：
+  sources.log                 两仓源码提交与工作区状态
+  gsm8k.log                   评测进度、Accuracy/Invalid/Latency/吞吐
+  gsm8k.result.json           完成状态、数据 SHA256、参数、模型信息和指标
+  predictions.jsonl           1319 题逐题响应、gold、预测、correct、finish reason
+  tmp_output_gsm8k.txt        run_eval 原有的完整 prompt + 输出 state dump
+
+status=pass 表示完整 1319 题评测结束且请求正常终止，并不要求 accuracy=100%。
+到 max_new_tokens 的请求仍参与评分，数量单列为 truncated，便于检查输出上限。
+失败或中断保存 status=fail；本接口在 batch 完成后保存逐题输出，不提供断点续跑。
+结果目录独立，重复评测不会覆盖旧结果。
+
+few-shot 来源
+-------------
+默认严格沿用你给出的 run_eval 行为：test 的前 5 条答案作为示例，
+同时 test 1319 条全部参与评分。结果明确记录 few_shot_source=test_prefix。
+这种口径中前 5 题同时作示例，比较两种服务配置时必须保持一致。
+
+如果要独立的 train 示例、完整 test 评分，可指定 train 文件：
+
+  GSM8K_DATA_PATH=/data/wzy/test.jsonl \
+  GSM8K_TRAIN_DATA_PATH=/data/wzy/train.jsonl \
+    bash "$C8_SCRIPT" gsm8k
+
+原有 run_eval 只新增可选 few_shot_data_path 和 output_jsonl 参数。
+指定 train 后，示例用其前 5 题；评测仍是 test 的全部 1319 题。
+脚本拒绝 train 示例与 test 问题重叠，并记录两份数据的 SHA256。
+
+可调参数
+--------
+  GSM8K_NUM_SHOTS=5
+  GSM8K_MAX_NEW_TOKENS=512
+  GSM8K_PARALLEL=8
+  C8_SERVER_URL=http://127.0.0.1:8810
+
+例如扩大生成上限并使用你示例的客户端并发：
+
+  GSM8K_MAX_NEW_TOKENS=2048 GSM8K_PARALLEL=128 \
+    bash "$C8_SCRIPT" gsm8k
+
+客户端并发是请求数，服务端仍受 MAX_RUNNING_REQUESTS 限制。
+仓库 RuntimeEndpoint 的 host/port 使用裸主机名与端口；不要把 Markdown 链接
+粘贴到 host。本脚本接收完整的 http://127.0.0.1:8810 并拆分传入。
+
+不使用 container.sh 时，也可直接调用：
+
+  cd /mnt/share/wzy/sgl-sglang
+  export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
+  python3 benchmark/hisparse/lim_copy_sfa_c8_a5/evaluate_gsm8k.py \
+    --url http://127.0.0.1:8810 --data-path /data/wzy/test.jsonl \
+    --parallel 8 --max-new-tokens 512 --output /workspace/gsm8k-full-run1
+
+--output 使用新的目录。无额外评测框架依赖，复用现有 SGLang 容器依赖。

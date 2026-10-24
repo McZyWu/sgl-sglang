@@ -14,12 +14,13 @@ bash container.sh test [STAGE]       # default all; see validate.sh
 bash container.sh deepep-test        # optional multi-rank normal/LL alternation
 bash container.sh serve [server args...]  # foreground; Ctrl-C to stop this server
 bash container.sh smoke              # second terminal, same C8_CONFIG
+bash container.sh gsm8k              # full 1319-question few-shot accuracy eval
 bash container.sh info               # source revisions and A5 preflight
 EOF
   exit 0
 fi
 case "$ACTION" in
-  build|build-kernel|build-deepep|test|deepep-test|serve|smoke|info) ;;
+  build|build-kernel|build-deepep|test|deepep-test|serve|smoke|gsm8k|info) ;;
   *) echo "Unknown action: $ACTION" >&2; exit 2 ;;
 esac
 : "${C8_CONFIG:?Copy container.env.example and export C8_CONFIG=/path/to/your.env}"
@@ -142,6 +143,19 @@ case "$ACTION" in
       --concurrency "${C8_SMOKE_CONCURRENCY:-8}" --long-tokens "$long_tokens" \
       --cache-tokens "${CACHE_TOKENS:-2048}" --new-tokens "${C8_SMOKE_NEW_TOKENS:-32}" \
       --timeout "${C8_REQUEST_TIMEOUT:-180}" --output "$RUN_DIR/liveness.json"
+    ;;
+  gsm8k)
+    gsm8k_extra=()
+    if [[ -n ${GSM8K_TRAIN_DATA_PATH:-} ]]; then
+      gsm8k_extra+=(--train-path "$GSM8K_TRAIN_DATA_PATH")
+    fi
+    logged gsm8k python3 "$SCRIPT_DIR/evaluate_gsm8k.py" \
+      --url "${C8_SERVER_URL:-http://127.0.0.1:${PORT:-8810}}" \
+      --data-path "${GSM8K_DATA_PATH:-/data/wzy/test.jsonl}" \
+      --num-shots "${GSM8K_NUM_SHOTS:-5}" \
+      --max-new-tokens "${GSM8K_MAX_NEW_TOKENS:-512}" \
+      --parallel "${GSM8K_PARALLEL:-8}" --output "$RUN_DIR" \
+      "${gsm8k_extra[@]}" "$@"
     ;;
   info)
     logged preflight python3 "$SCRIPT_DIR/preflight.py"

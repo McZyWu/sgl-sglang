@@ -45,10 +45,15 @@ pair 和 framework 同时通过，覆盖修正后的 prefix-relative tail KV 地
 
 范围与下一步
 ------------
-至此算子和固定投影框架子路径通过；尚无实际模型的 A5 启动/整网请求结果。
+算子和固定投影框架子路径通过。后续用户回传整网 smoke：10 轮长短交替，
+160/160 请求，5120 生成 token，全部通过；结果位于
+/workspace/c8-a5-results/smoke-20261024-105505-60910/liveness.json。
+回传片段没有重印代码提交及服务端路径日志，因此不据此新增版本或 graph 路径断言。
+该 smoke 检查 /generate 的输入/输出 token 数、按 length 正常结束和请求错误；
+HTTP 完成性不等于语义正确率，也不单独证明 eager/graph 内部路径。
 本记录不包含 A5 DeepEP 专项测试、GPQA 精度、模型吞吐或延迟结论。
-已通过的阶段无需重复执行。保留已验证代码/wheel 和现有 C8_CONFIG，
-按 MANUAL_CONTAINER_ZH.txt 的 serve + smoke 完成实际模型验证：
+已通过的阶段无需重复执行。保留已验证代码/wheel 和现有 C8_CONFIG；
+完整 GSM8K 精度评测见 GSM8K_FULL_ZH.txt。以下保留 serve + smoke 复现命令：
 
   # 终端 1：前台启动，保持运行
   bash "$C8_SCRIPT" serve

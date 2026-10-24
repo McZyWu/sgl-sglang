@@ -65,11 +65,22 @@
     "result": "/workspace/c8-a5-results/test-20261024-074956-28791/framework.json"
   },
   "pending": [
-    "A5 actual model startup and serve + smoke",
-    "A5 model accuracy and performance conclusions"
+    "A5 complete GSM8K accuracy evaluation",
+    "A5 model performance characterization"
   ],
   "not_reported": [
     "A5 DeepEP standalone test",
     "GPQA score"
-  ]
+  ],
+  "model_smoke_reported": {
+    "source": "subsequent user-provided smoke console output",
+    "status": "pass",
+    "rounds": 10,
+    "completed_requests": 160,
+    "generated_tokens": 5120,
+    "liveness_json": "/workspace/c8-a5-results/smoke-20261024-105505-60910/liveness.json",
+    "raw_json_inspected_by_agent": false,
+    "runtime_revision_reprinted_in_log": false,
+    "scope": "HTTP request completion, token counts and long/short switching; no accuracy or internal path-trace claim"
+  }
 }

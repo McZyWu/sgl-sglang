@@ -11,6 +11,7 @@ python3 -m sglang.test.few_shot_gsm8k --num-questions 200
 
 import argparse
 import ast
+import json
 import re
 import time
 import warnings
@@ -76,7 +77,11 @@ def run_eval(args):
     # Construct prompts
     num_questions = args.num_questions
     num_shots = args.num_shots
-    few_shot_examples = get_few_shot_examples(lines, num_shots)
+    few_shot_path = getattr(args, "few_shot_data_path", None)
+    shot_lines = list(read_jsonl(few_shot_path)) if few_shot_path else lines
+    if num_shots < 0 or num_shots > len(shot_lines):
+        raise ValueError("num_shots exceeds the available few-shot examples")
+    few_shot_examples = get_few_shot_examples(shot_lines, num_shots)
 
     questions = []
     labels = []
@@ -142,6 +147,27 @@ def run_eval(args):
 
     # Dump results
     dump_state_text("tmp_output_gsm8k.txt", states)
+    if getattr(args, "output_jsonl", None):
+        with open(args.output_jsonl, "w", encoding="utf-8") as output:
+            for index, state in enumerate(states):
+                meta = state.get_meta_info("answer")
+                output.write(
+                    json.dumps(
+                        {
+                            "index": index,
+                            "question": lines[index]["question"],
+                            "gold": labels[index],
+                            "prediction": preds[index],
+                            "correct": preds[index] == labels[index],
+                            "response": state["answer"],
+                            "finish_reason": meta.get("finish_reason"),
+                            "completion_tokens": meta.get("completion_tokens"),
+                            "prompt_tokens": meta.get("prompt_tokens"),
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
 
     return {
         "accuracy": acc,
@@ -155,6 +181,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-shots", type=int, default=5)
     parser.add_argument("--data-path", type=str)
+    parser.add_argument("--few-shot-data-path", type=str)
+    parser.add_argument("--output-jsonl", type=str)
     parser.add_argument("--num-questions", type=int, default=200)
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--parallel", type=int, default=128)
