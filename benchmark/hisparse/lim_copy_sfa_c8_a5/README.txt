@@ -20,6 +20,11 @@ VALIDATION_A5.txt and validation_a5.json: 267 pytest cases pass with zero skips,
 and the fixed-projection framework check passes. Tested revisions are SGLang
 375e05bd and kernel 988ad6d. A subsequent user-reported model smoke completed
 160 requests / 5120 generated tokens; its console excerpt did not repeat revisions.
+The user also reported a full 1319-question GSM8K run at client revision e429072e:
+93.858984% accuracy, zero request errors/truncations, 1415.451 s, 93.271 output
+tokens/s. This uses the requested legacy 5-shot test-prefix/last-number protocol;
+the console does not reprint the server mode/C, and no matched baseline score
+or performance speedup is claimed. See the validation records for provenance.
 FIX_PREFILL_INDEXER_ABI_20261024.txt records the subsequent startup-warmup crash:
 custom_ops overwrites the torch_npu quant-indexer alias. Prefill now explicitly
 uses the native torch.ops.npu entry; the kernel wheel remains 988ad6d.
@@ -70,4 +75,4 @@ headroom outside the persistent sparse-manager budget.
 
 217 is an A3 machine. Its CPU tests, cross-compilation and A3 rejection checks
 must be reported separately from A5 numerical/model/performance execution.
-This directory does not claim a C8 GPQA score or model throughput result.
+This directory does not claim a C8 GPQA score or a fixed-length A/B speedup.

@@ -1,4 +1,4 @@
-A5 C8 算子与框架子路径实机复验记录（2026-10-24）
+A5 C8 算子、框架、整网与 GSM8K 实机验证记录（2026-10-24）
 ================================================
 
 来源：用户在 A5 容器内执行命令后回传的控制台日志。代理未直连该 A5 机器，
@@ -51,9 +51,10 @@ pair 和 framework 同时通过，覆盖修正后的 prefix-relative tail KV 地
 回传片段没有重印代码提交及服务端路径日志，因此不据此新增版本或 graph 路径断言。
 该 smoke 检查 /generate 的输入/输出 token 数、按 length 正常结束和请求错误；
 HTTP 完成性不等于语义正确率，也不单独证明 eager/graph 内部路径。
-本记录不包含 A5 DeepEP 专项测试、GPQA 精度、模型吞吐或延迟结论。
+本记录不包含 A5 DeepEP 专项测试、GPQA 精度或固定长度 A/B 性能收益结论。
 已通过的阶段无需重复执行。保留已验证代码/wheel 和现有 C8_CONFIG；
-完整 GSM8K 精度评测见 GSM8K_FULL_ZH.txt。以下保留 serve + smoke 复现命令：
+完整 GSM8K 精度评测方法见 GSM8K_FULL_ZH.txt，用户回传结果记录在下方。
+以下保留 serve + smoke 复现命令：
 
   # 终端 1：前台启动，保持运行
   bash "$C8_SCRIPT" serve
@@ -65,3 +66,34 @@ HTTP 完成性不等于语义正确率，也不单独证明 eager/graph 内部�
 短输入为 142/257/384/465 token，长输入默认 max(4096, C+256)。
 smoke 用于整网请求完成性和路径切换检查，不执行 GPQA，也不替代模型精度评估。
 机器可读记录见 validation_a5.json。
+
+完整 GSM8K 用户实机回传
+----------------------
+客户端 checkout：SGLang e429072ee8047dc309d2226f52709769f43518bc。
+Kernel checkout：988ad6d75b2752004b6c56c81552787d77b1ee16。
+模型：/mnt/share/w00936111/GLM-5.2-W4A4C8-mxfp4-A5-0731，
+served_model_name=c8-a5，weight_version=default。
+来源为用户贴出的完整控制台汇总；代理未读取原始 JSON 或逐题 predictions。
+该日志未重印服务进程的提交、LIM/Copy-SFA 开关及 C，不据此新增相关断言。
+
+status=pass；1319/1319 题完整结束。
+accuracy=0.9385898407884761，即 93.858984%，按该比率换算 1238 对、81 错。
+invalid=0.0；request_errors=0；truncated=0。
+latency=1415.4510364999878 秒，约 23 分 35.45 秒。
+output_throughput=93.27062299975302 token/s。
+
+口径：sglang.test.few_shot_gsm8k.run_eval，few-shot raw completion，仓库的
+last-number scorer；num_shots=5，parallel=8，max_new_tokens=512，temperature=0。
+沿用用户指定入口的默认行为：test 前 5 题作示例，同时仍评测全部 1319 题。
+未采用训练集示例，也未切换到 sgl-eval 或另一套评分器。弃用提示不影响本轮完成。
+data_path=/mnt/share/wzy/test.jsonl；SHA256：
+3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14。
+
+容器结果目录：
+/workspace/c8-a5-results/gsm8k-20261024-114711-67020
+应保留 gsm8k.result.json、predictions.jsonl、tmp_output_gsm8k.txt、gsm8k.log。
+
+该结果证明本次服务在此 GSM8K 口径下的完整请求执行与评分结果；没有同配置
+baseline 分数，不能据此声称 LIM/Copy-SFA 无精度损失。93.27 token/s 是变长答案
+工作负载的输出吞吐，不代替固定 128K/64K/16K -> 1K、C2048/C4096 的性能 A/B。
+下一步性能操作见 PERFORMANCE_ZH.txt；本次无需因评测入口弃用提示重跑 GSM8K。

@@ -65,13 +65,52 @@
     "result": "/workspace/c8-a5-results/test-20261024-074956-28791/framework.json"
   },
   "pending": [
-    "A5 complete GSM8K accuracy evaluation",
-    "A5 model performance characterization"
+    "A5 fixed-length performance A/B: 128K/64K/16K input, 1K output, C2048/C4096"
   ],
   "not_reported": [
     "A5 DeepEP standalone test",
     "GPQA score"
   ],
+  "gsm8k_reported": {
+    "date": "2026-10-24",
+    "source": "user-provided complete GSM8K console result",
+    "executed_by": "user",
+    "raw_result_json_inspected_by_agent": false,
+    "raw_predictions_inspected_by_agent": false,
+    "client_checkout_revision": "e429072ee8047dc309d2226f52709769f43518bc",
+    "kernel_checkout_revision": "988ad6d75b2752004b6c56c81552787d77b1ee16",
+    "server_revision_reprinted_in_log": false,
+    "server_mode_reprinted_in_log": false,
+    "cache_tokens_reprinted_in_log": false,
+    "model_path": "/mnt/share/w00936111/GLM-5.2-W4A4C8-mxfp4-A5-0731",
+    "served_model_name": "c8-a5",
+    "weight_version": "default",
+    "evaluator": "sglang.test.few_shot_gsm8k.run_eval",
+    "protocol": "few-shot raw completion; repository last-number scorer",
+    "status": "pass",
+    "completed_questions": 1319,
+    "correct_inferred_from_accuracy": 1238,
+    "incorrect_inferred_from_accuracy": 81,
+    "num_shots": 5,
+    "few_shot_source": "test_prefix",
+    "test_examples_reused_as_shots": 5,
+    "parallel": 8,
+    "max_new_tokens": 512,
+    "temperature": 0.0,
+    "truncated": 0,
+    "request_errors": 0,
+    "data_path": "/mnt/share/wzy/test.jsonl",
+    "data_sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+    "metrics": {
+      "accuracy": 0.9385898407884761,
+      "invalid": 0.0,
+      "latency": 1415.4510364999878,
+      "output_throughput": 93.27062299975302
+    },
+    "result_directory": "/workspace/c8-a5-results/gsm8k-20261024-114711-67020",
+    "baseline_accuracy_comparison_available": false,
+    "scope": "Complete GSM8K under the requested legacy protocol; no matched baseline accuracy, fixed-length speedup, cache-size or internal-path claim"
+  },
   "model_smoke_reported": {
     "source": "subsequent user-provided smoke console output",
     "status": "pass",
