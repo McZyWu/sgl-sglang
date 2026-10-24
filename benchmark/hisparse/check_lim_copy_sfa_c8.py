@@ -61,7 +61,7 @@ def run(output):
     batch_size, context, heads = 8, 4352, 8
     generator = torch.Generator().manual_seed(20261023)
     keys = torch.zeros(3, context, 128, dtype=torch.bfloat16)
-    for request, length in ((1, 2050), (2, 4098)):
+    for request, length in ((1, 2178), (2, 4098)):
         keys[request, :, 0] = -8
         keys[request, length - 2048 : length, 0] = 8
     keys = keys.to(device="npu", dtype=torch.float8_e4m3fn).view(-1, 128, 1, 128)
@@ -85,7 +85,7 @@ def run(output):
         try:
             for layer in range(2):
                 layer_desc = SimpleNamespace(layer_id=layer)
-                lengths = torch.tensor([2050, 4098], dtype=torch.int32)
+                lengths = torch.tensor([2178, 4098], dtype=torch.int32)
                 prefill = SimpleNamespace(
                     forward_mode=ForwardMode.EXTEND,
                     batch_size=2,
@@ -98,9 +98,9 @@ def run(output):
                     extend_prefix_lens=torch.zeros(2, dtype=torch.int64, device="npu"),
                     extend_seq_lens=lengths.to("npu"),
                     extend_seq_lens_cpu=lengths.tolist(),
-                    out_cache_loc=torch.arange(6148, device="npu"),
+                    out_cache_loc=torch.arange(6276, device="npu"),
                 )
-                payload = torch.randn(6148, 1, 576, generator=generator).to(
+                payload = torch.randn(6276, 1, 576, generator=generator).to(
                     device="npu", dtype=torch.bfloat16
                 )
                 manager.offload_v2(
@@ -114,7 +114,7 @@ def run(output):
                 [1, 0, 2, 0, 0, 0, 0, 0], dtype=torch.int32, device="npu"
             )
             lengths = torch.tensor(
-                [2050, 0, 4098, 0, 0, 0, 0, 0], dtype=torch.int32, device="npu"
+                [2178, 0, 4098, 0, 0, 0, 0, 0], dtype=torch.int32, device="npu"
             )
             table = requests[:, None] * (context // 128) + torch.arange(
                 context // 128, dtype=torch.int32, device="npu"
@@ -177,7 +177,7 @@ def run(output):
 
             def verify():
                 plan = backend.forward_metadata.sparse_kv_lim_plan
-                for row, request, length in ((0, 1, 2050), (2, 2, 4098)):
+                for row, request, length in ((0, 1, 2178), (2, 2, 4098)):
                     ids = plan.source_ids[row].cpu().long()
                     slots = plan.device_slots[row].cpu().long()
                     assert set(ids.tolist()) == set(range(length - 2048, length))

@@ -1,0 +1,56 @@
+A5 LIM 首次数值复验问题与修正（2026-10-24）
+=========================================
+
+用户回传环境：Ascend950DT_9582 / arch3510、torch 2.10.0、torch_npu
+2.10.0.post6；SGLang 4e91f6d2，kernel 442023d6。
+CPU 114 passed；A5 LIM 146 项中 112 passed、34 failed。
+test all 在 LIM 阶段终止，后续 Copy-SFA、pair、framework 尚未运行。
+
+1. 算子标量输出的 GM 可见性
+
+多处 TopK 集合或 miss-copy list 已生成，但 topk_miss_counts 保留 0 或 -7。
+无效请求的零计数和部分 -1 输出也未可靠发布。
+管理阶段最终用 GlobalTensor::SetValue 发布紧凑计数和无效行，原 direct-launch
+入口返回前未显式刷新 AIV DCache。SetValue 更新 DCache，SyncAll 不能代替写回。
+修正：入口在管理结束后，让每个 AIV 执行 ENTIRE_DATA_CACHE / CACHELINE_OUT。
+覆盖所有请求 owner，而不只 core 0；保持 donor TopK、union、victim 算法及断言。
+原生 homogeneous dense 的计数使用 DMA，这与该类测试通过的现象一致。
+
+2. 框架与迁入算子的 tail 地址不一致
+
+该固定版本的 A5 算子返回 C+(source_id-P)，支持连续尾部地址。
+原框架与配对测试仍按 C+source_id%256 写入，P 是奇数个 128-token 页时错位。
+例如 S=2178、P=2176、C=2048，source 2176 应在 slot 2048，旧路径写到 2176。
+修正 C8 写入和配对测试，保留现有 C+256 HBM 预留量；Q1 tail 最长 128。
+CPU 回归检查写入后的真实 KV 值，框架验证增加 P=2176 的实际 manager 路径。
+
+两项均属于 A5 C8，未改 A3 BF16 算子、DeepEP 源码或通信窗口配置。
+
+已完成检查：217 的 CANN 9.1 SDK 编译 A5 LIM 原生目标通过（独立构建目录）；
+CPU 回归 114/114 通过；tail 回归在旧 helper 上失败、修正后通过；
+32 份 donor payload 的原始/已登记适配哈希均一致。
+217 是 A3，这些检查不包含 A5 算子数值、pair、framework 或整网验收。
+尚需 A5 上重新执行以下步骤确认本次 34 项失败是否全部消除。
+
+复验（在已有容器内）
+--------------------
+先在两个仓确认分支并 git pull --ff-only；保留已配置的 C8_CONFIG：
+
+  git -C /mnt/share/wzy/sgl-kernel-npu switch feat/hisparse-lim-copysfa-c8-a5
+  git -C /mnt/share/wzy/sgl-kernel-npu pull --ff-only https://github.com/McZyWu/sgl-kernel-npu.git feat/hisparse-lim-copysfa-c8-a5
+  git -C /mnt/share/wzy/sgl-sglang switch feat/hisparse-lim-copysfa-c8-a5
+  git -C /mnt/share/wzy/sgl-sglang pull --ff-only https://github.com/McZyWu/sgl-sglang.git feat/hisparse-lim-copysfa-c8-a5
+
+上例使用仓库 URL，避免容器里 remote 名称是 origin 或 fork 的区别。
+已有本地修改时请先保留修改，不要 reset --hard。
+
+  cd /mnt/share/wzy/sgl-sglang
+  export C8_SCRIPT=$PWD/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  bash "$C8_SCRIPT" build-kernel
+  bash "$C8_SCRIPT" test lim
+  bash "$C8_SCRIPT" test all
+
+build-kernel 重新编译并安装 sgl-kernel-npu，不重编 DeepEP。
+test lim 预期执行 146 项；通过后 test all 包含 CPU、LIM、Copy-SFA、pair、framework。
+test all 通过后再按 MANUAL_CONTAINER_ZH.txt 中 serve + smoke 做整网验证。
+不能以 Meta 或 CPU 通过替代 A5 数值验收，也不以本修正推断 34 项已在 A5 通过。

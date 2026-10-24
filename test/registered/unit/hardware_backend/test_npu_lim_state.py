@@ -257,19 +257,29 @@ class TestLIMState(CustomTestCase):
         torch.testing.assert_close(short_heads[0], torch.full_like(short_heads[0], 1.5))
 
     def test_c8_tail_writes_are_unique_and_do_not_overwrite_sparse_slots(self):
-        # Chunked prefill has many rows per modulo slot. Only its final 256
-        # may be published into the ring, and sparse resident slots are LIM-owned.
-        positions = torch.arange(2050)
-        requests = torch.ones_like(positions)
-        slots, dense, tail_slots, tail = c8_write_slots(
-            requests, positions, torch.full_like(positions, 2050), 2048, 3
-        )
-        self.assertFalse(dense.any())
-        self.assertEqual(tail.sum().item(), 256)
-        self.assertEqual(tail_slots[tail].unique().numel(), 256)
-        self.assertTrue(
-            torch.all((tail_slots[tail] >= 2048) & (tail_slots[tail] < 2304))
-        )
+        # Native LIM addresses a tail relative to P, not modulo 256. An odd
+        # page boundary (P=2176) must still put the first tail record at C.
+        # Check the KV values a native plan would read after a prefill write.
+        for length, prefix in ((2050, 2048), (2176, 2048), (2177, 2176)):
+            with self.subTest(length=length):
+                positions = torch.arange(length)
+                _, dense, tail_slots, tail = c8_write_slots(
+                    torch.ones_like(positions),
+                    positions,
+                    torch.full_like(positions, length),
+                    2048,
+                    3,
+                )
+                self.assertFalse(dense.any())
+                self.assertEqual(tail.sum().item(), length - prefix)
+                self.assertEqual(tail_slots[tail].unique().numel(), length - prefix)
+                hbm = torch.full((2304,), -1, dtype=torch.int64)
+                hbm[tail_slots[tail]] = positions[tail]
+                torch.testing.assert_close(
+                    hbm[2048 : 2048 + length - prefix],
+                    torch.arange(prefix, length),
+                )
+                self.assertTrue(torch.all(hbm[:2048] == -1))
         _, dense, _, tail = c8_write_slots(
             torch.tensor([1, 1, 0, 3]),
             torch.tensor([0, 129, 0, 0]),
@@ -278,7 +288,7 @@ class TestLIMState(CustomTestCase):
             3,
         )
         self.assertEqual(dense.tolist(), [True, True, False, False])
-        self.assertEqual(tail.tolist(), [True, True, False, False])
+        self.assertEqual(tail.tolist(), [False, True, False, False])
 
     def test_c8_budget_charges_tail_and_bf16_compute_workspaces(self):
         budget = resolve_sparse_kv_budget(

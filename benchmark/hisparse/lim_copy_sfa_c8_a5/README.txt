@@ -10,8 +10,9 @@ sgl-kernel-npu code/wheel together.
 
 The integration selects TopK over the full causal-visible range. Stable-prefix
 sources use the persistent C-token cache; selected tail sources hit an additional
-256-slot ring. C8 KV is an opaque 656-byte record, while index query/key are FP8
-with real FP32 scales and attention query/output stay BF16.
+prefix-relative tail region at C+(source-P). The framework reserves 256 slots;
+Q1 uses at most one 128-token page. C8 KV is an opaque 656-byte record, while
+index query/key are FP8 with real FP32 scales and attention query/output stay BF16.
 
 Initial framework scope:
   - Ascend950/A5, BF16 model compute and --kv-cache-dtype fp8_e4m3;

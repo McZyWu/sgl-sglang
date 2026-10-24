@@ -3,7 +3,11 @@ A5 容器内人工部署与验证
 
 适用：已有 CANN / torch / torch_npu 及模型依赖的 A5 SGLang 容器。
 这是容器内部流程，不创建容器。无需连接 217。所有 NPU 数值结果要由你在 A5 上执行。
-两仓均使用 feat/hisparse-lim-copysfa-c8-a5，kernel 至少包含 442023d6。
+两仓均使用 feat/hisparse-lim-copysfa-c8-a5 的最新提交，kernel 至少包含 988ad6d。
+重新编译安装 kernel，确保实际加载修正后的二进制。
+2026-10-24 修正了 A5 LIM 计数写回和框架 tail 布局；旧 kernel 442023d6 不含该修复。
+已安装过旧 wheel 时，只 git pull 后跑 test 不会更新二进制，需要执行 build-kernel。
+具体问题与复验顺序见 FIX_LIM_COUNTS_20261024.txt。
 
 1. 拉取配套代码
 --------------

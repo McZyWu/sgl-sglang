@@ -15,9 +15,10 @@ TAIL_SLOTS = 256
 
 
 def c8_write_slots(requests, positions, lengths, capacity, request_rows):
-    """Dense payload uses identity slots; only the last 256 rows enter the ring.
+    """Publish the page tail in the native LIM's prefix-relative slots.
 
-    The tail mask prevents multiple prefill rows writing the same modulo slot.
+    Q1's prefix is the page boundary before its newest token. Selected tail
+    sources use C + (source - prefix), including when that boundary is odd.
     A sparse cache is populated by LIM, never overwritten with dense identity KV.
     """
     valid = (
@@ -27,8 +28,9 @@ def c8_write_slots(requests, positions, lengths, capacity, request_rows):
         & (positions < lengths)
     )
     dense = valid & (lengths <= capacity) & (positions < capacity)
-    tail = valid & (positions >= (lengths - TAIL_SLOTS).clamp(min=0))
-    return positions, dense, capacity + positions.remainder(TAIL_SLOTS), tail
+    prefix = ((lengths - 1).clamp(min=0) // 128) * 128
+    tail = valid & (positions >= prefix)
+    return positions, dense, capacity + positions - prefix, tail
 
 
 class C8Cache:
