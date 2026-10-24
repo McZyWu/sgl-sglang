@@ -35,14 +35,15 @@ print(f"PASS: {len(cases)} executed cases, zero skips: {sys.argv[1]}")
 PY
 }
 
+# Fail before the CPU suite when the checkout or installed wheel is stale.
+if [[ "$STAGE" != cpu ]]; then
+  python3 "$SCRIPT_DIR/preflight.py" --kernel-source "$KERNEL_SOURCE_DIR" 2>&1 | tee "$RESULTS/preflight.log"
+fi
 if [[ "$STAGE" == all || "$STAGE" == cpu ]]; then
   pytest_stage cpu \
     test/registered/unit/hardware_backend/test_npu_lim_state.py \
     test/manual/npu/test_sparse_kv_offload_cache.py \
     test/registered/unit/kernels/test_kernels_namespace.py
-fi
-if [[ "$STAGE" != cpu ]]; then
-  python3 "$SCRIPT_DIR/preflight.py" | tee "$RESULTS/preflight.json"
 fi
 if [[ "$STAGE" == meta ]]; then
   pytest_stage meta "$KERNEL_SOURCE_DIR/tests/test_fused_quant_lightning_indexer_manage_a5.py" -k meta_contract

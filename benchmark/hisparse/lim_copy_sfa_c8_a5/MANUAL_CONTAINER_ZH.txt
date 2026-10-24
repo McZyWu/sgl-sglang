@@ -59,6 +59,8 @@ vendor OPP 路径。不要只编译 C8 wheel 后假设镜像原有 DeepEP 已包
   bash "$C8_SCRIPT" test all
 
 按如下顺序执行，任一步失败即停止，每项有日志、pytest 项另有 JUnit XML。
+all 会先检查 Kernel 源码和当前 Python 实际导入的 wheel，再执行下面的测试。
+若缺少 C8 源码或算子注册，会立即退出，不先运行 114 项 CPU 测试。
 当前代码的预期数量如下；测试未来增加时以实际收集为准，不用数字判断正确性。
 
   cpu       114 项：LIM 请求状态、C8 预算、CPU 接口及 kernel namespace。
@@ -139,6 +141,9 @@ serve-* 的 server.log、smoke-* 的 liveness.json，以及卡数、模型路径
 结果保存在 C8_RESULTS_DIR，每次运行单独建目录。脚本不停止其他服务或容器。
 
 当前限制：direct-launch LIM 使用 vector 管理路径，SIMT 后处理/解包仍未启用。
+若提示 lacks A5 C8 或找不到 fused_quant_lightning_indexer_manage：
+先确认 Kernel 仓为 C8 分支（442023d6 或其后续），再执行 build-kernel 安装新 wheel，
+最后先用 test meta 检查接口，成功后再 test all。单独执行 test 不会编译或安装 wheel。
 此前 217 的编译/Meta/CPU 记录不代表本次 A5 数值与模型验证已经执行。
 本次脚本已在本地通过 Bash 语法、Python lint/format、6 类 HTTP 客户端模拟检查、
 8 类 shell 参数/退出状态检查及 3 类构建产物选择检查。这些均为离线控制流程检查，
