@@ -1,0 +1,139 @@
+A5 C8：相同配置 baseline，以及相同 HBM 上限下的最大有效 batch
+===========================================================
+
+统一使用 bench_serving 标准 Output token throughput 和请求平均/P95 TPOT。
+保留当前 feat/hisparse-lim-copysfa-c8-a5-10-26 分支，不改 kernel/DeepEP，无需重编 wheel。
+
+第一组：补齐已经完成的 0.8/C2048 对照
+---------------------------------
+先不 pull/switch SGLang！这组 baseline 必须与已完成的 lim_copy_sfa 使用相同代码。
+正常停止自己当前的测试服务后，在同一容器的两个终端操作。
+
+终端一：
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-1026-slo
+  export C8_CONFIG="$PERF_CONFIGS/c2048-baseline.env"
+  bash "$C8_SCRIPT" serve
+
+终端二（服务 ready 后）：
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-1026-slo
+  export C8_CONFIG="$PERF_CONFIGS/c2048-baseline.env"
+  bash "$C8_SCRIPT" perf baseline \
+    --input-lengths 131072 65536 16384 --new-tokens 1024 \
+    --concurrencies 2 4 8 16 --rounds 1 --waves 2 \
+    --output "$PERF_CONFIGS/results/c2048-baseline"
+
+保留 waves=2：与已完成一侧相同，每个点总请求数=max(4,并发*2)，客户端并发仍为 c。
+输出目录须未使用；重复跑另换目录，不覆盖 performance.json。
+baseline 只关闭 sparse KV offload/LIM/Copy-SFA，普通 C8 DSA/LI/SFA 仍然执行。
+TP8/EP8/attention DP1、权重精度、context、0.8、overlap、PrefillDelayer、DeepEP 均沿用配对配置。
+0.8 不代表 npu-smi 的实际 used 必须恰好是整卡80%；不能将这组称为物理 HBM 上限。
+
+两侧完成后（仍使用相同当前代码）：
+  bash "$C8_SCRIPT" perf-compare \
+    "$PERF_CONFIGS/results/c2048-baseline" \
+    "$PERF_CONFIGS/results/c2048-lim_copy_sfa"
+完整 case 报告在结果目录的 i*-o*-c*-r*.log，JSONL 在每个 case 完成后生成。
+
+单独监测当前各 case 的每卡 HBM（不更新当前 checkout）
+--------------------------------------------------
+可在终端三先启动采样器，再在终端二启动上面的 perf。
+仅 fetch 并提取独立文件，不改变当前 HEAD，也不会改正在运行的服务。
+
+  export BRANCH=feat/hisparse-lim-copysfa-c8-a5-10-26
+  git -C /mnt/share/wzy/sgl-sglang fetch --no-tags \
+    https://github.com/McZyWu/sgl-sglang.git "$BRANCH"
+  git -C /mnt/share/wzy/sgl-sglang show \
+    FETCH_HEAD:benchmark/hisparse/lim_copy_sfa_c8_a5/monitor_hbm.py \
+    > /workspace/monitor_c8_hbm.py
+  export PERF_DIR=/workspace/c8-a5-results/perf-configs-1026-slo/results/c2048-baseline
+  python3 /workspace/monitor_c8_hbm.py \
+    --performance "$PERF_DIR/performance.json" \
+    --output "$PERF_DIR/hbm" --devices 0 1 2 3 4 5 6 7 --interval 1
+
+performance.json 尚未创建时也可以启动。每秒运行 npu-smi，依据 active_case 自动分组。
+  $PERF_DIR/hbm/hbm-samples.jsonl   每次采样的时间/case/各卡 used/total
+  $PERF_DIR/hbm/hbm-peaks.json      各 case 每卡最大 used、最小 free、采样数、错误
+perf 完成后 Ctrl-C 结束采样。中途附加只能记录附加之后的峰值，不能补出此前峰值。
+采样是设备整体 HBM，不是进程净占用；包括预热/prefill/decode，不保证捕捉到所有瞬时峰值。
+两侧性能正式比较应使用相同采样方式；已完成旧组未采样的 HBM 不能事后恢复。
+
+第二组：相同每卡 HBM 预算，分别找两侧有效 batch 上限
+-------------------------------------------------
+第一组完成后，再更新 SGLang 并停止自己的现有测试服务。kernel/DeepEP 不重编。
+
+  export BRANCH=feat/hisparse-lim-copysfa-c8-a5-10-26
+  git -C /mnt/share/wzy/sgl-sglang pull --ff-only \
+    https://github.com/McZyWu/sgl-sglang.git "$BRANCH"
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export C8_CONFIG=/workspace/c8-a5-results/perf-configs-1026-slo/c2048-lim_copy_sfa.env
+  export CAP_RUN=/workspace/c8-a5-results/capacity-$(date +%Y%m%d-%H%M%S)-$$
+
+  bash "$C8_SCRIPT" capacity \
+    --hbm-limit-gib 90 --mem-fraction 0.98 \
+    --devices 0 1 2 3 4 5 6 7 --interval 1 \
+    --input-lengths 131072 65536 16384 --new-tokens 1024 \
+    --caches 2048 4096 --modes baseline lim_copy_sfa \
+    --batches 1 2 4 8 12 16 24 32 --rounds 1 --tpot-limit-ms 60 \
+    --output "$CAP_RUN"
+
+这一个命令自动串行启动/停止自己的测试服务，无需另外运行 serve。
+已有服务占着端口则拒绝启动；不会自动停止已有服务，不使用 pkill。
+每个候选 B 都重新启动服务，保存独立配置/日志；若有内存边界，默认二分补测相邻 B。
+多次模型启动及 128K prefill 很耗时；每个点均有独立目录、启动日志和进度。
+可只跑 --caches 2048 --input-lengths 16384，或 --modes baseline，输出目录各自换新。
+
+90 GiB=92160 MiB，按每一张卡检查，不能用8卡平均数掩盖其中一张超限。
+--hbm-limit-gib 是统一的采样准入上限，可按实际机器改成88/92等，两边必须相同。
+它是基于采样的判定及停止门槛，不是驱动层的硬配额；瞬时峰值可能在采样间隔内漏掉。
+--mem-fraction 0.98 不是要求占用98% HBM：本实验显式 MAX_TOTAL_TOKENS，
+仅分配当前候选 B 所需的完整 token 池。0.98 用于减少原0.8自动池对容量探测的限制；
+最终仍以相同的每卡实际采样 HBM 门槛判定，不能只看 mem_fraction 数字。
+如果仍被实际 token 池限制，会明确标记 token_pool_limited，而非声称触达物理HBM极限。
+
+两侧每个长度使用同一对齐 context=align128(输入+输出+2)，池上限=context*B，
+max_running_requests=B，graph buckets=[1,B]，其余从同一个 base config 继承。
+这会减少原来统一135168上下文/多graph档位的预分配，属于容量专项实验。
+新容量实验不能与旧0.8/waves2结果混算收益；两侧都由本入口重跑。
+当前只支持 attention DP1 的有效 batch 判定，与你当前 A5 TP8/EP8/attention DP1 一致。
+本组正式 num_prompts=concurrency=B（c1/c2也相等），预热B条，request-rate=inf。
+
+有效 batch 的条件：请求成功且输出满1024、实际池容得下完整B、每卡采样峰值不超预算，
+并且正式压测阶段的 decode 日志确实出现 #running-req=B。预热日志不充当正式证据。
+此条件证明测到过该实际batch，不声称整个decode窗口始终维持B。
+batch_not_observed 表示目标B未被正式日志证实；不能当作HBM耗尽。
+startup_failed/benchmark_failed/监测错误会中止，不把算子/环境故障当作内存边界。
+out_of_memory 的日志与实际采样超限分别标记；token_pool_limited 也单独保留。
+scan_edge 表示最大的扫描B仍通过，尚未找到上限，不能把32宣称为物理极限。
+二分细化假定相邻batch资源需求单调；遇到调度/功能异常即停止细化，保留原因。
+
+当前 DeepEP dispatch cap=32，默认最多扫32。若32仍通过，要先准备并验证更大batch的
+DeepEP容量/窗口再扩大扫描；脚本不会代替你猜测并修改通信参数。
+offload 的完整 host KV 仍随 batch/context 增长；若主机DRAM或其他资源先失败，
+会保留失败日志，不能将这种边界称为HBM边界。
+启动 offload 候选前会依据本地模型层数预估全部 rank 的 host KV，核对 MemAvailable
+与 /dev/shm，另留10%及64GiB主机余量。不足则标记 host_memory_limited 并停止，
+不会为了找HBM边界继续把主机DRAM压爆。模型必须是带层数配置的本地checkpoint。
+
+结果及对照表
+------------
+  $CAP_RUN/capacity.md      自动打印并保存对照表
+  $CAP_RUN/capacity.json    完整元数据、探测点、边界、对照倍率
+  $CAP_RUN/all-points.csv   所有有效/无效点的吞吐、TPOT、HBM峰值
+  $CAP_RUN/c2048-baseline/i131072-o1024-bB/ 等：
+    config.env / launch.log / client.log / command.json / point.json
+    server/serve-*/server.log、launch.json、sources.log
+    perf/performance.json、i*-o*-c*-r*.jsonl/.log/.command.json
+    hbm/hbm-samples.jsonl、hbm-peaks.json（含启动/graph/预热/正式测试）
+
+每组单独列三种选择，不把“大batch”等同于“最高吞吐”：
+  max_batch_point   相同HBM上限下的最大已验证batch及其吞吐/TPOT/HBM
+  fastest_point     相同HBM上限下输出吞吐最高的已验证点
+  best_tpot_point   每轮平均TPOT<60 ms下，输出吞吐最高的点
+两侧各自最优 B 可以不同；这衡量整网容量/吞吐，不是同B单算子加速比。
+
+若两种模式分开跑，在两组都完整结束后合并（实际目录替换进去）：
+  bash "$C8_SCRIPT" capacity-compare "$BASE_CAP_RUN" "$OPT_CAP_RUN"
+比较器拒绝不同源码/包/模型/拓扑/HBM预算/采样间隔/请求协议的结果及重复分组。
+同样预算下实际用量可能不同，无需人为分配无用内存把两边 used 凑成相同数。

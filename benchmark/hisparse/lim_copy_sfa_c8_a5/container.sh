@@ -18,13 +18,15 @@ bash container.sh gsm8k              # full 1319-question few-shot accuracy eval
 bash container.sh perf-configs       # four long-context configs: C2048/4096 x modes
 bash container.sh perf MODE          # baseline or lim_copy_sfa; running local server
 bash container.sh perf-decode MODE   # one batch; steady decode output tok/s
+bash container.sh capacity           # managed servers; common per-card HBM limit
+bash container.sh capacity-compare DIR [DIR ...]  # matching capacity scan directories
 bash container.sh perf-compare BASE OPT [BASE4096 OPT4096]  # result directories
 bash container.sh info               # source revisions and A5 preflight
 EOF
   exit 0
 fi
 case "$ACTION" in
-  build|build-kernel|build-deepep|test|deepep-test|serve|smoke|gsm8k|perf-configs|perf|perf-decode|perf-compare|info) ;;
+  build|build-kernel|build-deepep|test|deepep-test|serve|smoke|gsm8k|perf-configs|perf|perf-decode|perf-compare|capacity|capacity-compare|info) ;;
   *) echo "Unknown action: $ACTION" >&2; exit 2 ;;
 esac
 : "${C8_CONFIG:?Copy container.env.example and export C8_CONFIG=/path/to/your.env}"
@@ -191,6 +193,15 @@ case "$ACTION" in
     if [[ $# == 4 ]]; then perf_baselines+=("$3"); perf_optimized+=("$4"); fi
     logged comparison python3 "$SCRIPT_DIR/performance.py" compare \
       --baseline "${perf_baselines[@]}" --optimized "${perf_optimized[@]}" --output "$RUN_DIR"
+    ;;
+  capacity)
+    logged capacity python3 "$SCRIPT_DIR/hbm_capacity.py" \
+      --base-config "$C8_CONFIG" --output "$RUN_DIR" "$@"
+    ;;
+  capacity-compare)
+    [[ $# -gt 0 ]] || { echo 'Usage: container.sh capacity-compare DIR [DIR ...]' >&2; exit 2; }
+    logged capacity-comparison python3 "$SCRIPT_DIR/hbm_capacity.py" \
+      --output "$RUN_DIR" --compare "$@"
     ;;
   info)
     logged preflight python3 "$SCRIPT_DIR/preflight.py"

@@ -11,9 +11,11 @@ import json
 import math
 import os
 import re
+import signal
 import statistics
 import subprocess
 import sys
+import threading
 import urllib.request
 from importlib.metadata import version
 from pathlib import Path
@@ -208,7 +210,7 @@ def validate_capacity(config, lengths, output):
     return capacity
 
 
-def batch_observations(log, offset):
+def batch_observations(log, offset, measured=False):
     """Read existing scheduler decode logs; never infer batch from client load."""
     with log.open("rb") as file:
         file.seek(offset)
@@ -218,12 +220,52 @@ def batch_observations(log, offset):
         for value in re.findall(r"Decode batch[^\n]*?#running-req:\s*(\d+)", data)
     ]
     return {
-        "scope": "logged decode batches, including warmup; per scheduler/DP, not padded graph size",
+        "scope": f"logged decode batches, {'after client warmup marker' if measured else 'including warmup'}; per scheduler/DP, not padded graph size",
         "samples": len(values),
         "min": min(values) if values else None,
         "median": statistics.median(values) if values else None,
         "max": max(values) if values else None,
     }
+
+
+def run_client(command, log_path, timeout, server_log):
+    """Copy client output and mark the server-log boundary after warmup."""
+    boundary = []
+    with log_path.open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
+
+        def copy():
+            for line in process.stdout:
+                log.write(line)
+                log.flush()
+                if (
+                    "Starting main benchmark run" in line
+                    and server_log.exists()
+                    and not boundary
+                ):
+                    boundary.append(server_log.stat().st_size)
+
+        reader = threading.Thread(target=copy, daemon=True)
+        reader.start()
+        try:
+            code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise
+        finally:
+            reader.join(timeout=10)
+            process.stdout.close()
+        if code:
+            raise subprocess.CalledProcessError(code, command)
+    return boundary[0] if boundary else None
 
 
 def memory_snapshot(path):
@@ -517,11 +559,16 @@ def run(args):
             },
             protocol={
                 "measurement": "decode" if decode else "serving",
+                "requests_equal_concurrency": getattr(
+                    args, "requests_equal_concurrency", False
+                ),
                 "input_lengths": args.input_lengths,
                 "concurrencies": args.concurrencies,
                 "new_tokens": args.new_tokens,
                 "rounds": args.rounds,
-                "waves": 1 if decode else args.waves,
+                "waves": 1
+                if decode or getattr(args, "requests_equal_concurrency", False)
+                else args.waves,
                 "seed": 42,
                 "dataset_sha256": hashlib.sha256(data).hexdigest(),
             },
@@ -550,7 +597,11 @@ def run(args):
             for length in args.input_lengths:
                 for concurrency in args.concurrencies:
                     live_manifest(path, launch["port"])
-                    count = concurrency if decode else max(4, concurrency * args.waves)
+                    count = (
+                        concurrency
+                        if decode or getattr(args, "requests_equal_concurrency", False)
+                        else max(4, concurrency * args.waves)
+                    )
                     name = f"i{length}-o{args.new_tokens}-c{concurrency}-r{repeat + 1}"
                     raw_path = args.output / f"{name}.jsonl"
                     record["active_case"] = {
@@ -640,16 +691,12 @@ def run(args):
                             f"NOTE: {concurrency} clients demand {concurrency * (length + args.new_tokens)} tokens, actual pool={capacity}; active decode batch may be lower",
                             flush=True,
                         )
-                    with (args.output / f"{name}.log").open(
-                        "w", encoding="utf-8"
-                    ) as log:
-                        subprocess.run(
-                            command,
-                            stdout=log,
-                            stderr=subprocess.STDOUT,
-                            check=True,
-                            timeout=args.case_timeout,
-                        )
+                    measured_offset = run_client(
+                        command,
+                        args.output / f"{name}.log",
+                        args.case_timeout,
+                        server_log,
+                    )
                     lines = raw_path.read_text(encoding="utf-8").splitlines()
                     if len(lines) != 1:
                         raise ValueError(f"Expected one benchmark record: {raw_path}")
@@ -683,6 +730,11 @@ def run(args):
                             "max": None,
                             "scope": "server.log unavailable",
                         },
+                        "measured_decode_batch": batch_observations(
+                            server_log, measured_offset, measured=True
+                        )
+                        if measured_offset is not None
+                        else {"samples": 0, "max": None},
                     }
                     record["cases"].append(case)
                     write_json(summary_path, record)
@@ -985,6 +1037,11 @@ if __name__ == "__main__":
     bench.add_argument("--new-tokens", type=int, default=1024)
     bench.add_argument("--rounds", type=int, default=1)
     bench.add_argument("--waves", type=int, default=2)
+    bench.add_argument(
+        "--requests-equal-concurrency",
+        action="store_true",
+        help="Set num_prompts=concurrency, including c1/c2; ignore waves/minimum four",
+    )
     bench.add_argument("--case-timeout", type=int, default=14400)
     bench.add_argument("--tpot-limit-ms", type=float, default=60)
     report = subparsers.add_parser("compare")

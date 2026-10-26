@@ -94,3 +94,10 @@ For decode output throughput only, use container.sh perf-decode MODE and read
 DECODE_PERFORMANCE_ZH.txt. It reuses one_batch_server's full-batch decode window;
 perf-compare prints Decode output tok/s and ranks by this metric. The original
 perf action retains whole-request throughput and cannot be mixed with decode runs.
+
+HBM_CAPACITY_ZH.txt provides the matched 0.8 baseline commands, a standalone
+monitor_hbm.py sampler grouped by active case, and container.sh capacity for
+owned-server scans under a shared per-card sampled HBM ceiling. Capacity scans
+use standard bench_serving Output throughput, num_prompts=concurrency, and
+formal decode log evidence for admitted batches. capacity-compare combines
+matching completed scans. These client scripts do not require kernel rebuilds.

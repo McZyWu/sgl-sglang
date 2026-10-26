@@ -6,9 +6,11 @@ No model or accelerator is launched. Run with python -m pytest <this file>.
 import copy
 import importlib.util
 import json
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sglang.benchmark.stream_metrics import BatchStreamRecorder
 from sglang.test.test_utils import CustomTestCase
@@ -25,6 +27,21 @@ spec = importlib.util.spec_from_file_location(
 )
 trace_summary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(trace_summary)
+
+
+def load_hbm_tools():
+    spec = importlib.util.spec_from_file_location(
+        "monitor_hbm", SOURCE.with_name("monitor_hbm.py")
+    )
+    monitor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(monitor)
+    with patch.dict(sys.modules, {"performance": perf, "monitor_hbm": monitor}):
+        spec = importlib.util.spec_from_file_location(
+            "hbm_capacity", SOURCE.with_name("hbm_capacity.py")
+        )
+        capacity = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(capacity)
+    return monitor, capacity
 
 
 def record(mode, concurrencies, tpots):
@@ -70,6 +87,252 @@ def record(mode, concurrencies, tpots):
 
 
 class TestC8Performance(CustomTestCase):
+    def test_hbm_parser_and_sampler_use_each_cards_peak_not_total_or_average(self):
+        monitor, _ = load_hbm_tools()
+        text = "| 0 | Ascend950DT | OK |\n| 0 | NA | 100 | 0 / 0 | 77322 / 98304 |\n| 1 | Ascend950DT | OK |\n| 1 | NA | 100 | 0 / 0 | 92000 / 98304 |\n"
+        self.assertEqual(monitor.parse_hbm(text)["1"]["used_mib"], 92000)
+        with tempfile.TemporaryDirectory() as temporary:
+            sampler = monitor.Sampler(temporary, [0, 1])
+            values = monitor.parse_hbm(text)
+            with patch.object(monitor, "read_hbm", return_value=values):
+                sampler.sample()
+                values["1"]["used_mib"] = 80000
+                sampler.sample()
+            summary = sampler.summary()
+            self.assertEqual(summary["cases"]["case"]["max_card_peak_mib"], 92000)
+            self.assertEqual(
+                summary["cases"]["case"]["by_npu"]["1"]["min_free_mib"], 6304
+            )
+            with patch.object(monitor, "read_hbm", return_value={"0": values["0"]}):
+                sampler.sample()
+            self.assertEqual(len(sampler.summary()["errors"]), 1)
+            sampler.performance = Path(temporary) / "performance.json"
+            with patch.object(monitor, "read_hbm", return_value=values):
+                for name in ("i16384-c2", "i65536-c4"):
+                    perf.write_json(
+                        sampler.performance, {"active_case": {"name": name}}
+                    )
+                    sampler.sample()
+            self.assertIn("i16384-c2", sampler.summary()["cases"])
+            self.assertIn("i65536-c4", sampler.summary()["cases"])
+            with self.assertRaisesRegex(ValueError, "fresh HBM"):
+                monitor.Sampler(temporary, [0, 1])
+
+    def test_host_kv_guard_checks_all_ranks_before_launching_a_server(self):
+        monitor, capacity = load_hbm_tools()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({"num_hidden_layers": 78}))
+            expected = 5 * 17664 * (656 * 78 + 4) * 8
+            self.assertEqual(
+                capacity.host_kv_estimate(root, 4, 16384, 1024, 8), expected
+            )
+            args = SimpleNamespace(
+                output=root,
+                devices=[0],
+                interval=0.1,
+                new_tokens=1024,
+                mem_fraction=0.98,
+            )
+            settings = {
+                "MODEL_PATH": str(root),
+                "TP_SIZE": "8",
+                "PORT": "0",
+                "HOST": "127.0.0.1",
+            }
+            with (
+                patch.object(
+                    monitor,
+                    "read_hbm",
+                    return_value={"0": {"used_mib": 1000, "total_mib": 98304}},
+                ),
+                patch.object(
+                    capacity.psutil,
+                    "virtual_memory",
+                    return_value=SimpleNamespace(available=1),
+                ),
+                patch.object(
+                    capacity.psutil,
+                    "disk_usage",
+                    return_value=SimpleNamespace(free=10**15),
+                ),
+                patch.object(
+                    capacity.subprocess,
+                    "Popen",
+                    side_effect=AssertionError(
+                        "host guard must run before process launch"
+                    ),
+                ),
+            ):
+                result = capacity.probe(
+                    args, "", settings, "lim_copy_sfa", 2048, 16384, 4
+                )
+            self.assertEqual(result["status"], "host_memory_limited")
+            self.assertEqual(result["host_kv_estimate_bytes"], expected)
+
+    def test_owned_process_cleanup_reaches_separate_session_child_and_spares_sibling(
+        self,
+    ):
+        import subprocess
+
+        import psutil
+
+        _, capacity = load_hbm_tools()
+        sibling = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(60)"])
+        code = "import subprocess,sys,time; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True);print(p.pid,flush=True);time.sleep(60)"
+        parent = subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdout=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        child_pid = int(parent.stdout.readline())
+        try:
+            capacity.remember_children(parent)
+            parent.terminate()
+            parent.wait(timeout=5)
+            capacity.stop_owned(parent)
+            self.assertIsNone(sibling.poll())
+            self.assertTrue(
+                not psutil.pid_exists(child_pid)
+                or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+            )
+        finally:
+            sibling.terminate()
+            sibling.wait(timeout=5)
+            parent.stdout.close()
+            if psutil.pid_exists(child_pid):
+                psutil.Process(child_pid).kill()
+
+    def test_capacity_admission_requires_hbm_pool_and_formal_decode_batch(self):
+        _, capacity = load_hbm_tools()
+        info = {"max_total_num_tokens": 10000}
+        measured = [{"max": 4}]
+        self.assertEqual(
+            capacity.classify_point(info, measured, 4, 9000, 90000, 92160, []), "pass"
+        )
+        self.assertEqual(
+            capacity.classify_point(info, measured, 4, 9000, 93000, 92160, []),
+            "hbm_limit",
+        )
+        self.assertEqual(
+            capacity.classify_point(info, measured, 4, 11000, 90000, 92160, []),
+            "token_pool_limited",
+        )
+        self.assertEqual(
+            capacity.classify_point(info, [{"max": 2}], 4, 9000, 90000, 92160, []),
+            "batch_not_observed",
+        )
+        self.assertEqual(
+            capacity.classify_point(info, measured, 4, 9000, None, 92160, []),
+            "hbm_monitor_error",
+        )
+
+    def test_capacity_search_refines_resource_boundary_but_not_scheduler_failure(self):
+        _, capacity = load_hbm_tools()
+        found = capacity.search(
+            [1, 2, 4, 8, 16],
+            lambda batch: {
+                "batch": batch,
+                "status": "pass" if batch <= 6 else "hbm_limit",
+            },
+        )
+        self.assertEqual(
+            (found["max_admitted_batch"], found["next_rejected_batch"]), (6, 7)
+        )
+        found = capacity.search(
+            [1, 2, 4, 8],
+            lambda batch: {
+                "batch": batch,
+                "status": "pass" if batch <= 4 else "batch_not_observed",
+            },
+        )
+        self.assertEqual([point["batch"] for point in found["points"]], [1, 2, 4, 8])
+        self.assertEqual(found["boundary_reason"], "batch_not_observed")
+        edge = capacity.search([1, 2], lambda batch: {"batch": batch, "status": "pass"})
+        self.assertEqual(edge["boundary_reason"], "scan_edge")
+
+    def test_measured_batch_boundary_excludes_warmup_logs(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            server_log = root / "server.log"
+            server_log.write_text("Decode batch, #running-req: 32\n")
+            code = (
+                "import time; from pathlib import Path; print('Starting main benchmark run...',flush=True); time.sleep(.2); p=Path("
+                + repr(str(server_log))
+                + "); p.write_text(p.read_text()+'Decode batch, #running-req: 4\\n'); print('report',flush=True)"
+            )
+            offset = perf.run_client(
+                [sys.executable, "-c", code], root / "client.log", 5, server_log
+            )
+            self.assertEqual(
+                perf.batch_observations(server_log, offset, measured=True)["max"], 4
+            )
+            self.assertEqual(perf.batch_observations(server_log, 0)["max"], 32)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                perf.run_client(
+                    [sys.executable, "-c", "import time; time.sleep(10)"],
+                    root / "timeout.log",
+                    0.1,
+                    server_log,
+                )
+
+    def test_hbm_comparison_separates_max_batch_from_tpot_and_rejects_other_budget(
+        self,
+    ):
+        _, capacity = load_hbm_tools()
+
+        def point(batch, throughput, tpot):
+            return dict(
+                batch=batch,
+                status="pass",
+                output_throughput=throughput,
+                mean_tpot_ms=tpot,
+                p95_tpot_ms=tpot,
+                worst_round_mean_tpot_ms=tpot,
+                peak_hbm_mib=90000,
+            )
+
+        base = dict(
+            status="complete",
+            settings=dict(tpot_limit_ms=60, hbm_limit_gib=90),
+            groups=[
+                dict(
+                    mode="baseline",
+                    cache_tokens=2048,
+                    input_tokens=16384,
+                    boundary_reason="hbm_limit",
+                    points=[point(2, 90, 50), point(4, 100, 80)],
+                )
+            ],
+        )
+        opt = copy.deepcopy(base)
+        opt["groups"][0].update(
+            mode="lim_copy_sfa", points=[point(2, 110, 50), point(8, 120, 80)]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, value in (("base", base), ("opt", opt)):
+                (root / name).mkdir()
+                perf.write_json(root / name / "capacity.json", value)
+            args = SimpleNamespace(
+                compare=[root / "base", root / "opt"], output=root / "comparison"
+            )
+            capacity.compare_runs(args)
+            result = json.loads((args.output / "capacity.json").read_text())
+            rows = {row["selection"]: row for row in result["comparisons"]}
+            self.assertEqual(rows["max_batch_point"]["optimized_batch"], 8)
+            self.assertEqual(rows["best_tpot_point"]["optimized_batch"], 2)
+            self.assertAlmostEqual(
+                rows["best_tpot_point"]["output_throughput_ratio"], 110 / 90
+            )
+            opt["settings"]["hbm_limit_gib"] = 91
+            perf.write_json(root / "opt/capacity.json", opt)
+            with self.assertRaisesRegex(ValueError, "HBM budget"):
+                capacity.compare_runs(args)
+
     def test_decode_window_excludes_prefill_and_accounts_for_boundary_delivery(self):
         """Adding prefill delay must not lower decode throughput; chunks straddle boundaries."""
         chunks = [
