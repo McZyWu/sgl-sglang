@@ -8,8 +8,12 @@ GSM8K_FULL_ZH.txt documents data paths, protocol and saved outputs.
 Use container.sh perf MODE and perf-compare BASE OPT for serving performance;
 PERFORMANCE_ZH.txt gives the two-terminal A/B procedure and metric definitions.
 perf-configs generates four configs for 128K/64K/16K input -> 1K output with
-C2048/C4096 and matching baselines. Default concurrency is one; long-context
-configs use context_length=132096 and max_total_tokens=147456.
+C2048/C4096 and matching baselines. Scan client concurrency 2/4/8/16 with
+context_length=135168, graph buckets [1,2,4,8,16], and automatic token pools.
+The objective is maximum measured whole-model throughput near 50 ms mean TPOT;
+the default acceptance ceiling is <60 ms. Each mode may choose its own best
+concurrency. OFFLOAD_TRACE_ZH.txt describes optional GSM8K transfer counters;
+keep these diagnostics disabled during performance measurements.
 
 Both repositories now use feat/hisparse-lim-copysfa-c8-a5-10-26. The original
 feat/hisparse-lim-copysfa-c8-a5 branches are preserved. The new branches merge

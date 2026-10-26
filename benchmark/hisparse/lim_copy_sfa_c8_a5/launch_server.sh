@@ -17,6 +17,8 @@ export SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD=0
 export SGLANG_NPU_ENABLE_COPY_SFA=0
 export SGLANG_NPU_SPARSE_KV_INDEXER=legacy
 export SGLANG_NPU_USE_MLAPO=0
+export SGLANG_DEBUG_NPU_C8_OFFLOAD=${C8_TRACE_OFFLOAD:-${SGLANG_DEBUG_NPU_C8_OFFLOAD:-0}}
+export SGLANG_DEBUG_NPU_C8_OFFLOAD_INTERVAL=${C8_TRACE_INTERVAL:-${SGLANG_DEBUG_NPU_C8_OFFLOAD_INTERVAL:-128}}
 export SGLANG_NPU_SPARSE_KV_CACHE_SIZE=${CACHE_TOKENS:-2048}
 case "$MODE" in
   baseline) ;;
@@ -53,6 +55,7 @@ if [[ -n ${WEIGHT_QUANTIZATION:-} ]]; then
   extra+=(--quantization "$WEIGHT_QUANTIZATION")
 fi
 echo "Mode=$MODE; K=2048 C=$SGLANG_NPU_SPARSE_KV_CACHE_SIZE; MoE=${MOE_A2A_BACKEND:-none}"
+read -r -a graph_batches <<< "${GRAPH_BATCH_SIZES:-${GRAPH_BATCH_SIZE:-8}}"
 if [[ -n ${C8_LAUNCH_MANIFEST:-} ]]; then
   python3 "$SCRIPT_DIR/performance.py" capture-launch \
     --output "$C8_LAUNCH_MANIFEST" --mode "$MODE" --pid "$$"
@@ -61,7 +64,7 @@ exec python3 -m sglang.launch_server \
   --model-path "$MODEL_PATH" --served-model-name "${SERVED_MODEL_NAME:-c8-a5}" \
   --attention-backend ascend --device npu --dtype bfloat16 --kv-cache-dtype fp8_e4m3 \
   --tp-size "$TP_SIZE" --ep-size "$EP_SIZE" --attn-dp-size "$ATTN_DP_SIZE" \
-  --max-running-requests "${MAX_RUNNING_REQUESTS:-4}" --cuda-graph-bs-decode "${GRAPH_BATCH_SIZE:-8}" \
+  --max-running-requests "${MAX_RUNNING_REQUESTS:-4}" --cuda-graph-bs-decode "${graph_batches[@]}" \
   --context-length "${CONTEXT_LENGTH:-36864}" --page-size 128 \
   --chunked-prefill-size "${CHUNKED_PREFILL_SIZE:-2048}" --max-prefill-tokens "${MAX_PREFILL_TOKENS:-32768}" \
   --mem-fraction-static "${MEM_FRACTION_STATIC:-0.8}" --disable-radix-cache \

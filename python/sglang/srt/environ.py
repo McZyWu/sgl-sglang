@@ -1054,6 +1054,9 @@ class Envs:
     # Set to 0 to restore the separate SiTU + npu_dynamic_mx_quant path.
     SGLANG_NPU_MOE_SITU_MXFP8_FUSED = EnvBool(True)
     SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD = EnvBool(False)
+    # Diagnostic counters include graph replay; periodic reads synchronize NPU.
+    SGLANG_DEBUG_NPU_C8_OFFLOAD = EnvBool(False)
+    SGLANG_DEBUG_NPU_C8_OFFLOAD_INTERVAL = EnvInt(128)
     # Per-request resident token capacity; 0 defaults to model TopK or auto-sizes
     # from the manager HBM budget. Legacy/reference use LRU when C > K;
     # native LIM maintains its own resident mapping.

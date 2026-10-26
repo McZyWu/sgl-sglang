@@ -1,0 +1,60 @@
+A5 C8：GSM8K 的可选 offload 覆盖与命中率打印
+===================================
+
+默认关闭。只改SGLang Python，不改kernel ABI、不重编kernel或DeepEP。
+统计代码会添加device tensor操作，并周期性同步到CPU，供路径覆盖诊断。
+不能拿诊断开启时的TPOT/吞吐当正式性能结果；性能客户端会拒绝开启诊断的服务。
+
+在同一个容器的终端一启动（替换为实际优化配置路径）：
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export C8_CONFIG=/workspace/c8-a5-results/perf-configs-实际日期时间PID/c2048-lim_copy_sfa.env
+  C8_TRACE_OFFLOAD=1 C8_TRACE_INTERVAL=128 bash "$C8_SCRIPT" serve
+
+终端二，服务ready后：
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export C8_CONFIG=/workspace/c8-a5-results/perf-configs-实际日期时间PID/c2048-lim_copy_sfa.env
+  bash "$C8_SCRIPT" gsm8k --data-path /mnt/share/wzy/test.jsonl --num-shots 5 --parallel 8 --max-new-tokens 512
+
+终端一及serve-*/server.log会出现 C8_OFFLOAD_TRACE JSON。默认第一个forward以及每128
+个forward打印；希望短测也及时看到可设 C8_TRACE_INTERVAL=1，开销更大。
+计数按rank独立累积，从startup graph capture结束后清零开始，包含服务warmup。
+只运行GSM8K、不混其他请求；观察GSM8K期间的增量。打印是周期快照，末条日志
+不是严格的GSM8K最终汇总，短尾未打印的区间仍在设备计数器里。
+
+字段与判断：
+- prefill_d2h_tokens/bytes：prefill新KV写入DRAM的有效payload。
+- prefill_h2d_tokens/bytes：prefill从DRAM gather可见KV用于attention。
+  chunked prefill会反复读之前前缀，因此可能大于d2h。
+- decode_d2h_tokens/bytes：decode新KV继续写入DRAM。
+- decode_request_layer_rows：实际decode request×layer行；排除graph padding。
+- sparse_request_layer_rows：进入稀疏缓存路径的request×layer行。
+- miss_request_layer_rows：稀疏路径中有cache miss的request×layer行。
+- cache_refill_tokens / cache_refill_payload_bytes：原生LIM计划要求回填的完整union。
+- prefix_cache_hit_rate_pct：累计前缀cache命中率（百分数），按token加权。
+- window_prefix_cache_hit_rate_pct：两次日志之间的前缀命中率，便于看后续窗口。
+- prefix_selected_tokens：选中的有效稳定前缀token总数（不含tail/dense/padding）。
+- prefix_cache_hits：prefix_selected_tokens - selected_miss_tokens。
+- tail_selected_tokens：稀疏TopK选中的tail数量，单列，不计入前缀命中率。
+- invalid_miss_plan_rows：miss数为负或超过选中前缀数的无效行数；此时命中率为null。
+- max_decode_seq_len：见到的最大有效decode序列长度，帮助判断是否跨过C。
+- selected_miss_tokens：本步选中TopK中的缺失token数，与union总回填量不同。
+
+前缀命中率 = (prefix_selected_tokens - selected_miss_tokens) / prefix_selected_tokens * 100%。
+分母为0（未走稀疏前缀）显示null，不会假报100%。累计/窗口都包含对应范围内的cold
+和warm访问，不是单独的warm-cache命中率。不要对各层/各请求百分比简单平均，
+需要跨rank汇总时合并hit与selected的计数再求比例。
+
+prefill相关计数>0，只能证明prefill搬运。sparse_request_layer_rows增量>0证明走到
+稀疏decode；miss_request_layer_rows、cache_refill_tokens增量>0证明触发了LIM miss
+回搬计划并经过Copy-SFA调用。计数包含cold和warm miss，不能单独推导steady-state
+命中率。bytes=token行×656，是逻辑payload，不是硬件PCIe/DRAM总线实际事务字节。
+这些计数只表明调用和计划覆盖，不替代算子数值正确性测试。
+若GSM8K全部序列都未跨过C，稀疏/miss计数为0符合预期；prefill搬运仍可发生。
+
+device计数更新会随graph一起capture/replay；Python日志在capture外读取。
+startup capture/warmup计数会在graph runner初始化完成后原地址清零，避免假覆盖。
+BF16/普通C8 baseline没有这套计数；本开关只作用A5 C8 offload manager。
+
+诊断后在终端一停止自己的服务并等待退出，改为：
+  C8_TRACE_OFFLOAD=0 bash "$C8_SCRIPT" serve
+重新ready后再跑perf。不要在运行中的服务上改环境后直接认为诊断关闭。

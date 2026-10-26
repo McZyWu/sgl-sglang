@@ -172,10 +172,11 @@ case "$ACTION" in
       --mode "$perf_mode" --results-root "$C8_RESULTS_DIR" --output "$RUN_DIR" \
       --url "${C8_SERVER_URL:-http://127.0.0.1:${PORT:-8810}}" \
       --input-lengths ${C8_PERF_INPUT_LENGTHS:-131072 65536 16384} \
-      --concurrencies ${C8_PERF_CONCURRENCIES:-1} \
+      --concurrencies ${C8_PERF_CONCURRENCIES:-2 4 8 16} \
       --new-tokens "${C8_PERF_NEW_TOKENS:-1024}" \
-      --rounds "${C8_PERF_ROUNDS:-3}" --waves "${C8_PERF_WAVES:-4}" \
-      --case-timeout "${C8_PERF_CASE_TIMEOUT:-3600}" "$@"
+      --rounds "${C8_PERF_ROUNDS:-1}" --waves "${C8_PERF_WAVES:-2}" \
+      --case-timeout "${C8_PERF_CASE_TIMEOUT:-14400}" \
+      --tpot-limit-ms "${C8_PERF_TPOT_LIMIT_MS:-60}" "$@"
     ;;
   perf-compare)
     [[ $# == 2 || $# == 4 ]] || {

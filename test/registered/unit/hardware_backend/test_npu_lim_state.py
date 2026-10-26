@@ -33,6 +33,77 @@ register_cpu_ci(est_time=3, stage="base-a")
 
 
 class TestLIMState(CustomTestCase):
+    def test_c8_transfer_counters_mask_padding_and_preserve_graph_storage(self):
+        """Dense/padded rows cannot claim sparse refill coverage; reset keeps captured addresses."""
+        from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace import (
+            C8OffloadTrace,
+        )
+
+        trace = C8OffloadTrace("cpu", 128)
+        address = trace.counts.data_ptr()
+        trace.record_d2h(torch.tensor([True, False, True]), decode=False)
+        trace.record_prefill_h2d([130, 7])
+        trace.reset()
+        self.assertEqual(trace.counts.data_ptr(), address)
+        self.assertEqual(trace.counts.tolist(), [0] * len(trace.KEYS))
+        plan = SimpleNamespace(
+            valid_rows=torch.tensor([True, True, False]),
+            sparse_rows=torch.tensor([True, False, True]),
+            miss_counts=torch.tensor([2048, 99, 100]),
+            topk_misses=torch.tensor([13, 99, 100]),
+            seq_lens=torch.tensor([4100, 130, 10000]),
+            prefix_lens=torch.tensor([4096, 128, 9984]),
+            source_ids=torch.tensor([list(range(15)) + [4096], [0] * 16, [0] * 16]),
+        )
+        trace.record_d2h(torch.tensor([True, False]), decode=False)
+        trace.record_prefill_h2d([130, 7])
+        for step in range(2):
+            if step:
+                plan.topk_misses[0] = 1
+                plan.miss_counts[0] = 3
+                plan.source_ids[0] = torch.tensor(
+                    list(range(8)) + list(range(4096, 4104))
+                )
+                plan.seq_lens[0] = 4110
+            trace.record_d2h(torch.tensor([True, True, False]), decode=True)
+            trace.record_decode(plan)
+        self.assertEqual(
+            trace.counts.tolist(), [1, 137, 4, 2, 4, 2, 2, 2051, 14, 4110, 23, 9, 0]
+        )
+        # Token-weighted rate is 9/23, not the mean of per-step 2/15 and 7/8.
+        import json
+
+        with patch(
+            "sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace.logger.info"
+        ) as log:
+            trace.maybe_log("fixture")
+        values = json.loads(log.call_args.args[1])
+        self.assertAlmostEqual(values["prefix_cache_hit_rate_pct"], 100 * 9 / 23)
+        self.assertEqual(values["prefix_cache_hits"], 9)
+        trace.record_decode(plan)
+        with patch(
+            "sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace.logger.info"
+        ) as log:
+            for _ in range(127):
+                trace.maybe_log("fixture")
+        values = json.loads(log.call_args.args[1])
+        self.assertAlmostEqual(values["window_prefix_cache_hit_rate_pct"], 87.5)
+        self.assertAlmostEqual(values["prefix_cache_hit_rate_pct"], 100 * 16 / 31)
+        self.assertIsNone(trace.hit_rate(0, 0, 0))
+        self.assertIsNone(trace.hit_rate(10, 11, 1))
+
+    def test_c8_trace_never_reads_device_counters_during_capture(self):
+        """A diagnostic log must not introduce a host read into graph capture."""
+        from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload import (
+            trace as module,
+        )
+
+        trace = module.C8OffloadTrace("cpu", 2)
+        trace.counts = SimpleNamespace(cpu=lambda: self.fail("capture synchronized"))
+        with patch.object(module, "get_is_capture_mode", return_value=True):
+            trace.maybe_log("eager_decode")
+        self.assertEqual(trace.forwards, 0)
+
     def test_c8_prefill_uses_native_indexer_after_custom_ops_shadow(self):
         """A third-party alias must not change the prefill operator's ABI.
 

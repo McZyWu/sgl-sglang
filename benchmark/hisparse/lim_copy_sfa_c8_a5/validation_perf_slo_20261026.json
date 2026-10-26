@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-26",
+  "branch": "feat/hisparse-lim-copysfa-c8-a5-10-26",
+  "base_sglang_revision": "8237a01cad080944be50474a72a2c13072c40260",
+  "kernel_revision_unchanged": "2765f232a8317d18025f1939aee3207ff215c794",
+  "scope": "SGLang Python/script changes only; no kernel/DeepEP changes or rebuild required",
+  "objective": {
+    "metric": "mean_tpot_ms",
+    "target": 50,
+    "default_candidate_ceiling_exclusive": 60,
+    "default_concurrencies": [
+      2,
+      4,
+      8,
+      16
+    ],
+    "input_lengths": [
+      131072,
+      65536,
+      16384
+    ],
+    "output_length": 1024,
+    "cache_budgets": [
+      2048,
+      4096
+    ],
+    "rounds": 1,
+    "waves": 2
+  },
+  "checks": {
+    "cpu": {
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 15.13,
+      "report": "hitrate-cpu.xml",
+      "coverage": [
+        "scheduler headroom and actual pool",
+        "independent optimal concurrency and per-round limit",
+        "reject model mismatch/incomplete cases",
+        "per-request block limit vs aggregate pool",
+        "C8 masked transfer counters and weighted/window hit rate",
+        "no capture-time host read",
+        "graph replay logging after device writes"
+      ]
+    },
+    "graph_trace_red_green": {
+      "before": {
+        "tests": 1,
+        "failures": 1,
+        "errors": 0
+      },
+      "after": "covered by 25 passing CPU tests"
+    },
+    "real_repository_http_client_fixture": {
+      "cases": 4,
+      "measured_requests": 24,
+      "request_errors": 0,
+      "diagnostic_timing_rejected": true,
+      "scope": "CPU HTTP/SSE server; no model or NPU tensors"
+    },
+    "shell_boundary_checks": 17,
+    "bash_syntax": "pass",
+    "python_lint_format": "pass (unchanged legacy E402/E731 outside modified code excluded)"
+  },
+  "user_reported_failure": {
+    "server_revision": "8237a01cad080944be50474a72a2c13072c40260",
+    "context_length": 132096,
+    "max_total_num_tokens": 147456,
+    "input_length": 131072,
+    "requested_output_length": 1024,
+    "actual_output_lens": [
+      1022,
+      1022,
+      1022,
+      1022
+    ],
+    "errors": [
+      "",
+      "",
+      "",
+      ""
+    ],
+    "mean_tpot_ms": 56.68664237756105,
+    "mean_ttft_ms": 61493.56026752503,
+    "output_throughput": 8.561241476358678,
+    "decode_graph_buckets": [
+      16
+    ],
+    "status": "invalid fixed-output performance case; reference only"
+  },
+  "a5_numerical_model_performance": "pending user execution; A5 inaccessible",
+  "a5_trace_eager_and_graph_execution": "pending user execution; tensor/control-flow behavior validated on CPU only",
+  "remote_evidence_directory": "/home/wzy/1024/hisparse-copysfa-opt-217-20261023/c8/perf-slo-20261026",
+  "source_sha256_lf": {
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/MANUAL_CONTAINER_ZH.txt": "f5af1bedb90e2a8fe203541e2379d75b3e86eb6af720e15148916f931b6c666a",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/PERFORMANCE_ZH.txt": "f2490beeb7e4389e03eee21dd2c9c14f5132396e4edc51b576b2153f4df2a7be",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/README.txt": "0e1f7baa0c18f32958d9aa0fcf7bb31e1c8dde1aff2c3db4c73b17446eaa23e4",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/container.env.example": "abfa097c1914cb96f6f25526f6e49b8f01e36e534683fdfa3ea6421429fd63fe",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh": "d78ac3b0aca443031e52bcc93d5b17e0eb432eb28c3e54aef5007b704ee920a2",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/launch_server.sh": "51569b527cd9d1b4160e66968b4ca26287024c2ee9d424b1c69ac1cd7018d3e7",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/performance.py": "6e94cfd4b793cdf89bf30bad6ad16c2f250e4b0f0dbe5abdad9cd3f74700c6a2",
+    "python/sglang/srt/environ.py": "fee5e77a4416e66fc8c1c748528d8f9ba95075e7e22e7f43842cab7f42c6fc59",
+    "python/sglang/srt/hardware_backend/npu/graph_runner/npu_graph_runner.py": "92a08b9f5d917c1e0c0873b88f7027d5714ed33e47e1dec29129f3113e3b9570",
+    "python/sglang/srt/hardware_backend/npu/sparsity_driven_kv_offload/c8.py": "f0ca208e30eb49202e584dbcba4a6115e150ae199b82e0381d5c73895f6cc997",
+    "test/registered/unit/hardware_backend/test_npu_lim_state.py": "a9908ebdbb1478c0e31f79083a140d1932bbb8b335535907538386c8882fc316",
+    "test/registered/unit/npu/graph_runner/test_npu_graph_runner.py": "6347738390d201981460a5be8b5dfaf2ef37a88789fc6075e6701d7b80512ae9",
+    "python/sglang/srt/hardware_backend/npu/sparsity_driven_kv_offload/trace.py": "0d0688609b2c2d8ae53ded860bfa114457c8f79116db25cf1e5a88d93254c45f",
+    "test/manual/hisparse/test_c8_performance.py": "96e5c8efeffa7afb3b4a81583ce532fe0a7c41bf59924c86e4022ecd10eda84b",
+    "benchmark/hisparse/lim_copy_sfa_c8_a5/OFFLOAD_TRACE_ZH.txt": "903ac66afc21fd8895a7102c53acbfe0bbc429abaf470f812f5290d1ca16666b"
+  }
+}

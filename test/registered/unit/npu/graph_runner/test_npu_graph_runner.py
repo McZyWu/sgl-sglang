@@ -1,5 +1,6 @@
 """CPU coverage for NPU decode-graph replay orchestration."""
 
+import json
 from types import SimpleNamespace
 from unittest import mock
 
@@ -133,6 +134,19 @@ def test_replay_updates_sequence_lengths_and_slices_logits_to_raw_batch():
     runner.use_fias_v2_bsnd = False
     runner.capture_forward_mode = SimpleNamespace(is_target_verify=lambda: False)
     runner._init_arch_map()
+    # Diagnostic reads must observe the just-replayed graph's writes.
+    from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace import (
+        C8OffloadTrace,
+    )
+
+    runner.c8_offload_trace = C8OffloadTrace("cpu", 1)
+    replay_output = runner.backend.replay_with_input_update.return_value
+
+    def replay_with_counter_update(*args, **kwargs):
+        runner.c8_offload_trace.counts[7].add_(3)
+        return replay_output
+
+    runner.backend.replay_with_input_update.side_effect = replay_with_counter_update
 
     forward_batch = SimpleNamespace(
         needs_forward_metadata_init=lambda: False,
@@ -156,8 +170,13 @@ def test_replay_updates_sequence_lengths_and_slices_logits_to_raw_batch():
         mock.patch.object(mod, "build_replay_fb_view", return_value="replay-view"),
         mock.patch.object(mod, "is_deepseek_dsa", return_value=False),
         mock.patch.object(mod, "is_deepseek_v4", return_value=False),
+        mock.patch(
+            "sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace.logger.info"
+        ) as trace_log,
     ):
         output = runner.execute(forward_batch)
+
+    assert json.loads(trace_log.call_args.args[1])["cache_refill_tokens"] == 3
 
     runner.deepep_adapter.replay.assert_called_once_with()
     attention.init_forward_metadata_out_graph.assert_called_once_with("replay-view")

@@ -1,3 +1,6 @@
+10-26 性能/覆盖更新：整网并发扫描见 PERFORMANCE_ZH.txt；GSM8K搬运打印见 OFFLOAD_TRACE_ZH.txt。
+旧固定并发1/context=132096的性能配置请重新生成。
+
 A5 容器内人工部署与验证
 =====================
 
@@ -72,7 +75,7 @@ all 会先检查 Kernel 源码和当前 Python 实际导入的 wheel，再执行
 若缺少 C8 源码或算子注册，会立即退出，不先运行 CPU 测试。
 当前代码的预期数量如下；测试未来增加时以实际收集为准，不用数字判断正确性。
 
-  cpu       118 项：LIM 状态、C8 预算/prefill、BF16/C8 graph 准入及 kernel namespace。
+  cpu       120 项：LIM 状态、C8 预算/prefill、BF16/C8 graph 准入及 kernel namespace。
   lim       146 项：quant LIM 静态接口、官方 LI oracle、短序列、尾部、状态与 graph。
   copy-sfa    5 项：C8 Copy-SFA CPU attention golden 与 656 字节 KV 逐字节比对。
   pair        6 项：C2048/4096/8192 × eager/graph，cold fill、padding、tail 与复用。

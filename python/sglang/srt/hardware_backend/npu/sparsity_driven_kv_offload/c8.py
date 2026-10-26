@@ -6,8 +6,12 @@ from sglang.kernels.ops.attention.npu_quant_sparse import (
     fused_quant_scatter_copy_sparse_flash_attention,
     load_quant_copy_sfa_operator,
 )
+from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.block_tables import (
     fill_request_block_table,
+)
+from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace import (
+    C8OffloadTrace,
 )
 
 PACKED_ROW_BYTES = 656
@@ -35,6 +39,13 @@ def c8_write_slots(requests, positions, lengths, capacity, request_rows):
 
 class C8Cache:
     def __init__(self, manager, query_heads, compute_dtype):
+        self.trace = (
+            C8OffloadTrace(
+                manager.device, envs.SGLANG_DEBUG_NPU_C8_OFFLOAD_INTERVAL.get()
+            )
+            if envs.SGLANG_DEBUG_NPU_C8_OFFLOAD.get()
+            else None
+        )
         self.operator = load_quant_copy_sfa_operator()
         self.query = torch.empty(
             (manager.batch_capacity, query_heads, 576),
@@ -56,6 +67,8 @@ class C8Cache:
         mask,
         copy,
     ):
+        if getattr(self, "trace", None) is not None:
+            self.trace.record_d2h(mask, batch.forward_mode.is_decode())
         requests = destination_ids // manager.max_context_len
         positions = destination_ids.remainder(manager.max_context_len)
         safe_requests = requests.clamp(min=0, max=manager.size)
@@ -149,6 +162,10 @@ class C8Cache:
             operator=self.operator,
         )
         output.masked_fill_(~valid[:, None, None], 0)
+        if getattr(self, "trace", None) is not None:
+            self.trace.record_decode(plan)
+            if layer_index == manager.layer_num - 1:
+                self.trace.maybe_log("eager_decode")
         manager.last_decode_path = batch.sparse_kv_decode_path = "copy_sfa_c8"
         return output[:, :query_heads].reshape(count, -1).contiguous()
 
@@ -224,6 +241,9 @@ def forward_c8_offload(
         block_dim=48,
         src_ptr=manager.dev_ptr_list[layer_index],
     )
+    trace = getattr(manager.c8_cache, "trace", None)
+    if trace is not None:
+        trace.record_prefill_h2d(lengths_cpu)
     page_offsets = torch.arange(max_pages, device=q.device)
     table = torch.where(
         page_offsets[None] < pages[:, None], starts[:, None] + page_offsets[None], 0
@@ -267,4 +287,6 @@ def forward_c8_offload(
         rope_head_dim=64,
     )
     result = result[0] if isinstance(result, tuple) else result
+    if trace is not None and layer_index == manager.layer_num - 1:
+        trace.maybe_log("prefill")
     return result[:, : layer.tp_q_head_num].contiguous()

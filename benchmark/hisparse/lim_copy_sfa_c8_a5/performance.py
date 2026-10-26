@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -33,6 +34,7 @@ ENV_KEYS = MODE_ENV + (
     "DEEPEP_HCCL_BUFFSIZE",
     "DEEP_USE_MODE",
     "SGLANG_ENABLE_OVERLAP_PLAN_STREAM",
+    "SGLANG_DEBUG_NPU_C8_OFFLOAD",
     "ASCEND_RT_VISIBLE_DEVICES",
     "ASCEND_VISIBLE_DEVICES",
 )
@@ -77,6 +79,78 @@ METRICS = (
     "mean_tpot_ms",
     "p95_tpot_ms",
 )
+
+# A5 Copy-SFA limits the length of each request's block table, not the
+# aggregate indexer pool. req_to_token adds four columns before page alignment.
+MAX_C8_CONTEXT = 262144 - 4
+TUNING_KEYS = {"max_total_tokens", "max_running_requests", "cuda_graph_bs_decode"}
+
+
+def validate_capacity(config, lengths, output):
+    required = max(lengths) + output + 2
+    # Worker max_req_len = min(context, logical pool) - 1; scheduler reserves
+    # another token. Equality with input+output silently clips two output tokens.
+    if (
+        not isinstance(config["context_length"], int)
+        or config["context_length"] < required
+    ):
+        raise ValueError(
+            f"Need context_length >= {required} (input + output + 2); regenerate perf-configs and restart"
+        )
+    capacity = config.get("max_total_num_tokens") or config.get("max_total_tokens")
+    if capacity and capacity < required:
+        raise ValueError(
+            f"Actual token pool {capacity} < required {required}; one complete request cannot fit"
+        )
+    return capacity
+
+
+def batch_observations(log, offset):
+    """Read existing scheduler decode logs; never infer batch from client load."""
+    with log.open("rb") as file:
+        file.seek(offset)
+        data = file.read().decode("utf-8", errors="replace")
+    values = [
+        int(value)
+        for value in re.findall(r"Decode batch[^\n]*?#running-req:\s*(\d+)", data)
+    ]
+    return {
+        "scope": "logged decode batches, including warmup; per scheduler/DP, not padded graph size",
+        "samples": len(values),
+        "min": min(values) if values else None,
+        "median": statistics.median(values) if values else None,
+        "max": max(values) if values else None,
+    }
+
+
+def memory_snapshot(path):
+    with path.open("w", encoding="utf-8") as file:
+        subprocess.run(
+            ["npu-smi", "info"],
+            stdout=file,
+            stderr=subprocess.STDOUT,
+            check=True,
+            timeout=30,
+        )
+    cards, current = {}, None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        card = re.match(r"\|\s*(\d+)\s*\|\s*Ascend", line)
+        if card:
+            current = card.group(1)
+        pairs = re.findall(r"(\d+)\s*/\s*(\d+)", line)
+        if current is not None and len(pairs) >= 2 and int(pairs[-1][1]) > 0:
+            used, total = map(int, pairs[-1])
+            cards[current] = {
+                "used_mb": used,
+                "total_mb": total,
+                "free_mb": total - used,
+            }
+            current = None
+    return {
+        "raw": path.name,
+        "hbm_by_npu": cards,
+        "scope": "device-wide snapshot, not per-process allocation or a continuous peak",
+    }
 
 
 def write_json(path, value):
@@ -203,30 +277,45 @@ def dataset_bytes(count):
 
 def prepare_configs(args):
     if (
-        args.context_length < 132096
-        or args.max_total_tokens < args.context_length
-        or args.max_total_tokens > 262144
+        not 132098 <= args.context_length <= MAX_C8_CONTEXT
+        or (
+            args.max_total_tokens is not None
+            and args.max_total_tokens < args.context_length
+        )
+        or args.max_running_requests < max(args.concurrencies)
+        or min(args.concurrencies) <= 0
     ):
         raise ValueError(
-            "Require context >= 132096 and context <= max_total_tokens <= 262144 for the A5 C8 source pool"
+            "Require 132098 <= context <= 262140, explicit pool >= context, and positive concurrencies <= max-running-requests"
         )
     args.output.mkdir(parents=True, exist_ok=True)
     original = args.config.read_text(encoding="utf-8")
+    graph_batches = " ".join(
+        map(str, sorted({1, *args.concurrencies, args.max_running_requests}))
+    )
     for cache in (2048, 4096):
         for mode in ("baseline", "lim_copy_sfa"):
             target = args.output / f"c{cache}-{mode}.env"
             if target.exists():
                 raise ValueError(f"Config already exists: {target}")
             footer = (
-                "\n# Fixed long-context performance settings; override the base above.\n"
+                "\n# Whole-model throughput search under target mean TPOT 50 ms/token; allow the 50s (<60).\n"
                 f"LIM_EVAL_MODE={mode}\nCACHE_TOKENS={cache}\n"
-                f"CONTEXT_LENGTH={args.context_length}\nMAX_TOTAL_TOKENS={args.max_total_tokens}\n"
+                f"CONTEXT_LENGTH={args.context_length}\nMAX_TOTAL_TOKENS={args.max_total_tokens or ''}\n"
+                f"MAX_RUNNING_REQUESTS={args.max_running_requests}\n"
+                f'GRAPH_BATCH_SIZES="{graph_batches}"\n'
                 'C8_PERF_INPUT_LENGTHS="131072 65536 16384"\nC8_PERF_NEW_TOKENS=1024\n'
-                'C8_PERF_CONCURRENCIES="1"\nC8_PERF_ROUNDS=3\nC8_PERF_WAVES=4\n'
+                f'C8_PERF_CONCURRENCIES="{" ".join(map(str, args.concurrencies))}"\n'
+                "C8_PERF_ROUNDS=1\nC8_PERF_WAVES=2\nC8_PERF_TPOT_LIMIT_MS=60\nC8_PERF_CASE_TIMEOUT=14400\n"
+                "SGLANG_DEBUG_NPU_C8_OFFLOAD=0\n"
             )
             target.write_text(original + footer, encoding="utf-8", newline="\n")
             target.chmod(0o600)
             print(target, flush=True)
+    print(
+        "MAX_TOTAL_TOKENS empty = size each mode's actual pool from the same mem_fraction_static. Check startup max_total_num_tokens and host DRAM before increasing max-running-requests.",
+        flush=True,
+    )
 
 
 def validate_result(result, count, length, output):
@@ -241,7 +330,8 @@ def validate_result(result, count, length, output):
     for key, expected in (("input_lens", length), ("output_lens", output)):
         if len(result[key]) != count or any(value != expected for value in result[key]):
             raise ValueError(
-                f"Unexpected {key}: require {count} requests of {expected} tokens"
+                f"Unexpected {key}: require {count} requests of {expected} tokens; "
+                f"actual={result[key]}; finish_reasons={result.get('finish_reasons')}; errors={result.get('errors')}"
             )
     if result["total_output_tokens"] != count * output:
         raise ValueError("Unexpected total generated token count")
@@ -284,11 +374,22 @@ def run(args):
         config = {key: info.get(key) for key in SERVER_KEYS}
         if config["kv_cache_dtype"] != "fp8_e4m3" or not config["disable_radix_cache"]:
             raise ValueError("Require C8 KV and disabled radix cache for both modes")
-        if (
-            not isinstance(config["context_length"], int)
-            or max(args.input_lengths) + args.new_tokens > config["context_length"]
+        capacity = validate_capacity(
+            config | {"max_total_num_tokens": info.get("max_total_num_tokens")},
+            args.input_lengths,
+            args.new_tokens,
+        )
+        if launch["environment"].get("SGLANG_DEBUG_NPU_C8_OFFLOAD") not in (
+            None,
+            "0",
+            "false",
+            "False",
         ):
-            raise ValueError("Input + output exceeds the server context length")
+            raise ValueError(
+                "Disable SGLANG_DEBUG_NPU_C8_OFFLOAD and restart before timing performance"
+            )
+        if not math.isfinite(args.tpot_limit_ms) or args.tpot_limit_ms <= 0:
+            raise ValueError("TPOT limit must be positive and finite")
         if (
             config["stream_interval"] != 1
             or config["speculative_algorithm"] is not None
@@ -296,20 +397,20 @@ def run(args):
             raise ValueError(
                 "Require stream_interval=1 and speculative decoding disabled"
             )
-        if (
-            config["max_total_tokens"]
-            and max(args.input_lengths) + args.new_tokens > config["max_total_tokens"]
-        ):
-            raise ValueError(
-                "A single request exceeds max_total_tokens; generate the long-context perf configs first"
-            )
-        data = dataset_bytes(max(4, max(args.concurrencies) * args.waves))
+        # Stable input source even when the modes scan different concurrencies.
+        data = dataset_bytes(max(1024, max(args.concurrencies) * args.waves))
         dataset = args.output / "prompts.json"
         dataset.write_bytes(data)
         record.update(
             launch_manifest=str(path),
             launch=launch,
             server_configuration=config,
+            actual_token_capacity=capacity,
+            objective={
+                "metric": "mean_tpot_ms",
+                "strict_upper_bound_ms": args.tpot_limit_ms,
+                "gate": "every measured repetition must satisfy the bound",
+            },
             protocol={
                 "input_lengths": args.input_lengths,
                 "concurrencies": args.concurrencies,
@@ -321,14 +422,8 @@ def run(args):
             },
         )
         write_json(args.output / "server_info.json", info)
-        with (args.output / "npu-smi-before.txt").open("w", encoding="utf-8") as file:
-            subprocess.run(
-                ["npu-smi", "info"],
-                stdout=file,
-                stderr=subprocess.STDOUT,
-                check=True,
-                timeout=30,
-            )
+        record["memory_before"] = memory_snapshot(args.output / "npu-smi-before.txt")
+        server_log = path.parent / "server.log"
         # Interleave cases across repetitions to expose time-dependent drift.
         for repeat in range(args.rounds):
             for length in args.input_lengths:
@@ -337,6 +432,15 @@ def run(args):
                     count = max(4, concurrency * args.waves)
                     name = f"i{length}-o{args.new_tokens}-c{concurrency}-r{repeat + 1}"
                     raw_path = args.output / f"{name}.jsonl"
+                    record["active_case"] = {
+                        "name": name,
+                        "raw_result": str(raw_path),
+                        "client_log": str(args.output / f"{name}.log"),
+                    }
+                    write_json(summary_path, record)
+                    log_offset = (
+                        server_log.stat().st_size if server_log.exists() else None
+                    )
                     command = [
                         sys.executable,
                         "-m",
@@ -382,13 +486,9 @@ def run(args):
                         f"START {name}: {count} requests; warmup={concurrency}",
                         flush=True,
                     )
-                    if (
-                        config["max_total_tokens"]
-                        and concurrency * (length + args.new_tokens)
-                        > config["max_total_tokens"]
-                    ):
+                    if capacity and concurrency * (length + args.new_tokens) > capacity:
                         print(
-                            "NOTE: concurrent token demand exceeds max_total_tokens; server scheduling can reduce active batch size",
+                            f"NOTE: {concurrency} clients demand {concurrency * (length + args.new_tokens)} tokens, actual pool={capacity}; active decode batch may be lower",
                             flush=True,
                         )
                     with (args.output / f"{name}.log").open(
@@ -419,6 +519,14 @@ def run(args):
                         "requests": count,
                         "raw_result": raw_path.name,
                         **{key: result[key] for key in METRICS},
+                        "meets_tpot_slo": result["mean_tpot_ms"] < args.tpot_limit_ms,
+                        "decode_batch": batch_observations(server_log, log_offset)
+                        if log_offset is not None
+                        else {
+                            "samples": 0,
+                            "max": None,
+                            "scope": "server.log unavailable",
+                        },
                     }
                     record["cases"].append(case)
                     write_json(summary_path, record)
@@ -427,15 +535,11 @@ def run(args):
                         flush=True,
                     )
         live_manifest(path, launch["port"])
-        with (args.output / "npu-smi-after.txt").open("w", encoding="utf-8") as file:
-            subprocess.run(
-                ["npu-smi", "info"],
-                stdout=file,
-                stderr=subprocess.STDOUT,
-                check=True,
-                timeout=30,
-            )
+        record["memory_after"] = memory_snapshot(args.output / "npu-smi-after.txt")
         record["status"] = "pass"
+        record.pop("active_case", None)
+        write_json(args.output / "slo-summary.json", slo_summary(record))
+        print(json.dumps(slo_summary(record)["best"], indent=2), flush=True)
         print(f"Completed {args.mode}: {summary_path}", flush=True)
     except Exception as error:
         record.update(status="fail", error=str(error))
@@ -462,106 +566,189 @@ def grouped(record):
     return groups
 
 
-def compare_pair(baseline, optimized):
-    base = json.loads((baseline / "performance.json").read_text(encoding="utf-8"))
-    opt = json.loads((optimized / "performance.json").read_text(encoding="utf-8"))
-    if (
-        base["status"] != "pass"
-        or opt["status"] != "pass"
-        or base["mode"] != "baseline"
-        or opt["mode"] != "lim_copy_sfa"
-    ):
-        raise ValueError("Require a complete baseline and a complete lim_copy_sfa run")
-    for key in ("protocol", "server_configuration"):
-        if base[key] != opt[key]:
-            raise ValueError(f"A/B mismatch in {key}; use identical settings")
-    for key in ("sglang_revision", "kernel_revision", "packages"):
-        if base["launch"][key] != opt["launch"][key]:
-            raise ValueError(f"A/B source mismatch: {key}")
-    for key in ENV_KEYS:
-        if (
-            key not in MODE_ENV
-            and base["launch"]["environment"][key] != opt["launch"]["environment"][key]
-        ):
-            raise ValueError(f"A/B environment mismatch: {key}")
-    left, right = grouped(base), grouped(opt)
-    cache = int(base["launch"]["environment"]["SGLANG_NPU_SPARSE_KV_CACHE_SIZE"])
-    rows = []
-    for length, concurrency in sorted(left):
-        b, o = left[length, concurrency], right[length, concurrency]
-        row = {
-            "cache_tokens": cache,
-            "input_tokens": length,
-            "output_tokens": base["protocol"]["new_tokens"],
-            "concurrency": concurrency,
-        }
-        for key in METRICS:
-            bv, ov = [item[key] for item in b], [item[key] for item in o]
-            bm, om = statistics.median(bv), statistics.median(ov)
-            row.update({f"baseline_{key}": bm, f"optimized_{key}": om})
-            if key == "output_throughput":
-                row.update(
-                    throughput_speedup=om / bm,
-                    throughput_gain_pct=(om / bm - 1) * 100,
-                    baseline_throughput_min=min(bv),
-                    baseline_throughput_max=max(bv),
-                    optimized_throughput_min=min(ov),
-                    optimized_throughput_max=max(ov),
-                )
-            elif key.endswith("_ms"):
-                row[f"{key}_reduction_pct"] = (1 - om / bm) * 100
-        rows.append(row)
-    return rows, base
+def slo_summary(record):
+    """Keep workloads separate and gate *all* rounds, not just a fast median."""
+    limit = record["objective"]["strict_upper_bound_ms"]
+    points = []
+    for (length, concurrency), samples in sorted(grouped(record).items()):
+        batches = [
+            item["decode_batch"]["max"]
+            for item in samples
+            if item.get("decode_batch", {}).get("max") is not None
+        ]
+        points.append(
+            {
+                "mode": record["mode"],
+                "cache_tokens": int(
+                    record["launch"]["environment"]["SGLANG_NPU_SPARSE_KV_CACHE_SIZE"]
+                ),
+                "input_tokens": length,
+                "output_tokens": record["protocol"]["new_tokens"],
+                "client_concurrency": concurrency,
+                **{
+                    key: statistics.median(item[key] for item in samples)
+                    for key in METRICS
+                },
+                "worst_round_mean_tpot_ms": max(
+                    item["mean_tpot_ms"] for item in samples
+                ),
+                "below_50ms_target": all(item["mean_tpot_ms"] < 50 for item in samples),
+                "meets_slo": all(item["mean_tpot_ms"] < limit for item in samples),
+                "observed_decode_batch_max": max(batches) if batches else None,
+            }
+        )
+    best = []
+    for length in record["protocol"]["input_lengths"]:
+        candidates = [
+            point
+            for point in points
+            if point["input_tokens"] == length and point["meets_slo"]
+        ]
+        winner = (
+            max(
+                candidates,
+                key=lambda point: (
+                    point["output_throughput"],
+                    -point["client_concurrency"],
+                ),
+            )
+            if candidates
+            else None
+        )
+        best.append(
+            {
+                "input_tokens": length,
+                "point": winner,
+                "scope": "best measured point; extend scan if optimum is at an edge",
+            }
+        )
+    return {
+        "objective": record["objective"],
+        "aggregation": "median per metric across rounds; SLO must pass every round",
+        "points": points,
+        "best": best,
+    }
 
 
 def compare(args):
-    baselines = [args.baseline] if isinstance(args.baseline, Path) else args.baseline
-    optimized = [args.optimized] if isinstance(args.optimized, Path) else args.optimized
+    baselines, optimized = args.baseline, args.optimized
     if len(baselines) != len(optimized):
         raise ValueError("Pass matching baseline/optimized directories for each C")
-    rows, reference, seen = [], None, set()
+    rows, points, configurations, seen = [], [], [], set()
+    reference = None
     for baseline, opt in zip(baselines, optimized):
-        pair, base = compare_pair(baseline, opt)
-        cache = pair[0]["cache_tokens"]
-        if cache in seen:
-            raise ValueError(f"Repeated C={cache}; pass one A/B pair per cache budget")
+        base, tuned = [
+            json.loads((directory / "performance.json").read_text(encoding="utf-8"))
+            for directory in (baseline, opt)
+        ]
+        if (
+            base["status"] != "pass"
+            or tuned["status"] != "pass"
+            or base["mode"] != "baseline"
+            or tuned["mode"] != "lim_copy_sfa"
+        ):
+            raise ValueError(
+                "Require complete baseline and lim_copy_sfa runs; failed requests cannot become speedups"
+            )
+        cache = int(base["launch"]["environment"]["SGLANG_NPU_SPARSE_KV_CACHE_SIZE"])
+        if (
+            cache in seen
+            or str(cache)
+            != tuned["launch"]["environment"]["SGLANG_NPU_SPARSE_KV_CACHE_SIZE"]
+        ):
+            raise ValueError("Require one matching A/B pair per cache budget")
         seen.add(cache)
-        if reference is not None:
-            for key in ("protocol", "server_configuration"):
-                if base[key] != reference[key]:
-                    raise ValueError(f"Different C groups use different {key}")
-            for key in ("sglang_revision", "kernel_revision", "packages"):
-                if base["launch"][key] != reference["launch"][key]:
-                    raise ValueError(f"Different C groups use different {key}")
-            for key in ENV_KEYS:
+        if reference is None:
+            reference = base
+        for candidate in (base, tuned):
+            for key in ("objective",):
+                if candidate[key] != reference[key]:
+                    raise ValueError(f"Different {key}")
+            for key in reference["protocol"]:
                 if (
-                    key not in MODE_ENV + ("SGLANG_NPU_SPARSE_KV_CACHE_SIZE",)
-                    and base["launch"]["environment"][key]
-                    != reference["launch"]["environment"][key]
+                    key != "concurrencies"
+                    and candidate["protocol"][key] != reference["protocol"][key]
                 ):
-                    raise ValueError(f"Different C groups use different {key}")
-        reference = base
-        rows.extend(pair)
+                    raise ValueError(f"Different protocol: {key}")
+            for key in SERVER_KEYS:
+                if (
+                    key not in TUNING_KEYS
+                    and candidate["server_configuration"][key]
+                    != reference["server_configuration"][key]
+                ):
+                    raise ValueError(f"Different server setting: {key}")
+            for key in ("sglang_revision", "kernel_revision", "packages"):
+                if candidate["launch"][key] != reference["launch"][key]:
+                    raise ValueError(f"Different source/package: {key}")
+            for key in ENV_KEYS:
+                if key not in MODE_ENV + (
+                    "SGLANG_NPU_SPARSE_KV_CACHE_SIZE",
+                ) and candidate["launch"]["environment"].get(key) != reference[
+                    "launch"
+                ]["environment"].get(key):
+                    raise ValueError(f"Different environment: {key}")
+        summaries = [slo_summary(candidate) for candidate in (base, tuned)]
+        points.extend(summaries[0]["points"] + summaries[1]["points"])
+        configurations.append(
+            {
+                "cache_tokens": cache,
+                "baseline": str(baseline),
+                "optimized": str(opt),
+                "baseline_configuration": base["server_configuration"],
+                "optimized_configuration": tuned["server_configuration"],
+                "baseline_actual_token_capacity": base.get("actual_token_capacity"),
+                "optimized_actual_token_capacity": tuned.get("actual_token_capacity"),
+                "baseline_memory": base.get("memory_after"),
+                "optimized_memory": tuned.get("memory_after"),
+            }
+        )
+        for left, right in zip(summaries[0]["best"], summaries[1]["best"]):
+            b, o = left["point"], right["point"]
+            row = {
+                "cache_tokens": cache,
+                "input_tokens": left["input_tokens"],
+                "output_tokens": base["protocol"]["new_tokens"],
+                "baseline_eligible": b is not None,
+                "optimized_eligible": o is not None,
+            }
+            for prefix, point in (("baseline", b), ("optimized", o)):
+                for key in (
+                    "client_concurrency",
+                    "observed_decode_batch_max",
+                    *METRICS,
+                    "worst_round_mean_tpot_ms",
+                ):
+                    row[f"{prefix}_{key}"] = point[key] if point else None
+            row["throughput_speedup"] = (
+                o["output_throughput"] / b["output_throughput"] if b and o else None
+            )
+            rows.append(row)
     args.output.mkdir(parents=True, exist_ok=True)
     write_json(
         args.output / "comparison.json",
         {
-            "baseline": [str(path) for path in baselines],
-            "optimized": [str(path) for path in optimized],
-            "aggregation": "median across repetitions; no pooling across workloads",
+            "objective": reference["objective"],
+            "scope": "highest measured whole-model output throughput satisfying mean TPOT in every round; independent concurrency optima, same model/topology/memory fraction",
             "rows": rows,
+            "points": points,
+            "configurations": configurations,
         },
     )
-    with (args.output / "comparison.csv").open(
-        "w", encoding="utf-8", newline=""
-    ) as file:
-        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-    text = "| C | Input | Output | Concurrency | Baseline tok/s | LIM+Copy tok/s | Speedup | TPOT reduction | TTFT reduction |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    for name, data in (("comparison", rows), ("all-points", points)):
+        with (args.output / f"{name}.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as file:
+            writer = csv.DictWriter(file, fieldnames=list(data[0]))
+            writer.writeheader()
+            writer.writerows(data)
+
+    def cell(value):
+        return "N/A" if value is None else f"{value:.2f}"
+
+    text = "| C | Input | Baseline clients | Baseline tok/s | Baseline mean TPOT ms | HiSparse clients | HiSparse tok/s | HiSparse mean TPOT ms | Throughput ratio |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
     for row in rows:
-        text += f"| {row['cache_tokens']} | {row['input_tokens']} | {row['output_tokens']} | {row['concurrency']} | {row['baseline_output_throughput']:.2f} | {row['optimized_output_throughput']:.2f} | {row['throughput_speedup']:.3f}x | {row['mean_tpot_ms_reduction_pct']:+.2f}% | {row['mean_ttft_ms_reduction_pct']:+.2f}% |\n"
-    text += "\nPositive reduction = lower latency; negative = regression. Throughput includes prefill, scheduling and decode. P95 values in CSV/JSON are medians of per-run P95 values.\n"
+        text += f"| {row['cache_tokens']} | {row['input_tokens']} | {cell(row['baseline_client_concurrency'])} | {cell(row['baseline_output_throughput'])} | {cell(row['baseline_mean_tpot_ms'])} | {cell(row['optimized_client_concurrency'])} | {cell(row['optimized_output_throughput'])} | {cell(row['optimized_mean_tpot_ms'])} | {cell(row['throughput_speedup'])} |\n"
+    text += "\nN/A = no measured point satisfies the bound. This is the best scanned point, not a proof of the global maximum. all-points.csv includes P95 TPOT, TTFT and observed decode batches; comparison.json records actual capacities/configurations and device-wide memory snapshots. Throughput includes prefill and queueing; batch observations include warmup.\n"
     (args.output / "comparison.md").write_text(text, encoding="utf-8")
     print(text, flush=True)
     print(f"Results: {args.output}", flush=True)
@@ -577,8 +764,10 @@ if __name__ == "__main__":
     prepare = subparsers.add_parser("prepare-configs")
     prepare.add_argument("--config", type=Path, required=True)
     prepare.add_argument("--output", type=Path, required=True)
-    prepare.add_argument("--context-length", type=int, default=132096)
-    prepare.add_argument("--max-total-tokens", type=int, default=147456)
+    prepare.add_argument("--context-length", type=int, default=135168)
+    prepare.add_argument("--max-total-tokens", type=int)
+    prepare.add_argument("--max-running-requests", type=int, default=16)
+    prepare.add_argument("--concurrencies", type=int, nargs="+", default=[2, 4, 8, 16])
     bench = subparsers.add_parser("run")
     bench.add_argument("--mode", choices=("baseline", "lim_copy_sfa"), required=True)
     bench.add_argument("--url", default="http://127.0.0.1:8810")
@@ -588,11 +777,12 @@ if __name__ == "__main__":
     bench.add_argument(
         "--input-lengths", type=int, nargs="+", default=[131072, 65536, 16384]
     )
-    bench.add_argument("--concurrencies", type=int, nargs="+", default=[1])
+    bench.add_argument("--concurrencies", type=int, nargs="+", default=[2, 4, 8, 16])
     bench.add_argument("--new-tokens", type=int, default=1024)
-    bench.add_argument("--rounds", type=int, default=3)
-    bench.add_argument("--waves", type=int, default=4)
-    bench.add_argument("--case-timeout", type=int, default=3600)
+    bench.add_argument("--rounds", type=int, default=1)
+    bench.add_argument("--waves", type=int, default=2)
+    bench.add_argument("--case-timeout", type=int, default=14400)
+    bench.add_argument("--tpot-limit-ms", type=float, default=60)
     report = subparsers.add_parser("compare")
     report.add_argument("--baseline", type=Path, nargs="+", required=True)
     report.add_argument("--optimized", type=Path, nargs="+", required=True)

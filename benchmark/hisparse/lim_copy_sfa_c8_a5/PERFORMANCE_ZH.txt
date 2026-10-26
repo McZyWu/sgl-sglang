@@ -1,150 +1,135 @@
-A5 C8：128K/64K/16K -> 1K，C2048/C4096 的整网性能对比
-====================================================
+A5 C8 整网容量与吞吐：以平均 TPOT 约 50 ms/token 为目标
+===================================================
 
-固定测试矩阵（1K=1024 tokens）
-----------------------------
-输入 131072 / 65536 / 16384，输出固定 1024，C 分别为 2048 / 4096。
-TopK K 始终是 2048；C 是每请求稳定前缀的持久 HBM cache 容量，额外 tail 区不计入 C。
-每个 C 都分别运行普通 C8 baseline 与 C8 + LIM + Copy-SFA，共 4 次服务启动，
-汇总为 6 行 A/B 对比。默认客户端并发为 1，排除长上下文下容量不足导致的排队。
-baseline 仍使用 C8 KV 和相同模型、并行拓扑、预算、DeepEP、overlap、graph；
-只关闭 sparse offload/LIM/Copy-SFA。两边都关闭 MLAPO 与 radix cache。
-结果是组合方案的整网收益，不能拆成某个算子的加速比，也不是 C8 相比 BF16 的收益。
+10-26 更新：本流程代替原来的固定并发 1 实验。
+普通 C8 baseline 关闭 sparse offload/LIM/Copy-SFA；lim_copy_sfa 打开这三项。
+模型、权重精度、拓扑、mem_fraction_static、overlap、PrefillDelayer、DeepEP 一致。
+每种模式独立扫描客户端并发，寻找可接受 TPOT 下最高的整网输出吞吐。
+C=2048/4096，K=2048；输入 131072/65536/16384，输出严格为 1024 tokens。
+目标平均 TPOT 50 ms/token；按用户允许“50 多也可以”，默认候选上限为 <60。
+每轮都须低于候选上限；报告同时保存平均/P95 TPOT、是否低于 50、TTFT 和吞吐。
+--tpot-limit-ms 可调整上限。这里的最优只代表已扫描点；边界最优需扩展扫描。
 
-10-26 适配后两仓均使用 feat/hisparse-lim-copysfa-c8-a5-10-26，原分支保留。
-本次未改 A5 C8 原生实现/接口及 988ad6d 写回修正，可沿用其已安装 A5 wheel；
-若需验收新分支完整构建产物，先 build-kernel 并记录 wheel SHA256，不重编 DeepEP。
-先完成 PORT_OPT_217_20261026.txt 中的新容量回归，再运行正式性能矩阵。
-需要通过更新后的 container.sh serve 重新启动本次服务，
-新启动会保存 launch.json，绑定模式、PID/进程启动时间、两仓提交、包版本和选定环境。
-客户端只访问容器内本机 HTTP，自动查找同一个 C8_RESULTS_DIR 下的存活 manifest；
-缺失、PID 已退出、模式错误或服务/客户端提交不同都会停止测试。
+为什么旧实验失败/不适合找最大吞吐
+---------------------------------
+1. 旧 context=132096 恰好等于输入+输出。worker max_req_len=context-1，
+   scheduler 再保留 1，因此实机四个请求都被裁成 1022，errors 为空。
+   新配置 context=135168，新客户端先检查输入+输出+2 与实际 token 容量。
+   仍要求满 1024；不会把短输出当成通过。
+2. 旧 max_total_tokens=147456 对 128K 最多容纳约一个完整请求，增加客户端
+   并发通常只增加排队。新配置默认清空该显式上限，由各模式按同一 0.8 等
+   mem_fraction_static 和实际内存预算确定 token 池。保留实际 max_total_num_tokens。
+3. 旧 --cuda-graph-bs-decode 16 只捕获 [16]。新配置使用 [1,2,4,8,16]，
+   避免所有小 batch 补齐到 16；最大请求数先保留 16，不盲目扩大预分配 DRAM。
+4. Copy-SFA 的 2048 blocks 限制是每请求的 block-table 宽度，即最多 262144
+   tokens 的行（含 req_to_token 额外列和 padding）。不是全局 indexer token 池
+   上限。新生成器允许总池 >262144，同时限制 context<=262140。
 
-0. 生成四份长上下文配置
-----------------------
-128K 输入 + 1K 输出至少要求 context_length=132096；原来的 36864 不够。
-原来的 max_total_tokens=131072 也放不下一个完整请求。脚本从你已验证的 C8_CONFIG
-复制配置，在副本末尾固定覆盖 context=132096、max_total_tokens=147456、C/模式和
-测试矩阵。原配置文件保持不变，其他模型/拓扑/通信等设置沿用原配置。
-
-  export C8_CONFIG=/workspace/c8-a5.env  # 改为你现有配置的实际路径
+更新代码（只需 SGLang Python/脚本；本次不改 kernel ABI，不重编 kernel/DeepEP）
+--------------------------------------------------------------------------
+  export BRANCH=feat/hisparse-lim-copysfa-c8-a5-10-26
+  git -C /mnt/share/wzy/sgl-sglang switch "$BRANCH"
+  git -C /mnt/share/wzy/sgl-sglang pull --ff-only https://github.com/McZyWu/sgl-sglang.git "$BRANCH"
   export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+
+只停止自己的测试服务并等其进程退出，随后用新配置重启。服务和客户端提交须一致。
+同一个容器开两个终端；不同容器的 localhost/PID namespace 不能混用。
+
+生成配置，只生成一次并固定目录
+----------------------------
+终端一（C8_CONFIG 使用你原来验证过的配置路径）：
+  export C8_CONFIG=/workspace/c8-a5.env
   bash "$C8_SCRIPT" perf-configs
 
-记下生成目录，例如：
-  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-20261024-120000-123
+记下上一步实际打印的目录，例如（替换为实际值，两个终端必须相同）：
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-实际日期时间PID
 
-目录中有：c2048-lim_copy_sfa.env、c2048-baseline.env、
-c4096-lim_copy_sfa.env、c4096-baseline.env。两个终端都设置相同的 C8_SCRIPT 与
-PERF_CONFIGS。这里每份配置都已固定模式，不再依赖 LIM_EVAL_MODE 的环境覆盖。
+会生成四个 env：c2048-baseline、c2048-lim_copy_sfa、c4096-baseline、
+c4096-lim_copy_sfa。原配置保持不变。基线不使用 C，第二组 baseline 是重复对照。
+默认初筛并发 2/4/8/16，1 轮，每轮请求数=并发*2；每档预热并发个请求、输出最多32，
+预热不计入指标。正式输出始终1024、ignore_eos=true、temperature=0。
+128K prefill很耗时，初筛后在最佳点附近用 --rounds 3 --waves 4 复测；
+正式比较两边使用一致轮数/波数。默认每个case超时14400秒，可用--case-timeout改。
 
-147456 是为这次单并发长上下文实验设置的总 token 预算，不代表一定适配每套 A5
-模型显存。服务必须实际启动成功。baseline 若装不下相同预算，不能仅降低 baseline
-预算后继续声称同配置加速；需使用两边都能运行且至少覆盖 132096 tokens 的相同值。
-同时修改四份配置后重跑。A5 C8 的物理源池含 padding 必须 <=262144，沿用现有校验。
+终端一：选 CASE 并启动服务
+-------------------------
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-实际日期时间PID
+  export CASE=c2048-lim_copy_sfa
+  export C8_CONFIG="$PERF_CONFIGS/$CASE.env"
+  test -f "$C8_CONFIG" && bash "$C8_SCRIPT" serve
 
-1. C2048：先优化，再 baseline
-----------------------------
-只停止自己当前前台启动的本次测试服务，等待其 NPU 进程退出；不停止其他服务。
-终端一启动优化服务，等待 ready：
-  C8_CONFIG="$PERF_CONFIGS/c2048-lim_copy_sfa.env" bash "$C8_SCRIPT" serve
+服务 ready 后终端二：
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-实际日期时间PID
+  export CASE=c2048-lim_copy_sfa
+  export C8_CONFIG="$PERF_CONFIGS/$CASE.env"
+  test -f "$C8_CONFIG" && bash "$C8_SCRIPT" perf "${CASE#*-}"
 
-终端二：
-  C8_CONFIG="$PERF_CONFIGS/c2048-lim_copy_sfa.env" bash "$C8_SCRIPT" perf lim_copy_sfa
+这是性能扫描，无须在 perf 前反复跑 smoke/GSM8K。精度与覆盖诊断单独运行。
+记录输出 perf-* 目录为 OPT2048。终端一 Ctrl-C 停止自己的服务并等退出后，
+依次将两个终端的 CASE 改成 c2048-baseline、c4096-lim_copy_sfa、c4096-baseline，
+重复 serve/perf，分别记录 BASE2048、OPT4096、BASE4096。
+初筛示例（四种模式都用相同参数）：
+  bash "$C8_SCRIPT" perf "${CASE#*-}" --rounds 1 --waves 2
 
-记下输出的 perf-* 目录，命名为 OPT2048。终端一 Ctrl-C 停止该服务并等待退出，再：
-  C8_CONFIG="$PERF_CONFIGS/c2048-baseline.env" bash "$C8_SCRIPT" serve
-
-ready 后终端二：
-  C8_CONFIG="$PERF_CONFIGS/c2048-baseline.env" bash "$C8_SCRIPT" perf baseline
-
-记下结果目录为 BASE2048。
-
-2. C4096：同样两次启动
----------------------
-终端一先停止前一个测试服务并等待退出，再启动：
-  C8_CONFIG="$PERF_CONFIGS/c4096-lim_copy_sfa.env" bash "$C8_SCRIPT" serve
-
-ready 后终端二：
-  C8_CONFIG="$PERF_CONFIGS/c4096-lim_copy_sfa.env" bash "$C8_SCRIPT" perf lim_copy_sfa
-
-记下结果目录为 OPT4096。终端一停止该服务并等待退出，再：
-  C8_CONFIG="$PERF_CONFIGS/c4096-baseline.env" bash "$C8_SCRIPT" serve
-
-ready 后终端二：
-  C8_CONFIG="$PERF_CONFIGS/c4096-baseline.env" bash "$C8_SCRIPT" perf baseline
-
-记下结果目录为 BASE4096。baseline 本身不使用 C cache，仍各测一次作为同时间段
-对照，估计测量漂移；不能把 baseline 的重复测量差异解释成 C 的收益。
-
-3. 一次汇总六行结果
-------------------
-终端二把以下变量替换为各次实际输出的目录，按顺序传入：
+一次对比独立最优点
+-----------------
   BASE2048=/workspace/c8-a5-results/perf-实际目录1
   OPT2048=/workspace/c8-a5-results/perf-实际目录2
   BASE4096=/workspace/c8-a5-results/perf-实际目录3
   OPT4096=/workspace/c8-a5-results/perf-实际目录4
   bash "$C8_SCRIPT" perf-compare "$BASE2048" "$OPT2048" "$BASE4096" "$OPT4096"
 
-也可先只对比一个 C：
-  bash "$C8_SCRIPT" perf-compare "$BASE2048" "$OPT2048"
+comparison.md/csv：每个 C、每档长度，分别列 baseline 和优化的最佳客户端并发、
+吞吐、TPOT、倍率；无候选点显示 N/A。all-points.csv 保留全部并发曲线和P95等。
+comparison.json 记录每种模式实际池容量、启动配置与 NPU HBM 快照。
+每次 perf 的 slo-summary.json 也单独给出该模式的所有点和最佳点。
+性能数据跨轮中位数，门槛要求每轮都满足，不混合不同长度或 C。
+输入为固定seed的合成inventory文本，仓库random loader重复/截断到精确token长度；
+重复内容会影响TopK/miss分布，结论限于该工作负载，可再用真实长文本复测。
 
-输出 comparison.md / comparison.csv / comparison.json，列出 C、输入/输出长度、
-并发、baseline/优化吞吐、加速比、平均及 P95 TTFT/TPOT、端到端平均延迟。
-脚本拒绝不完整/有失败的结果，以及协议、模型/精度、拓扑、预算、graph、overlap、
-PrefillDelayer、DeepEP、两仓提交、包版本、选定通信环境不同的结果。每对 A/B 的 C
-必须相同；两对之间只允许 C 不同。保留 serve-* 的 server.log 和 launch.json。
+允许为找峰值调整 max_total_tokens、max_running_requests、graph buckets，
+比较器将这些差异明列；其他受检查配置/源码/环境和工作负载必须一致。
+不能把独立最优点倍率称为“相同 batch 的算子加速比”。
 
-测量协议与有效性
+进一步扩大 batch
 ----------------
-每组先发 1 个预热请求（仓库客户端预热输出 32 tokens，不计入指标），随后发 4 个
-正式请求，固定生成 1024 tokens、ignore_eos=true、temperature=0。完整三档矩阵
-重复 3 轮，每个工作负载共 12 个正式请求。每次启动 9 个 case、36 个正式请求、
-36864 个正式生成 token；四次共 144 个正式请求、147456 个生成 token，另有预热。
+先看每个 perf 的 server_info.json 中 max_total_num_tokens、internal_states 里的
+memory_usage/effective_max_running_requests_per_dp，再看实际 Decode batch 日志。
+客户端并发不等于活跃 batch；脚本从 serve-*/server.log 截取各 case 的日志样本，
+记录 decode batch 的 min/median/max（含预热，按scheduler/DP，不是graph补齐大小）。
+未启用日志或无样本将标为未知，不从客户端并发推断 batch。
 
-复用 python -m sglang.benchmark.serving --backend sglang，流式返回，要求
-stream_interval=1，MTP/其他 speculative decoding 关闭。本地生成自然语言合成清单，
-无需下载数据；仓库 random loader 用 seed=42 重复/截断输入，--tokenize-prompt
-保持精确 token 数，--random-range-ratio 1 固定输入/输出长度。各轮原始 JSONL、
-命令、日志、逐请求长度和延迟保留，数据 SHA256 必须相同。
-合成文本的重复内容会影响 TopK/cache 命中分布；结论限于此工作负载，正式报告建议
-再用你的真实长文本复测。性能检查不判断答案正确率，精度仍使用 GSM8K 等独立评测。
+若最优落在16、TPOT尚可，并且主机DRAM和HBM足够，可另生成32档配置：
+  C8_CONFIG=/workspace/c8-a5.env bash "$C8_SCRIPT" perf-configs \
+    --max-running-requests 32 --concurrencies 2 4 8 16 24 32
+用新目录重新启动、重新扫描。此步骤会扩大主机DRAM预分配与graph/通信需求；
+现有每rank DeepEP dispatch cap=32，只在实际含padding的token数<=32时适用。
+更大batch需要先核对并一致调整两边通信容量/窗口，不能直接把并发改成64/128。
 
-每轮要求全部请求成功、错误为空、输入长度准确、输出恰好 1024 tokens、首 token
-计时有效、服务配置不变。失败/超时将非零退出并保留 status=fail，部分成功不能拿来
-计算收益。每次结果包含 npu-smi 前后快照；测试时独占这组卡，不并行运行 GSM8K、
-smoke 或其他压测。客户端不启动/关闭服务、不自动重试、不修改 DeepEP/graph/overlap。
+DRAM每rank约 R * align128(context+4) * 656 * 本地KV层数，R含预留行。
+TP8下各rank独立分配；增加 max_running_requests 会线性增加DRAM，并不因 C 较小
+而免除完整 host KV。16K/64K 专项如需更大batch，可降低 context 减少DRAM；
+对应 baseline/优化需相同context，并用 --input-lengths 16384 等单独测、单独汇总。
 
-output_throughput = 完成的输出 token 总数 / 正式请求批次持续时间，包含 prefill、
-调度与 decode，是整网输出吞吐，不是纯 decode 算子吞吐。
-TTFT = 请求发出到第一个非空流式 token 的时间，包含服务端排队和 prefill。
-TPOT = 每个请求 (端到端延迟 - TTFT) / (输出 tokens - 1)，用于观察 decode 阶段。
-每个工作负载跨 3 轮取中位数，不把不同输入长度/C/并发混成一个总加速比。
-吞吐加速比 = 优化吞吐 / baseline 吞吐，大于 1 为加速。
-延迟降低 = (1 - 优化延迟 / baseline 延迟) × 100%，正数为降低，负数为回退。
-CSV/JSON 保留吞吐 min/max；P95 为每轮 P95 的跨轮中位数，每轮 4 个样本的 P95
-仅供参考。小于测量波动的变化需要增加请求数/轮数复测。正式结论建议交换测试顺序
-再跑一对，排除温度、频率、其他负载和时间漂移的影响。
+指标及内存解释
+-------------
+TPOT=request(端到端延迟-TTFT)/(输出token-1)，再对请求求平均；P95也保留。
+吞吐=总输出token/正式批次墙钟时间，含prefill、排队、decode、batch爬升/收尾。
+batch增大通常先摊薄权重/算力开销、增加吞吐；随后计算、indexer、DRAM访问、
+通信和prefill干扰可能拉高TPOT，甚至吞吐回落。因此按实测曲线选点，不外推。
+128K prefill 很长；即使decode更快，整网吞吐也可能仍受prefill影响，TTFT必须同看。
 
-可调整轮数/请求数（所有模式/C 必须一致）
-------------------------------------
-生成的配置固定了默认协议，可用显式参数覆盖，例如：
-  C8_CONFIG="$PERF_CONFIGS/c2048-lim_copy_sfa.env" \
-    bash "$C8_SCRIPT" perf lim_copy_sfa --rounds 5 --waves 8
+npu-smi 的 HBM usage 是 used/total。例如79321/98304 MB已用约77.5GiB，
+剩约18.5GiB/卡。8卡余量不能直接合并成一张卡空间。
+同一mem_fraction_static自动池实验会把节省的HBM转成更大indexer池，因此总HBM
+可能接近；收益表现为更多token容量/活跃请求和吞吐，不能仅凭空闲HBM判定节省。
+需要“同等token容量下少占多少HBM”，另生成 --max-total-tokens 147456 的匹配
+容量配置，只比较HBM；该128K容量仍难支持大batch，与找最大吞吐的实验分开。
+保存的npu-smi是设备整体的测试前/后快照，不是进程净分配或连续采样峰值。
 
-也可先只跑 16K 快速确认，再使用默认完整矩阵：
-  C8_CONFIG="$PERF_CONFIGS/c2048-lim_copy_sfa.env" \
-    bash "$C8_SCRIPT" perf lim_copy_sfa --input-lengths 16384 --rounds 1
-
-增大并发前，确认 max_total_tokens 和物理源池容量。128K 单请求已占大部分 147456
-预算，并发 8 不等于实际 decode batch=8；脚本会对超预算并发打印 NOTE。默认并发 1
-就是为先获得这六组明确可比较的长上下文结果。每个 case 默认 3600 秒超时，
---case-timeout 可覆盖；超时只结束该 case 客户端，服务留在前台供检查。
-
-脚本自身验证（2026-10-24）
--------------------------
-Bash 语法、Python lint/format、15 类离线 shell 参数/退出状态检查通过。
-真实仓库 serving 客户端已对 CPU HTTP/SSE fixture 跑通多轮、不同输入/并发的两种
-标签及最终 4 请求协议；配置不一致、请求错误、长度不符、无首 token 时间会拒绝。
-另验证了四份配置覆盖原配置固定值、两个 C 汇总、中位数及加速/回退符号计算。
-这些是客户端与控制流程验证，没有运行 A5 模型，也没有产生 A5 性能收益结论。
+所有请求须成功且长度精确。失败即非零退出，performance.json保留active_case、
+原始JSONL/log路径和错误；不能使用失败/部分结果计算收益。
+测试时独占本次卡组，勿并行GSM8K/smoke。客户端不自动启动/停止服务。
+可选offload诊断见 OFFLOAD_TRACE_ZH.txt；性能测试必须关闭，客户端会检查。

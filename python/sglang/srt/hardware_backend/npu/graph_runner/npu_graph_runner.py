@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Dict, Optional, Union
 
 import numpy as np
 import torch
+
 from sglang.srt.configs.model_config import (
     AttentionArch,
     is_deepseek_dsa,
@@ -45,6 +46,9 @@ from sglang.srt.distributed.parallel_state import (
 from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.config import (
     is_copy_sfa_decode_graph_eligible,
+)
+from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.trace import (
+    c8_trace_for_backend,
 )
 from sglang.srt.model_executor.runner import DecodeCudaGraphRunner
 from sglang.srt.model_executor.runner.decode_cuda_graph_runner import (
@@ -128,6 +132,9 @@ class NPUGraphRunner(DecodeCudaGraphRunner):
             speculative_num_steps=speculative_num_steps,
             speculative_num_draft_tokens=speculative_num_draft_tokens,
         )
+        self.c8_offload_trace = c8_trace_for_backend(self._replay_attn_backend())
+        if self.c8_offload_trace is not None:
+            self.c8_offload_trace.reset()
         self.update_attr_name = None
         self.update_attr_type = None
         self.model_runner = model_runner
@@ -422,6 +429,9 @@ class NPUGraphRunner(DecodeCudaGraphRunner):
             )
         else:
             output = self.backend.replay(graph_key, forward_batch)
+
+        if getattr(self, "c8_offload_trace", None) is not None:
+            self.c8_offload_trace.maybe_log("graph_decode")
 
         if isinstance(output, LogitsProcessorOutput):
             if self.is_dllm:
