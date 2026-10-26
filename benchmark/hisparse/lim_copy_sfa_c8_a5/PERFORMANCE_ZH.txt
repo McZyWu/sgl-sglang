@@ -11,8 +11,11 @@ baseline 仍使用 C8 KV 和相同模型、并行拓扑、预算、DeepEP、over
 只关闭 sparse offload/LIM/Copy-SFA。两边都关闭 MLAPO 与 radix cache。
 结果是组合方案的整网收益，不能拆成某个算子的加速比，也不是 C8 相比 BF16 的收益。
 
-只需拉取 SGLang 的 feat/hisparse-lim-copysfa-c8-a5 分支，Kernel 保持已经验证的
-988ad6d wheel，不需重编。需要通过更新后的 container.sh serve 重新启动本次服务，
+10-26 适配后两仓均使用 feat/hisparse-lim-copysfa-c8-a5-10-26，原分支保留。
+本次未改 A5 C8 原生实现/接口及 988ad6d 写回修正，可沿用其已安装 A5 wheel；
+若需验收新分支完整构建产物，先 build-kernel 并记录 wheel SHA256，不重编 DeepEP。
+先完成 PORT_OPT_217_20261026.txt 中的新容量回归，再运行正式性能矩阵。
+需要通过更新后的 container.sh serve 重新启动本次服务，
 新启动会保存 launch.json，绑定模式、PID/进程启动时间、两仓提交、包版本和选定环境。
 客户端只访问容器内本机 HTTP，自动查找同一个 C8_RESULTS_DIR 下的存活 manifest；
 缺失、PID 已退出、模式错误或服务/客户端提交不同都会停止测试。

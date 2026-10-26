@@ -186,10 +186,12 @@ class SparseKVCacheManager:
             256 if self.packed_c8 else 0
         )
         if self.copy_sfa_enabled and (
-            (not self.packed_c8 and self.cache_capacity != 2048)
+            (not self.packed_c8 and self.cache_capacity not in (2048, 4096, 8192))
             or copy_sfa_padded_query_heads is None
         ):
-            raise ValueError("Copy-SFA requires C=2048 and a padded query head count.")
+            raise ValueError(
+                "Copy-SFA requires BF16 C in {2048,4096,8192} and a padded query head count."
+            )
         if self.copy_sfa_enabled:
             if (self.kv_lora_rank, self.qk_rope_head_dim) != (512, 64):
                 raise ValueError(
@@ -302,7 +304,7 @@ class SparseKVCacheManager:
                         for _ in range(self.layer_num)
                     ]
                     self.planner_topk_src_ids = torch.full(
-                        (self.batch_capacity, 1, self.cache_capacity),
+                        (self.batch_capacity, 1, self.sparse_context_len),
                         -1,
                         dtype=torch.int32,
                         device=self.device,

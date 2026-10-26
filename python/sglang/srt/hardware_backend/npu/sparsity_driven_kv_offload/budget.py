@@ -74,12 +74,18 @@ def resolve_sparse_kv_budget(
     if indexer_impl not in ("legacy", "li_reference", "lim"):
         raise ValueError(f"Unknown sparse indexer implementation: {indexer_impl}.")
     if copy_sfa:
-        if top_k != 2048 or (not packed_c8 and cache_tokens not in (0, 2048)):
-            raise ValueError("Copy-SFA requires K=C=2048.")
+        if top_k != 2048 or (
+            not packed_c8 and cache_tokens not in (0, 2048, 4096, 8192)
+        ):
+            raise ValueError(
+                "Copy-SFA requires K=2048 and C in {2048,4096,8192} for BF16."
+            )
+        if cache_tokens > top_k and indexer_impl != "lim":
+            raise ValueError("Copy-SFA with C>K requires the native LIM indexer.")
         if copy_sfa_query_heads <= 0 or copy_sfa_query_heads > 128:
             raise ValueError("Copy-SFA padded query heads must be in [1,128].")
         context_len = (context_len + 127) // 128 * 128
-        cache_tokens = cache_tokens or 2048
+        cache_tokens = cache_tokens or top_k
     if packed_c8:
         if not copy_sfa or indexer_impl != "lim" or kv_bytes_per_token != 656:
             raise ValueError(
@@ -175,7 +181,7 @@ def resolve_sparse_kv_budget(
     if copy_sfa:
         copy_sfa_bytes = (
             num_layers * (request_rows + 1) * cache_tokens * 4
-            + batch_rows * (4 * top_k + 5) * 4
+            + batch_rows * (2 * top_k + 2 * cache_tokens + 5) * 4
             + (batch_rows + 1) * ((resident_tokens + context_len) // 128) * 4
             + batch_rows
             * copy_sfa_query_heads

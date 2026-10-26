@@ -32,13 +32,14 @@ if TYPE_CHECKING:
 
 
 def is_copy_sfa_decode_graph_eligible(seq_lens_cpu) -> bool:
-    """BF16 graphs need 2048 KV per live row; A5 C8 also supports dense rows."""
+    """BF16 graphs require C visible tokens; A5 C8 also handles dense rows."""
     if not envs.SGLANG_NPU_ENABLE_COPY_SFA.get():
         return True
     if get_model().kv_cache_dtype == "fp8_e4m3":
         return True
+    capacity = envs.SGLANG_NPU_SPARSE_KV_CACHE_SIZE.get() or 2048
     return seq_lens_cpu is not None and not any(
-        0 < int(length) < 2048 for length in seq_lens_cpu.tolist()
+        0 < int(length) < capacity for length in seq_lens_cpu.tolist()
     )
 
 

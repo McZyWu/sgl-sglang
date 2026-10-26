@@ -1,7 +1,8 @@
 """Q1 framework bridge from the DSA indexer to native LIM cache plans.
 
 By default LIM selects a page-aligned prefix and appends its visible tail.
-With BF16 Copy-SFA, Q1 and C=K=2048 select over the complete visible sequence.
+With BF16 Copy-SFA, Q1 and K=2048 select over the complete visible sequence;
+the resident cache capacity C can be larger than K.
 A5 C8 also selects full-visible TopK, with a separate page-aligned prefix
 and caller-managed tail slots beyond the persistent C-token capacity.
 Runtime state belongs to this manager-owned adapter, while the current plan
@@ -180,7 +181,7 @@ class LIMDecodeAdapter:
             # Mixed/short batches use a host gather without populating resident
             # KV. Force the following fused step to cold-fill its cache.
             if cpu_lengths is None or any(
-                0 < int(length) < self.top_k for length in cpu_lengths.tolist()
+                0 < int(length) < self.capacity for length in cpu_lengths.tolist()
             ):
                 next_prefix = torch.full_like(next_prefix, -1)
         table = self.block_table[:batch]
@@ -272,7 +273,7 @@ class LIMDecodeAdapter:
         plan.miss_counts.masked_fill_(~valid, 0)
         # Preserve the full contiguous [B,32768] rows. A [:,:K] slice would
         # retain the native row stride and fail the Copy-SFA layout contract.
-        lengths = valid.to(torch.int32) * self.top_k
+        lengths = valid.to(torch.int32) * self.capacity
         manager.planner_actual_seq_lengths_kv[:batch].copy_(lengths)
         manager.planner_num_cache_tokens[:batch].copy_(lengths)
         for pages, offsets, output in (

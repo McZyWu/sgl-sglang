@@ -101,7 +101,7 @@ case "$ACTION" in
   build|build-kernel|build-deepep)
     logged environment python3 "$SCRIPT_DIR/preflight.py" --mode baseline
     [[ -f "$KERNEL_SOURCE_DIR/csrc/a5_c8_registration.cpp" ]] || {
-      echo "Kernel checkout lacks A5 C8; use feat/hisparse-lim-copysfa-c8-a5" >&2; exit 2;
+      echo "Kernel checkout lacks A5 C8; use feat/hisparse-lim-copysfa-c8-a5-10-26" >&2; exit 2;
     }
     logged submodules git -C "$KERNEL_SOURCE_DIR" submodule update --init --recursive
     if [[ "$ACTION" == build-deepep || ( "$ACTION" == build && "$MOE_A2A_BACKEND" == deepep ) ]]; then

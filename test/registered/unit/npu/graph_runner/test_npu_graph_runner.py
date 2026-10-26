@@ -5,7 +5,9 @@ from unittest import mock
 
 import pytest
 import torch
+
 from sglang.srt.hardware_backend.npu.graph_runner import npu_graph_runner as mod
+from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload import config
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -37,7 +39,14 @@ class TestCopySFAGraphAdmission(CustomTestCase):
             batch_size=1,
             forward_mode=ForwardMode.DECODE,
         )
-        with mod.envs.SGLANG_NPU_ENABLE_COPY_SFA.override(True):
+        with (
+            mod.envs.SGLANG_NPU_ENABLE_COPY_SFA.override(True),
+            mock.patch.object(
+                config,
+                "get_model",
+                return_value=SimpleNamespace(kv_cache_dtype="bfloat16"),
+            ) as model,
+        ):
             for lengths, expected in (
                 (None, False),
                 ([11], False),
@@ -53,6 +62,34 @@ class TestCopySFAGraphAdmission(CustomTestCase):
                     )
                     batch.batch_size = 1 if lengths is None else len(lengths)
                     self.assertEqual(runner.can_run_graph(batch), expected)
+            for capacity in (4096, 8192):
+                with mod.envs.SGLANG_NPU_SPARSE_KV_CACHE_SIZE.override(capacity):
+                    for lengths, expected in (
+                        ([2048], False),
+                        ([capacity - 1], False),
+                        ([capacity], True),
+                        ([0, capacity + 1], True),
+                        ([capacity, 2048], False),
+                    ):
+                        with self.subTest(capacity=capacity, lengths=lengths):
+                            batch.seq_lens_cpu = torch.tensor(lengths)
+                            batch.batch_size = len(lengths)
+                            self.assertEqual(runner.can_run_graph(batch), expected)
+            model.return_value.kv_cache_dtype = "fp8_e4m3"
+            # Unlike BF16's fixed resident window, C8 handles mixed dense and
+            # sparse rows in one graph; importing the BF16 gate must not reject it.
+            for capacity in (2048, 4096, 8192):
+                with mod.envs.SGLANG_NPU_SPARSE_KV_CACHE_SIZE.override(capacity):
+                    for lengths in (
+                        [130],
+                        [capacity - 1],
+                        [0, capacity + 1],
+                        [130, capacity + 1],
+                    ):
+                        with self.subTest(c8_capacity=capacity, lengths=lengths):
+                            batch.seq_lens_cpu = torch.tensor(lengths)
+                            batch.batch_size = len(lengths)
+                            self.assertTrue(runner.can_run_graph(batch))
         with mod.envs.SGLANG_NPU_ENABLE_COPY_SFA.override(False):
             batch.seq_lens_cpu = torch.tensor([11])
             self.assertTrue(runner.can_run_graph(batch))

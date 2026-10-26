@@ -3,7 +3,10 @@ A5 容器内人工部署与验证
 
 适用：已有 CANN / torch / torch_npu 及模型依赖的 A5 SGLang 容器。
 这是容器内部流程，不创建容器。无需连接 217。所有 NPU 数值结果要由你在 A5 上执行。
-两仓均使用 feat/hisparse-lim-copysfa-c8-a5 的最新提交，kernel 至少包含 988ad6d。
+两仓均使用 feat/hisparse-lim-copysfa-c8-a5-10-26，原 C8 分支保留。
+10-26 已适配 opt-217 的 C>K 元数据/预算与 BF16 graph 容量改动；
+保留 C8 dense graph、256 tail 槽、prefill 原生入口及 988ad6d Dcache 修正。
+本次迁移与验证范围见 PORT_OPT_217_20261026.txt。
 重新编译安装 kernel，确保实际加载修正后的二进制。
 2026-10-24 修正了 A5 LIM 计数写回和框架 tail 布局；旧 kernel 442023d6 不含该修复。
 已安装过旧 wheel 时，只 git pull 后跑 test 不会更新二进制，需要执行 build-kernel。
@@ -16,8 +19,8 @@ FIX_PREFILL_INDEXER_ABI_20261024.txt。此 Python 调用修正沿用 kernel 988a
 下面示例使用 /workspace，已拉取时在对应目录 git pull --ff-only 即可。
 
   cd /workspace
-  git clone -b feat/hisparse-lim-copysfa-c8-a5 https://github.com/McZyWu/sgl-sglang.git
-  git clone -b feat/hisparse-lim-copysfa-c8-a5 https://github.com/McZyWu/sgl-kernel-npu.git
+  git clone -b feat/hisparse-lim-copysfa-c8-a5-10-26 https://github.com/McZyWu/sgl-sglang.git
+  git clone -b feat/hisparse-lim-copysfa-c8-a5-10-26 https://github.com/McZyWu/sgl-kernel-npu.git
   cd /workspace/sgl-sglang
   export C8_SCRIPT=$PWD/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
   cp benchmark/hisparse/lim_copy_sfa_c8_a5/container.env.example /workspace/c8-a5.env
@@ -66,17 +69,18 @@ vendor OPP 路径。不要只编译 C8 wheel 后假设镜像原有 DeepEP 已包
 
 按如下顺序执行，任一步失败即停止，每项有日志、pytest 项另有 JUnit XML。
 all 会先检查 Kernel 源码和当前 Python 实际导入的 wheel，再执行下面的测试。
-若缺少 C8 源码或算子注册，会立即退出，不先运行 114 项 CPU 测试。
+若缺少 C8 源码或算子注册，会立即退出，不先运行 CPU 测试。
 当前代码的预期数量如下；测试未来增加时以实际收集为准，不用数字判断正确性。
 
-  cpu       115 项：LIM 请求状态、C8 预算、原生 prefill 入口隔离及 kernel namespace。
+  cpu       118 项：LIM 状态、C8 预算/prefill、BF16/C8 graph 准入及 kernel namespace。
   lim       146 项：quant LIM 静态接口、官方 LI oracle、短序列、尾部、状态与 graph。
   copy-sfa    5 项：C8 Copy-SFA CPU attention golden 与 656 字节 KV 逐字节比对。
-  pair        2 项：LIM -> Copy-SFA 的 eager / graph 生命周期、padding、尾部与复用。
-  framework       ：真实 SRT manager、注册 host KV、IndexShare、CPU oracle 与 graph replay。
+  pair        6 项：C2048/4096/8192 × eager/graph，cold fill、padding、tail 与复用。
+  framework       ：C2048/4096/8192 各跑真实 manager、host KV、IndexShare、oracle 与 graph。
 
 实际文件：
   SGLang/test/registered/unit/hardware_backend/test_npu_lim_state.py
+  SGLang/test/registered/unit/npu/graph_runner/test_npu_graph_runner.py
   SGLang/test/manual/npu/test_sparse_kv_offload_cache.py
   SGLang/test/registered/unit/kernels/test_kernels_namespace.py
   Kernel/tests/test_fused_quant_lightning_indexer_manage_a5.py
@@ -94,7 +98,9 @@ all 会先检查 Kernel 源码和当前 Python 实际导入的 wheel，再执行
 all 已含全部 Meta 检查，不再重复单独运行 meta。
 A5 验证要求 pytest 零 skip、零 failed/error；A3 上全 skip 不能作为通过。
 每阶段默认 3600 秒超时，可在配置中修改 C8_TEST_TIMEOUT。卡死会以非零状态退出。
-framework 成功后产生 framework.json，status 应为 pass。
+framework 成功后产生 framework.json（C2048）、framework-c4096.json、
+framework-c8192.json，status 均应为 pass。单独指定容量可直接执行：
+  python3 benchmark/hisparse/check_lim_copy_sfa_c8.py --capacity 4096 --output /workspace/framework-c4096.json
 
 4. 可选：单独验证 DeepEP normal/LL 交替
 -------------------------------------

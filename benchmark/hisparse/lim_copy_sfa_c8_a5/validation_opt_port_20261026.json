@@ -1,0 +1,191 @@
+{
+  "date": "2026-10-26",
+  "branch": "feat/hisparse-lim-copysfa-c8-a5-10-26",
+  "base": {
+    "sglang": "8d4b50d397c29cac1fc3990c56968e9b9f4af4be",
+    "kernel": "988ad6d75b2752004b6c56c81552787d77b1ee16"
+  },
+  "opt_source": {
+    "sglang": "6e37ddf7d6a7228250b836cc1a3801ad7c876b81",
+    "kernel": "0664b24289b6a8c6f6701721dafd483f4551b7f2"
+  },
+  "host": "217 / A3 / CANN9.1 / torch2.10+cpu / torch_npu2.10.post6",
+  "cpu": [
+    {
+      "case": "before-regressions",
+      "exit_code": 1,
+      "tests": 3,
+      "failure": 3,
+      "error": 0,
+      "skipped": 0,
+      "seconds": 21.39248141204007,
+      "expected_failure": true
+    },
+    {
+      "case": "after-regressions",
+      "exit_code": 0,
+      "tests": 3,
+      "failure": 0,
+      "error": 0,
+      "skipped": 0,
+      "seconds": 16.836836024885997,
+      "expected_failure": false
+    },
+    {
+      "case": "cpu-all",
+      "exit_code": 0,
+      "tests": 118,
+      "failure": 0,
+      "error": 0,
+      "skipped": 0,
+      "seconds": 128.4797916249372,
+      "expected_failure": false
+    }
+  ],
+  "builds": [
+    {
+      "name": "configure-a3",
+      "command": [
+        "cmake",
+        "-S",
+        "/task/c8/opt-port-20261026/kernel",
+        "-B",
+        "/task/c8/opt-port-20261026/build-a3",
+        "-DSOC_VERSION=Ascend910_9382",
+        "-DBUILD_DEEPEP_MODULE=OFF",
+        "-DBUILD_KERNELS_MODULE=ON",
+        "-DBUILD_CATLASS_MODULE=OFF",
+        "-DASCEND_HOME_PATH=/usr/local/Ascend/cann-9.1.0",
+        "-DASCEND_INCLUDE_DIR=/usr/local/Ascend/cann-9.1.0/aarch64-linux/include",
+        "-DCMAKE_INSTALL_PREFIX=/task/c8/opt-port-20261026/install-a3"
+      ],
+      "exit_code": 0,
+      "seconds": 8.776808880036697
+    },
+    {
+      "name": "fused_lightning_indexer_manage_kernel",
+      "command": [
+        "cmake",
+        "--build",
+        "/task/c8/opt-port-20261026/build-a3",
+        "--target",
+        "fused_lightning_indexer_manage_kernel",
+        "-j",
+        "2"
+      ],
+      "exit_code": 0,
+      "seconds": 32.310621252981946
+    },
+    {
+      "name": "fused_scatter_copy_sparse_flash_attention_combined_kernel",
+      "command": [
+        "cmake",
+        "--build",
+        "/task/c8/opt-port-20261026/build-a3",
+        "--target",
+        "fused_scatter_copy_sparse_flash_attention_combined_kernel",
+        "-j",
+        "2"
+      ],
+      "exit_code": 0,
+      "seconds": 49.98185207787901
+    },
+    {
+      "name": "configure-a5",
+      "command": [
+        "cmake",
+        "-S",
+        "/task/c8/opt-port-20261026/kernel",
+        "-B",
+        "/task/c8/opt-port-20261026/build-a5",
+        "-DSOC_VERSION=Ascend950PR_9599",
+        "-DBUILD_DEEPEP_MODULE=OFF",
+        "-DBUILD_KERNELS_MODULE=ON",
+        "-DBUILD_CATLASS_MODULE=OFF",
+        "-DASCEND_HOME_PATH=/usr/local/Ascend/cann-9.1.0",
+        "-DASCEND_INCLUDE_DIR=/usr/local/Ascend/cann-9.1.0/aarch64-linux/include",
+        "-DCMAKE_INSTALL_PREFIX=/task/c8/opt-port-20261026/install-a5"
+      ],
+      "exit_code": 0,
+      "seconds": 8.776265052845702
+    },
+    {
+      "name": "fused_quant_lightning_indexer_manage_a5_kernel",
+      "command": [
+        "cmake",
+        "--build",
+        "/task/c8/opt-port-20261026/build-a5",
+        "--target",
+        "fused_quant_lightning_indexer_manage_a5_kernel",
+        "-j",
+        "2"
+      ],
+      "exit_code": 0,
+      "seconds": 55.0386434441898
+    },
+    {
+      "name": "fused_quant_scatter_copy_sparse_flash_attention_a5_kernel",
+      "command": [
+        "cmake",
+        "--build",
+        "/task/c8/opt-port-20261026/build-a5",
+        "--target",
+        "fused_quant_scatter_copy_sparse_flash_attention_a5_kernel",
+        "-j",
+        "2"
+      ],
+      "exit_code": 0,
+      "seconds": 28.10042447503656
+    },
+    {
+      "name": "meta-a5",
+      "command": [
+        "python3",
+        "-m",
+        "pytest",
+        "-q",
+        "-ra",
+        "--junitxml=/task/c8/opt-port-20261026/meta-a5.xml",
+        "/task/c8/opt-port-20261026/kernel/tests/test_fused_quant_lightning_indexer_manage_a5.py",
+        "-k",
+        "meta_contract"
+      ],
+      "exit_code": 0,
+      "seconds": 8.42471968010068
+    }
+  ],
+  "meta": {
+    "passed": 24,
+    "isolated_existing_a5_wheel": true,
+    "new_device_targets_compiled": true,
+    "A5_numerical_execution": false,
+    "A3_numerical_execution": false
+  },
+  "source_provenance": {
+    "unchanged_BF16_headers_verified": 7,
+    "adapted_BF16_headers_verified": 1,
+    "A5_C8_native_files_unchanged_from_988ad6d": 78
+  },
+  "preserved_c8_framework_files": [
+    "python/sglang/srt/hardware_backend/npu/sparsity_driven_kv_offload/c8.py",
+    "python/sglang/srt/layers/attention/dsa/dsa_npu_indexer.py",
+    "python/sglang/kernels/ops/attention/npu_quant_sparse.py"
+  ],
+  "offline_shell_cases": 16,
+  "A5_collection_only_cases": 157,
+  "installed_wheel_replaced": false,
+  "new_complete_wheel_packaged": false,
+  "A3_numerical_execution": false,
+  "A5_numerical_execution": false,
+  "model_smoke_executed": false,
+  "GSM8K_executed": false,
+  "performance_executed": false,
+  "remaining": [
+    "A5 expanded numerical suites",
+    "A5 C2048/4096/8192 framework",
+    "A5 model smoke/necessary accuracy comparison",
+    "A5 128K/64K/16K to 1K, C2048/4096 performance A/B"
+  ],
+  "evidence_directory": "/home/wzy/1024/hisparse-copysfa-opt-217-20261023/c8/opt-port-20261026",
+  "matching_kernel_revision": "2765f232a8317d18025f1939aee3207ff215c794"
+}

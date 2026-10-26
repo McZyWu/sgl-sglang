@@ -43,13 +43,13 @@ def verify(case, output, *, resident=True):
                 torch.testing.assert_close(cached, expected_kv, rtol=0, atol=0)
 
 
-def run(output_path, padded_batch=False):
+def run(output_path, padded_batch=False, capacity=2048):
     torch.npu.set_device(0)
     args = SimpleNamespace(
         batch=16 if padded_batch else 2,
-        context=8192,
+        context=max(8192, capacity + 1024),
         tail=1,
-        capacity=2048,
+        capacity=capacity,
         index_heads=32,
         query_heads=8,
         layers=2,
@@ -181,6 +181,7 @@ def run(output_path, padded_batch=False):
             "operator_calls": counts,
             "request_rows": case.manager.size,
             "batch_capacity": case.manager.batch_capacity,
+            "resident_capacity": case.manager.device_cache_size,
             "decode_path": case.manager.last_decode_path,
             "native_plan_shared": True,
         }
@@ -192,5 +193,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--padded-batch", action="store_true")
+    parser.add_argument(
+        "--capacity", type=int, choices=(2048, 4096, 8192), default=2048
+    )
     args = parser.parse_args()
-    run(args.output, args.padded_batch)
+    run(args.output, args.padded_batch, args.capacity)

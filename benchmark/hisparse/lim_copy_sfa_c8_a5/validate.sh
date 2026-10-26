@@ -42,6 +42,7 @@ fi
 if [[ "$STAGE" == all || "$STAGE" == cpu ]]; then
   pytest_stage cpu \
     test/registered/unit/hardware_backend/test_npu_lim_state.py \
+    test/registered/unit/npu/graph_runner/test_npu_graph_runner.py \
     test/manual/npu/test_sparse_kv_offload_cache.py \
     test/registered/unit/kernels/test_kernels_namespace.py
 fi
@@ -58,8 +59,16 @@ if [[ "$STAGE" == all || "$STAGE" == pair ]]; then
   pytest_stage paired-c8 "$KERNEL_SOURCE_DIR/tests/test_lim_copy_sfa_c8.py"
 fi
 if [[ "$STAGE" == all || "$STAGE" == framework ]]; then
-  timeout --kill-after=30s "${C8_TEST_TIMEOUT:-3600}s" python3 \
-    "$SCRIPT_DIR/../check_lim_copy_sfa_c8.py" \
-    --output "${OUTPUT_JSON:-$RESULTS/framework.json}" 2>&1 | tee "$RESULTS/framework.log"
+  for capacity in 2048 4096 8192; do
+    output="$RESULTS/framework-c$capacity.json"
+    log="$RESULTS/framework-c$capacity.log"
+    if [[ "$capacity" == 2048 ]]; then
+      output="${OUTPUT_JSON:-$RESULTS/framework.json}"
+      log="$RESULTS/framework.log"
+    fi
+    timeout --kill-after=30s "${C8_TEST_TIMEOUT:-3600}s" python3 \
+      "$SCRIPT_DIR/../check_lim_copy_sfa_c8.py" --capacity "$capacity" \
+      --output "$output" 2>&1 | tee "$log"
+  done
 fi
 echo "PASS: $STAGE; results: $RESULTS"

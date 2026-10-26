@@ -267,10 +267,16 @@ class TestLIMState(CustomTestCase):
         torch.testing.assert_close(result[1], torch.full_like(result[1], 5))
 
     def test_c8_decode_exposes_tail_address_space_and_zeros_padding(self):
+        for capacity in (2048, 4096, 8192):
+            with self.subTest(capacity=capacity):
+                self._check_c8_decode_tail(capacity)
+
+    def _check_c8_decode_tail(self, capacity):
         # The external native boundary reads resident slots. Check actual output
         # values so a wrong C, block table, layer, or padding mask changes evidence.
-        batch, capacity, rows, heads = 3, 2048, 3, 8
+        batch, rows, heads, top_k = 3, 3, 8, 2048
         physical = capacity + 256
+        context = capacity + 256
 
         def ints(*shape):
             return torch.empty(*shape, dtype=torch.int32)
@@ -279,7 +285,7 @@ class TestLIMState(CustomTestCase):
             hbm_tokens_per_request=physical,
             cache_capacity=capacity,
             size=rows,
-            max_context_len=4224,
+            max_context_len=context,
             start_layer=7,
             planner_actual_seq_lengths_kv=ints(batch),
             planner_num_cache_tokens=ints(batch),
@@ -287,27 +293,27 @@ class TestLIMState(CustomTestCase):
                 1, batch + 1, dtype=torch.int32
             ),
             hbm_page_offsets=torch.arange(physical // 128, dtype=torch.int32),
-            dram_page_offsets=torch.arange(33, dtype=torch.int32),
+            dram_page_offsets=torch.arange(context // 128, dtype=torch.int32),
             planner_hbm_block_table=ints(batch, physical // 128),
-            planner_dram_block_table=ints(batch, 33),
+            planner_dram_block_table=ints(batch, context // 128),
             planner_attn_out=torch.full((batch, heads, 512), 123, dtype=torch.bfloat16),
             device_kv_buffer=[torch.zeros(rows, physical, 1, 656, dtype=torch.int8)],
-            host_kv_buffer=[torch.zeros(rows, 4224, 1, 656, dtype=torch.int8)],
+            host_kv_buffer=[torch.zeros(rows, context, 1, 656, dtype=torch.int8)],
             dev_ptr_list=[1234],
         )
         plan = SimpleNamespace(
             valid_rows=torch.tensor([True, False, True]),
             sparse_rows=torch.tensor([True, False, False]),
-            seq_lens=torch.tensor([2050, 0, 130], dtype=torch.int32),
+            seq_lens=torch.tensor([capacity + 2, 0, 130], dtype=torch.int32),
             request_slots=torch.tensor([1, 0, 2], dtype=torch.int32),
             topk_misses=torch.zeros(batch, dtype=torch.int32),
             miss_counts=torch.zeros(batch, dtype=torch.int32),
-            source_ids=torch.full((batch, capacity), -1, dtype=torch.int32),
-            device_slots=torch.full((batch, capacity), -1, dtype=torch.int32),
+            source_ids=torch.full((batch, top_k), -1, dtype=torch.int32),
+            device_slots=torch.full((batch, top_k), -1, dtype=torch.int32),
             miss_sources=ints(batch, 32768),
             miss_slots=ints(batch, 32768),
         )
-        plan.source_ids[0, :2] = torch.tensor([0, 2049])
+        plan.source_ids[0, :2] = torch.tensor([0, capacity + 1])
         plan.device_slots[0, :2] = torch.tensor([0, capacity + 1])
         plan.source_ids[2, :2] = plan.device_slots[2, :2] = torch.tensor([0, 1])
         plan.device_slots[1].fill_(123)
@@ -340,8 +346,9 @@ class TestLIMState(CustomTestCase):
             output,
         ):
             self.assertEqual(pointer, 1234)
-            self.assertEqual(resident_lengths.tolist(), [2304, 0, 0])
-            self.assertEqual(lengths.tolist(), [2050, 0, 130])
+            self.assertEqual(resident_lengths.tolist(), [physical, 0, 0])
+            self.assertEqual(lengths.tolist(), [capacity + 2, 0, 130])
+            self.assertEqual(src.shape, (batch, 1, top_k))
             self.assertTrue(torch.all(dst[1] == -1))
             self.assertEqual(misses.stride(), (32768, 32768, 1))
             for row in (0, 2):
@@ -437,6 +444,30 @@ class TestLIMState(CustomTestCase):
         self.assertEqual(budget.device_kv_bytes, 3 * 2 * 2304 * 656)
         self.assertEqual(budget.host_kv_bytes, 3 * 2 * 4224 * 656)
         self.assertGreaterEqual(budget.copy_sfa_bytes, 16 * 8 * (512 + 576) * 2)
+        for capacity in (4096, 8192, 12288):
+            with self.subTest(capacity=capacity):
+                larger = resolve_sparse_kv_budget(
+                    request_rows=3,
+                    context_len=4097,
+                    num_layers=2,
+                    top_k=2048,
+                    cache_tokens=capacity,
+                    kv_bytes_per_token=656,
+                    copy_sfa=True,
+                    copy_sfa_query_heads=8,
+                    graph_batch_capacity=16,
+                    indexer_impl="lim",
+                    packed_c8=True,
+                )
+                delta = capacity - 2048
+                # Extra resident KV/owners and C-wide miss rows grow; K-wide
+                # attention scratch and the 256 tail slots remain unchanged.
+                expected_extra = delta * (3 * 2 * 656 + 2 * 4 * 4 + 16 * 2 * 4)
+                expected_extra += 17 * (delta // 128) * 4
+                self.assertEqual(
+                    larger.managed_hbm_bytes - budget.managed_hbm_bytes, expected_extra
+                )
+                self.assertEqual(larger.selected_kv_bytes, budget.selected_kv_bytes)
         with self.assertRaisesRegex(ValueError, "exceeding"):
             resolve_sparse_kv_budget(
                 request_rows=3,
@@ -501,28 +532,34 @@ class TestLIMState(CustomTestCase):
                     )
 
     def test_copy_sfa_shares_native_miss_stride_and_masks_interior_padding(self):
+        for capacity in (2048, 4096, 8192):
+            with self.subTest(capacity=capacity):
+                self._check_copy_sfa_metadata(capacity)
+
+    def _check_copy_sfa_metadata(self, capacity):
         batch, top_k = 3, 2048
+        context_len = max(4224, capacity + 128)
         ints = lambda *shape: torch.empty(*shape, dtype=torch.int32)
         manager = SimpleNamespace(
-            max_context_len=4224,
+            max_context_len=context_len,
             planner_topk_src_ids=ints(batch, 1, top_k),
             planner_topk_dst_slots=ints(batch, 1, top_k),
             planner_topk_miss_counts=ints(batch),
-            planner_miss_src_ids=ints(batch, top_k),
-            planner_miss_dst_slots=ints(batch, top_k),
+            planner_miss_src_ids=ints(batch, capacity),
+            planner_miss_dst_slots=ints(batch, capacity),
             planner_miss_counts=ints(batch),
             planner_actual_seq_lengths_query=torch.arange(
                 1, batch + 1, dtype=torch.int32
             ),
             planner_actual_seq_lengths_kv=ints(batch),
             planner_num_cache_tokens=ints(batch),
-            hbm_page_offsets=torch.arange(16, dtype=torch.int32),
-            dram_page_offsets=torch.arange(33, dtype=torch.int32),
-            planner_hbm_block_table=ints(batch, 16),
-            planner_dram_block_table=ints(batch, 33),
+            hbm_page_offsets=torch.arange(capacity // 128, dtype=torch.int32),
+            dram_page_offsets=torch.arange(context_len // 128, dtype=torch.int32),
+            planner_hbm_block_table=ints(batch, capacity // 128),
+            planner_dram_block_table=ints(batch, context_len // 128),
         )
         adapter = LIMDecodeAdapter.__new__(LIMDecodeAdapter)
-        adapter.top_k = adapter.capacity = top_k
+        adapter.top_k, adapter.capacity = top_k, capacity
         sources = torch.arange(batch * 32768, dtype=torch.int32).view(batch, 32768)
         plan = SimpleNamespace(
             source_ids=torch.arange(top_k, dtype=torch.int32).expand(batch, -1).clone(),
@@ -532,7 +569,7 @@ class TestLIMState(CustomTestCase):
             topk_misses=torch.tensor([3, 99, 7], dtype=torch.int32),
             miss_sources=sources,
             miss_slots=sources + 1,
-            miss_counts=torch.tensor([3, 99, 7], dtype=torch.int32),
+            miss_counts=torch.tensor([capacity, 99, 7], dtype=torch.int32),
             valid_rows=torch.tensor([True, False, True]),
             sparse_rows=torch.tensor([True, False, True]),
             request_slots=torch.tensor([3, 4, 1], dtype=torch.int32),
@@ -540,7 +577,11 @@ class TestLIMState(CustomTestCase):
         plan.source_ids[1].fill_(-1)
         metadata = adapter.copy_sfa_metadata(manager, plan)
         self.assertTrue(all(t.is_contiguous() for t in metadata))
+        torch.testing.assert_close(metadata[3][0], sources[0])
         torch.testing.assert_close(metadata[3][2], sources[2])
+        self.assertEqual(metadata[5].tolist(), [capacity, 0, 7])
+        self.assertEqual(metadata[7].tolist(), [capacity, 0, capacity])
+        self.assertEqual(metadata[8].tolist(), [capacity, 0, capacity])
         for actual, native in zip(
             metadata[:6],
             (
@@ -553,25 +594,44 @@ class TestLIMState(CustomTestCase):
             ),
         ):
             self.assertEqual(actual.data_ptr(), native.data_ptr())
-        self.assertEqual(metadata[5].tolist(), [3, 0, 7])
-        self.assertEqual(metadata[7].tolist(), [2048, 0, 2048])
         self.assertEqual(metadata[2][1].item(), 0)
-        self.assertEqual(metadata[9][:, 0].tolist(), [48, 0, 16])
-        self.assertEqual(metadata[10][:, 0].tolist(), [99, 0, 33])
-        plan.source_ids[0, 0] = 19
-        self.assertEqual(metadata[0][0, 0, 0].item(), 19)
+        self.assertEqual(
+            metadata[9][:, 0].tolist(), [3 * capacity // 128, 0, capacity // 128]
+        )
+        self.assertEqual(
+            metadata[10][:, 0].tolist(), [3 * context_len // 128, 0, context_len // 128]
+        )
+
+    def test_full_visible_large_cache_stays_cold_below_capacity(self):
+        for capacity in (4096, 8192):
+            with self.subTest(capacity=capacity):
+                result = prepare_lim_rows(
+                    torch.tensor([2048, capacity - 1, capacity, capacity + 1]),
+                    torch.tensor([1, 2, 3, 4]),
+                    torch.full((6,), -1, dtype=torch.int32),
+                    capacity,
+                    5,
+                    full_visible=True,
+                )
+                self.assertEqual(result[3].tolist(), [False, False, True, True])
+                self.assertEqual(result[5].tolist(), [-3, -3, -2, -2])
 
     def test_padded_graph_scratch_keeps_request_bounds_and_avoids_tail_workspace(self):
-        rows, batch, top_k = 3, 16, 2048
+        self._check_padded_graph_scratch(3, 16, 2048)
+        self._check_padded_graph_scratch(7, 8, 8192)
+
+    def _check_padded_graph_scratch(self, rows, batch, capacity):
+        top_k = 2048
+        context = max(4096, capacity + 128)
         key = torch.empty((32, 128, 1, 128), dtype=torch.bfloat16)
         manager = SimpleNamespace(
-            indexer_impl="li_reference",
+            indexer_impl="lim",
             size=rows,
             batch_capacity=batch,
-            device_cache_size=top_k,
+            device_cache_size=capacity,
             sparse_context_len=top_k,
             copy_sfa_enabled=True,
-            max_context_len=4096,
+            max_context_len=context,
             layer_num=2,
             head_num=1,
             head_dim=576,
@@ -580,7 +640,12 @@ class TestLIMState(CustomTestCase):
             start_layer=0,
             paged_kv_cache=SimpleNamespace(get_index_k_buffer=lambda _: key),
         )
-        adapter = LIMDecodeAdapter(manager)
+        with patch(
+            "sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.lim.load_fused_lim_operator",
+            return_value=None,
+        ):
+            adapter = LIMDecodeAdapter(manager)
+        adapter.is_native = False
         self.assertIsNone(adapter.combined_kv)
         self.assertIsNone(adapter.combined_ids)
         self.assertEqual(adapter.last_prefix.shape, (2, rows + 1))
@@ -611,11 +676,12 @@ class TestLIMState(CustomTestCase):
         budget = resolve_sparse_kv_budget(
             request_rows=rows,
             graph_batch_capacity=batch,
-            context_len=4096,
+            context_len=context,
+            cache_tokens=capacity,
             num_layers=2,
             top_k=top_k,
             kv_bytes_per_token=1152,
-            indexer_impl="li_reference",
+            indexer_impl="lim",
             copy_sfa=True,
         )
         allocated = sum(
@@ -623,6 +689,8 @@ class TestLIMState(CustomTestCase):
             for tensor in vars(adapter).values()
             if isinstance(tensor, torch.Tensor)
         )
+        # The native key-scale workspace is charged in the index pool coefficient.
+        allocated -= adapter.key_scale.numel() * adapter.key_scale.element_size()
         self.assertEqual(budget.adapter_bytes, allocated)
 
     def test_graph_budget_grows_scratch_without_growing_residency(self):
@@ -705,16 +773,54 @@ class TestLIMState(CustomTestCase):
         self.assertEqual(budget.cache_tokens, 2048)
         self.assertEqual(budget.host_kv_bytes, 3 * 4 * 4224 * 1152)
         self.assertGreater(budget.copy_sfa_bytes, 4 * 4 * 2048 * 4)
-        with self.assertRaisesRegex(ValueError, "K=C=2048"):
+        with self.assertRaisesRegex(ValueError, "K=2048 and C"):
             resolve_sparse_kv_budget(
                 request_rows=3,
                 context_len=4097,
                 num_layers=4,
                 top_k=2048,
                 kv_bytes_per_token=1152,
-                cache_tokens=4096,
+                cache_tokens=3072,
                 copy_sfa=True,
             )
+
+        for capacity in (4096, 8192):
+            with self.subTest(capacity=capacity):
+                larger = resolve_sparse_kv_budget(
+                    request_rows=3,
+                    context_len=4097,
+                    num_layers=4,
+                    top_k=2048,
+                    kv_bytes_per_token=1152,
+                    cache_tokens=capacity,
+                    indexer_impl="lim",
+                    copy_sfa=True,
+                    copy_sfa_query_heads=8,
+                )
+                delta = capacity - 2048
+                # Every extra resident slot has KV and owner storage; misses
+                # grow to C while attention's selected-K workspace stays fixed.
+                expected_extra = (
+                    delta * (3 * 4 * 1152 + 4 * 4 * 4 + 3 * 2 * 4)
+                    + 4 * (delta // 128) * 4
+                )
+                self.assertEqual(
+                    larger.managed_hbm_bytes - budget.managed_hbm_bytes, expected_extra
+                )
+                self.assertEqual(larger.selected_kv_bytes, budget.selected_kv_bytes)
+                with self.assertRaisesRegex(ValueError, "exceeding"):
+                    resolve_sparse_kv_budget(
+                        request_rows=3,
+                        context_len=4097,
+                        num_layers=4,
+                        top_k=2048,
+                        kv_bytes_per_token=1152,
+                        cache_tokens=capacity,
+                        indexer_impl="lim",
+                        copy_sfa=True,
+                        copy_sfa_query_heads=8,
+                        hbm_budget_bytes=larger.managed_hbm_bytes - 1,
+                    )
 
     def test_native_budget_accounts_actual_persistent_buffers(self):
         kwargs = dict(

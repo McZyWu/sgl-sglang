@@ -11,8 +11,11 @@ perf-configs generates four configs for 128K/64K/16K input -> 1K output with
 C2048/C4096 and matching baselines. Default concurrency is one; long-context
 configs use context_length=132096 and max_total_tokens=147456.
 
-Both repositories use feat/hisparse-lim-copysfa-c8-a5, based on the validated
-feat/hisparse-lim-copysfa-opt-217 pair. Install matching SGLang and Ascend950
+Both repositories now use feat/hisparse-lim-copysfa-c8-a5-10-26. The original
+feat/hisparse-lim-copysfa-c8-a5 branches are preserved. The new branches merge
+opt-217 framework 6e37ddf7 and kernel 0664b242 while retaining the A5 C8 paths.
+PORT_OPT_217_20261026.txt records the adaptation and current validation boundary.
+Install matching SGLang and Ascend950
 sgl-kernel-npu code/wheel together.
 
 A5 execution results reported by the user on 2026-10-24 are recorded in
@@ -54,7 +57,9 @@ Run A5 operator and framework validation:
 
 The operator suites include donor TopK/scale/stride/lifecycle checks and packed
 CPU attention/payload oracles. The paired suite covers dense/sparse/padding,
-tail slots, request reuse and graph replay. check_lim_copy_sfa_c8.py runs the real
+tail slots, request reuse and graph replay at C2048/4096/8192. test framework
+runs all three capacities, saving framework.json and framework-c4096/8192.json.
+check_lim_copy_sfa_c8.py runs the real
 SRT manager/registered host buffers and IndexShare payloads with fixed projections.
 
 Launch a server after choosing an A5-compatible model and parallel topology:

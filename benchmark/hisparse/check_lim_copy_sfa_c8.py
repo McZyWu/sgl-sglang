@@ -52,16 +52,17 @@ def unpack(rows):
     return latent, rope
 
 
-def run(output):
+def run(output, capacity=2048):
     if not is_npu_arch35():
         raise RuntimeError("C8 framework validation requires Ascend950 (A5).")
     from sgl_kernel_npu.sparsity_driven_kv_offload import free_shm
 
     torch.npu.set_device(0)
-    batch_size, context, heads = 8, 4352, 8
+    batch_size, context, heads = 8, 2 * capacity + 256, 8
+    request_lengths = (capacity + 130, 2 * capacity + 2)
     generator = torch.Generator().manual_seed(20261023)
     keys = torch.zeros(3, context, 128, dtype=torch.bfloat16)
-    for request, length in ((1, 2178), (2, 4098)):
+    for request, length in enumerate(request_lengths, start=1):
         keys[request, :, 0] = -8
         keys[request, length - 2048 : length, 0] = 8
     keys = keys.to(device="npu", dtype=torch.float8_e4m3fn).view(-1, 128, 1, 128)
@@ -72,7 +73,7 @@ def run(output):
         envs.SGLANG_NPU_SPARSE_KV_INDEXER.override("lim"),
         envs.SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD.override(True),
         envs.SGLANG_NPU_ENABLE_COPY_SFA.override(True),
-        envs.SGLANG_NPU_SPARSE_KV_CACHE_SIZE.override(2048),
+        envs.SGLANG_NPU_SPARSE_KV_CACHE_SIZE.override(capacity),
         envs.SGLANG_NPU_SPARSE_KV_HBM_BUDGET_MB.override(0),
     ):
         manager = SparseKVCacheManager(
@@ -85,7 +86,7 @@ def run(output):
         try:
             for layer in range(2):
                 layer_desc = SimpleNamespace(layer_id=layer)
-                lengths = torch.tensor([2178, 4098], dtype=torch.int32)
+                lengths = torch.tensor(request_lengths, dtype=torch.int32)
                 prefill = SimpleNamespace(
                     forward_mode=ForwardMode.EXTEND,
                     batch_size=2,
@@ -98,11 +99,11 @@ def run(output):
                     extend_prefix_lens=torch.zeros(2, dtype=torch.int64, device="npu"),
                     extend_seq_lens=lengths.to("npu"),
                     extend_seq_lens_cpu=lengths.tolist(),
-                    out_cache_loc=torch.arange(6276, device="npu"),
+                    out_cache_loc=torch.arange(sum(request_lengths), device="npu"),
                 )
-                payload = torch.randn(6276, 1, 576, generator=generator).to(
-                    device="npu", dtype=torch.bfloat16
-                )
+                payload = torch.randn(
+                    sum(request_lengths), 1, 576, generator=generator
+                ).to(device="npu", dtype=torch.bfloat16)
                 manager.offload_v2(
                     payload[..., :512].contiguous(),
                     payload[..., 512:].contiguous(),
@@ -114,7 +115,9 @@ def run(output):
                 [1, 0, 2, 0, 0, 0, 0, 0], dtype=torch.int32, device="npu"
             )
             lengths = torch.tensor(
-                [2178, 0, 4098, 0, 0, 0, 0, 0], dtype=torch.int32, device="npu"
+                [request_lengths[0], 0, request_lengths[1], 0, 0, 0, 0, 0],
+                dtype=torch.int32,
+                device="npu",
             )
             table = requests[:, None] * (context // 128) + torch.arange(
                 context // 128, dtype=torch.int32, device="npu"
@@ -177,7 +180,10 @@ def run(output):
 
             def verify():
                 plan = backend.forward_metadata.sparse_kv_lim_plan
-                for row, request, length in ((0, 1, 2178), (2, 2, 4098)):
+                for row, request, length in (
+                    (0, 1, request_lengths[0]),
+                    (2, 2, request_lengths[1]),
+                ):
                     ids = plan.source_ids[row].cpu().long()
                     slots = plan.device_slots[row].cpu().long()
                     assert set(ids.tolist()) == set(range(length - 2048, length))
@@ -222,6 +228,8 @@ def run(output):
                 "scope": "A5 C8 fixed projection framework; no model accuracy/timing claim",
                 "request_rows": manager.size,
                 "batch_capacity": manager.batch_capacity,
+                "resident_capacity": manager.cache_capacity,
+                "topk": manager.sparse_context_len,
                 "decode_path": manager.last_decode_path,
                 "payload_bitwise": True,
                 "attention_cpu_oracle": True,
@@ -238,4 +246,8 @@ def run(output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    run(parser.parse_args().output)
+    parser.add_argument(
+        "--capacity", type=int, choices=(2048, 4096, 8192), default=2048
+    )
+    args = parser.parse_args()
+    run(args.output, args.capacity)

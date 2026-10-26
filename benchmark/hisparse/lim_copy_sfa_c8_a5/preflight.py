@@ -17,7 +17,7 @@ def check(mode, kernel_source=None):
                 f"Kernel checkout lacks A5 C8: {source}\n"
                 f"Missing source: {registration}\n"
                 "Use McZyWu/sgl-kernel-npu branch "
-                "feat/hisparse-lim-copysfa-c8-a5 (442023d6 or a descendant), "
+                "feat/hisparse-lim-copysfa-c8-a5-10-26 (including 988ad6d), "
                 "then run container.sh build-kernel before testing."
             )
     try:

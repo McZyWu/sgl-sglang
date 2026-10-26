@@ -1,0 +1,87 @@
+opt-217 最新改动适配到 A5 C8：10-26 新分支
+========================================
+
+两仓新分支：feat/hisparse-lim-copysfa-c8-a5-10-26。
+原 feat/hisparse-lim-copysfa-c8-a5 分支保留不变：
+  SGLang 8d4b50d397c29cac1fc3990c56968e9b9f4af4be
+  Kernel 988ad6d75b2752004b6c56c81552787d77b1ee16
+本次实际合入的 opt-217 来源：
+  SGLang 6e37ddf7d6a7228250b836cc1a3801ad7c876b81
+  Kernel 0664b24289b6a8c6f6701721dafd483f4551b7f2
+使用双亲 merge 保留来源历史，并对冲突按 C8 语义适配，不覆盖原分支。
+
+适配内容
+--------
+1. resident C 与 attention TopK K 分离。K 始终2048；TopK元数据按K分配，
+   miss/owner空间按C分配。修正C>K时原先宽为C的TopK工作区及预算低估，
+   planner字节按(2*K+2*C+5)*4/批行计算，保留C8额外256 tail槽和BF16计算空间。
+2. BF16 Copy-SFA支持C2048/4096/8192；full-visible Q1、cold fill搬运完整C，
+   且在seq<C时保持host gather与下一次cold reset，graph在满足C后才准入。
+3. 保留C8原有dense/sparse混合graph、page-aligned prefix、C+(source-P) tail、
+   FP8 Q/K真实scale、656字节KV、uint32寻址限制与Dcache标量输出写回修正。
+4. 保留显式torch.ops.npu.npu_quant_lightning_indexer prefill入口，避免custom_ops
+   覆盖别名造成ABI不匹配。C8原生实现/接口的78个文件与988ad6d逐字节(LF)相同。
+5. 合入BF16 native LIM的C>K full-visible校验及C2048/4096/8192链路回归；
+   7个未改donor header和1个适配header的provenance hash核验通过。
+6. C8 paired suite扩展为C2048/4096/8192×eager/graph，共6项；固定投影framework
+   增加--capacity并默认测三种C。验证完整C cold payload，K固定、tail、PAD和复用。
+7. test cpu增加NPU graph runner的CPU用例，覆盖BF16/C8各自graph准入行为。
+8. 原有DeepEP auto/hybrid1/cap32/HCCL1000配置沿用；不修改DeepEP源码或重编DeepEP。
+   来源中的历史挂起报告与BF16 launcher修正随merge保留，不当作新A5实测结果。
+
+本次已执行的检查（217，A3主机）
+------------------------------
+PASS：3个预算/graph回归在旧C8代码上3失败、0error；适配后3通过，证明有效差异。
+PASS：完整CPU 118 passed、0failed/error/skip（pytest124.50s）。
+PASS：全新私有build目录，A3 LIM、A3 combined Copy-SFA两个目标编译。
+PASS：全新私有build目录，A5 quant LIM、A5 quant Copy-SFA两个目标交叉编译。
+PASS：A5 Meta 24 passed、0skip；复用之前隔离提取的A5 wheel。
+      本次未改A5原生实现/注册/host接口，Meta不声称加载了新打包wheel。
+PASS：A5 suite收集157项（LIM146+Copy-SFA5+paired6）；这是收集，不是数值执行。
+PASS：Python lint/format、Bash语法、registered-test检查、16类离线shell流程。
+PASS：保留C8 native文件和prefill/tail代码的源码指纹核验。
+
+本次没有打包安装新的完整wheel，没有替换217现有torch/kernel/DeepEP安装，
+没有在217运行NPU数值推理或模型。217上的其他任务占用NPU，未停止其服务。
+A5机器不由本任务直连，因此新增容量矩阵、A5整网和固定长度性能仍待实机复验。
+旧267项、160请求smoke、GSM8K93.858984%属于10-24记录，不自动算新分支通过。
+
+证据目录（217宿主机）
+-------------------
+/home/wzy/1024/hisparse-copysfa-opt-217-20261023/c8/opt-port-20261026
+容器内同目录为/task/c8/opt-port-20261026。
+cpu-validation.json / before-regressions.xml / after-regressions.xml / cpu-all.xml
+build-meta-validation.json / meta-a5.xml / meta-scope.json / a5-collection.log
+validation_opt_port_20261026.json记录机器可读结果和未执行范围。
+
+A5容器拉取与复验
+---------------
+  BRANCH=feat/hisparse-lim-copysfa-c8-a5-10-26
+  git -C /mnt/share/wzy/sgl-sglang fetch https://github.com/McZyWu/sgl-sglang.git "$BRANCH"
+  git -C /mnt/share/wzy/sgl-sglang switch -c "$BRANCH" FETCH_HEAD
+  git -C /mnt/share/wzy/sgl-kernel-npu fetch https://github.com/McZyWu/sgl-kernel-npu.git "$BRANCH"
+  git -C /mnt/share/wzy/sgl-kernel-npu switch -c "$BRANCH" FETCH_HEAD
+
+已有同名本地分支时改为switch，然后pull --ff-only，不重复switch -c。
+先保存本地未提交改动；不要使用reset --hard覆盖工作区。
+
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export C8_CONFIG=/workspace/c8-a5.env  # 按实际路径，沿用已验证配置
+
+本次A5 C8 ABI与988ad6d相同，可沿用其已安装wheel；若需要验收新分支完整wheel，
+执行bash "$C8_SCRIPT" build-kernel并记录产物SHA256，不重编DeepEP。
+
+  bash "$C8_SCRIPT" test all
+
+本轮应收集CPU118、LIM146、Copy-SFA5、paired6，合计275项pytest，另有三次
+framework。以实际收集为准，验收要求无skip/failed/error，framework全部status=pass。
+framework保留C2048的framework.json/framework.log，另写framework-c4096/8192.json/log。
+
+  # 终端一：启动本次服务，等待ready
+  bash "$C8_SCRIPT" serve
+  # 终端二：相同C8_CONFIG
+  bash "$C8_SCRIPT" smoke
+
+再运行PERFORMANCE_ZH.txt中的128K/64K/16K->1K、C2048/C4096完整A/B。
+新旧版本成绩分开留档，baseline/optimized同一对必须使用相同两仓提交与配置。
+如要确认精度不回退，使用原GSM8K相同数据/5-shot/评分口径做必要对照。
