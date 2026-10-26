@@ -1,0 +1,67 @@
+GSM8K 命中率汇总与 KV buffer 说明
+================================
+
+K=2048是attention选择宽度，C是每请求持久HBM前缀cache容量，两者不是同一个buffer。
+selected_kv_buffer是跨层/步复用的临时gather工作区；传统路径每次zero_再填当前TopK。
+当前C8 manager仍分配它，但C8 attention提前走forward_c8_offload，不从它读取KV。
+C8持久device_kv_buffer每层形状[R,C+256,1,656]，R按request_id分槽；完整host KV
+每层形状[R,align128(context+4),1,656]。新请求复用槽位时重置元数据，不累积旧请求。
+
+日志sparse_request_layer_rows统计的是有限cache的换入换出管理覆盖，不是DSA开关。
+短上下文仍调用quant LIM和Copy-SFA入口；L<=K时有效KV不足K，使用全部有效token。
+L>K但L<=C时也可以DSA选K，同时全量KV仍在HBM，不需要miss回搬。
+当前C8 Q1在floor((L-1)/128)*128>=C时启用cache管理。跨C不保证每步都有miss；
+是否miss取决于当步选中的稳定前缀token是否在该请求的HBM cache里。
+旧KV写入时已备份DRAM，淘汰通常改映射/覆盖HBM槽，不再额外把旧KV写出一次。
+
+D2H的H是Host DRAM。decode新KV写入DRAM，同时更新HBM cache/tail仍会有设备写入。
+Copy-SFA省去独立TopK全局gather物化，但并非没有D2D和HBM到片上缓冲的读取。
+
+--max-new-tokens=512是每请求的生成上限，不能决定是否cross C或必然miss。
+长输入加少量真实输出也可能触发；短输入且实际总长度<C则不会。提高上限也可能
+因EOS提早结束。并发128不把不同请求长度相加；每请求cache独立，现有服务最大
+running=16时客户端128主要增加排队，不能制造单请求的容量miss。
+
+先统计已有日志
+--------------
+  HIT_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/summarize_offload_trace.py
+  TRACE_LOG=/workspace/c8-a5-results/serve-实际目录/server.log
+  python3 "$HIT_SCRIPT" --log "$TRACE_LOG"
+
+默认latest只取每个rank最后一条累计快照，再按sum(hits)/sum(selected)汇总，
+不会把多条累计计数重复相加，也不对打印百分比直接求平均。包含此前服务流量和warmup。
+无cache管理样本显示N/A，不冒充100%。同时显示Copy-SFA decode调用数。
+
+可以同时分析已有GSM8K真实长度（2048替换为当前实际C；省略C则不做跨C估计）：
+  GSM_DIR=/workspace/c8-a5-results/gsm8k-实际目录
+  python3 "$HIT_SCRIPT" --log "$TRACE_LOG" \
+    --predictions "$GSM_DIR/predictions.jsonl" --cache-tokens 2048 \
+    --output "$GSM_DIR/hit-rate.json"
+
+记录本次GSM8K期间的日志窗口
+-------------------------
+服务需已打开C8_TRACE_OFFLOAD。下面不改评测prompt/shot/scorer。
+与服务在同一容器，沿用C8_CONFIG/C8_SCRIPT，修改TRACE_LOG为本次服务的实际文件。
+测试期间只运行GSM8K，不混其他请求。
+
+  HIT_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/summarize_offload_trace.py
+  TRACE_LOG=/workspace/c8-a5-results/serve-实际目录/server.log
+  test -f "$TRACE_LOG" || exit 1
+  TRACE_OFFSET=$(stat -c %s "$TRACE_LOG")
+  GSM_OUT=/workspace/c8-a5-results/gsm8k-with-hit-$(date +%Y%m%d-%H%M%S)-$$
+
+  bash "$C8_SCRIPT" gsm8k \
+    --data-path /mnt/share/wzy/test.jsonl --num-shots 5 \
+    --parallel 8 --max-new-tokens 512 --output "$GSM_OUT" &&
+  python3 "$HIT_SCRIPT" --log "$TRACE_LOG" --offset "$TRACE_OFFSET" --scope window \
+    --predictions "$GSM_OUT/predictions.jsonl" --cache-tokens 2048 \
+    --output "$GSM_OUT/hit-rate.json"
+
+window使用每rank在该字节区间的末快照减首快照，排除以前累计计数；至少需两条快照。
+统计范围是采到的打印窗口，不能声称包含首快照之前/末快照之后未打印的区间。
+要更密集的诊断样本，启动服务时设C8_TRACE_INTERVAL=1；开销更大，不用于正式性能。
+service_max_decode_seq_len始终是服务累计最大值，不是本次窗口的最大值；本次请求
+长度请看predictions统计。按最终长度估计跨C不能替代实际native路径counter。
+
+只新增客户端标准库脚本，无需编译kernel/DeepEP，也不改变服务算子与cache策略。
+当前运行的d5a8d07e日志格式即可读取；此汇总本身不要求重启服务。

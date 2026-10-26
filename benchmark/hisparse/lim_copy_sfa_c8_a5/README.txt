@@ -85,3 +85,7 @@ headroom outside the persistent sparse-manager budget.
 217 is an A3 machine. Its CPU tests, cross-compilation and A3 rejection checks
 must be reported separately from A5 numerical/model/performance execution.
 This directory does not claim a C8 GPQA score or a fixed-length A/B speedup.
+
+GSM8K_HIT_RATE_ZH.txt explains the persistent cache versus selected KV workspace,
+and summarize_offload_trace.py reports token-weighted hit rates from existing
+logs or a GSM8K log window, with optional actual request-length analysis.
