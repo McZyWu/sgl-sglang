@@ -17,13 +17,14 @@ bash container.sh smoke              # second terminal, same C8_CONFIG
 bash container.sh gsm8k              # full 1319-question few-shot accuracy eval
 bash container.sh perf-configs       # four long-context configs: C2048/4096 x modes
 bash container.sh perf MODE          # baseline or lim_copy_sfa; running local server
+bash container.sh perf-decode MODE   # one batch; steady decode output tok/s
 bash container.sh perf-compare BASE OPT [BASE4096 OPT4096]  # result directories
 bash container.sh info               # source revisions and A5 preflight
 EOF
   exit 0
 fi
 case "$ACTION" in
-  build|build-kernel|build-deepep|test|deepep-test|serve|smoke|gsm8k|perf-configs|perf|perf-compare|info) ;;
+  build|build-kernel|build-deepep|test|deepep-test|serve|smoke|gsm8k|perf-configs|perf|perf-decode|perf-compare|info) ;;
   *) echo "Unknown action: $ACTION" >&2; exit 2 ;;
 esac
 : "${C8_CONFIG:?Copy container.env.example and export C8_CONFIG=/path/to/your.env}"
@@ -165,11 +166,14 @@ case "$ACTION" in
     logged configurations python3 "$SCRIPT_DIR/performance.py" prepare-configs \
       --config "$C8_CONFIG" --output "$RUN_DIR" "$@"
     ;;
-  perf)
+  perf|perf-decode)
     perf_mode=${1:?Usage: container.sh perf baseline|lim_copy_sfa}
     shift
+    perf_measurement=serving
+    if [[ "$ACTION" == perf-decode ]]; then perf_measurement=decode; fi
     logged performance python3 "$SCRIPT_DIR/performance.py" run \
       --mode "$perf_mode" --results-root "$C8_RESULTS_DIR" --output "$RUN_DIR" \
+      --measurement "$perf_measurement" \
       --url "${C8_SERVER_URL:-http://127.0.0.1:${PORT:-8810}}" \
       --input-lengths ${C8_PERF_INPUT_LENGTHS:-131072 65536 16384} \
       --concurrencies ${C8_PERF_CONCURRENCIES:-2 4 8 16} \

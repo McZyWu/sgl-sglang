@@ -89,3 +89,8 @@ This directory does not claim a C8 GPQA score or a fixed-length A/B speedup.
 GSM8K_HIT_RATE_ZH.txt explains the persistent cache versus selected KV workspace,
 and summarize_offload_trace.py reports token-weighted hit rates from existing
 logs or a GSM8K log window, with optional actual request-length analysis.
+
+For decode output throughput only, use container.sh perf-decode MODE and read
+DECODE_PERFORMANCE_ZH.txt. It reuses one_batch_server's full-batch decode window;
+perf-compare prints Decode output tok/s and ranks by this metric. The original
+perf action retains whole-request throughput and cannot be mixed with decode runs.

@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+from sglang.benchmark.stream_metrics import BatchStreamRecorder
 from sglang.test.test_utils import CustomTestCase
 
 SOURCE = (
@@ -69,6 +70,75 @@ def record(mode, concurrencies, tpots):
 
 
 class TestC8Performance(CustomTestCase):
+    def test_decode_window_excludes_prefill_and_accounts_for_boundary_delivery(self):
+        """Adding prefill delay must not lower decode throughput; chunks straddle boundaries."""
+        chunks = [
+            (0, 1, None, 1),
+            (0, 2, None, 2),
+            (1, 1, None, 3),
+            (0, 4, None, 4),
+            (1, 2, None, 4),
+            (1, 3, None, 5),
+            (0, 6, "length", 6),
+            (1, 5, "length", 7),
+        ]
+        for prefill in (0, 100):
+            recorder = BatchStreamRecorder(2)
+            for index, count, finish, now in chunks:
+                recorder.record_chunk(
+                    index=index,
+                    completion_tokens=count,
+                    finish_type=finish,
+                    now=now + prefill,
+                )
+            window = recorder.steady_state_window()
+            self.assertEqual(window.duration, 3)
+            self.assertEqual(window.output_throughput, 2)
+            self.assertEqual(recorder.tpots_ms(), [1000, 1000])
+        incomplete = BatchStreamRecorder(1)
+        incomplete.record_chunk(index=0, completion_tokens=2, finish_type=None, now=1)
+        with self.assertRaisesRegex(ValueError, "finish chunk"):
+            incomplete.tpots_ms()
+
+    def test_decode_rejects_clamped_output_and_marks_missing_common_window(self):
+        value = dict(
+            batch_size=2,
+            input_len=131072,
+            output_len=1024,
+            total_output_tokens=2044,
+            num_early_stopped=0,
+            steady_state_output_throughput=100,
+            steady_state_window_s=10,
+            mean_tpot_ms=20,
+            p95_tpot_ms=21,
+        )
+        with self.assertRaisesRegex(ValueError, "lengths"):
+            perf.decode_metrics(value, 2, 131072, 1024)
+        value["total_output_tokens"] = 2048
+        self.assertEqual(
+            perf.decode_metrics(value, 2, 131072, 1024)["steady_batch_step_ms"], 20
+        )
+        value.update(steady_state_output_throughput=None, steady_state_window_s=None)
+        metrics = perf.decode_metrics(value, 2, 131072, 1024)
+        self.assertEqual(metrics["status"], "no_full_batch_window")
+        self.assertIsNone(metrics["decode_output_throughput"])
+
+    def test_decode_winner_uses_decode_rate_not_prefill_amortized_rate(self):
+        value = record("baseline", [2, 4, 8], [[40, 40], [45, 45], [None, None]])
+        value["protocol"]["measurement"] = "decode"
+        for row in value["cases"]:
+            batch = row["concurrency"]
+            row.update(
+                decode_output_throughput={2: 300, 4: 250, 8: None}[batch],
+                steady_state_window_s=10,
+                steady_batch_step_ms=10,
+            )
+            if batch == 8:
+                row["status"] = "capacity_limited"
+        summary = perf.slo_summary(value)
+        self.assertEqual(summary["best"][0]["point"]["client_concurrency"], 2)
+        self.assertFalse(summary["points"][2]["meets_slo"])
+
     @staticmethod
     def trace_line(rank, forward, selected, misses):
         value = dict.fromkeys(trace_summary.COUNTERS, 0)

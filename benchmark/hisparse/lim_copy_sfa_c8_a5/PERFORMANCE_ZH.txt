@@ -1,6 +1,10 @@
 A5 C8 整网容量与吞吐：以平均 TPOT 约 50 ms/token 为目标
 ===================================================
 
+10-26 后续：用户只看 decode output 吞吐时，使用 perf-decode，详见
+DECODE_PERFORMANCE_ZH.txt。下文 perf 的 output 是含 prefill/排队的整轮吞吐。
+两种结果不能混用；perf-decode 沿用这里的四组服务配置，但正式请求数固定为 B。
+
 10-26 更新：本流程代替原来的固定并发 1 实验。
 普通 C8 baseline 关闭 sparse offload/LIM/Copy-SFA；lim_copy_sfa 打开这三项。
 模型、权重精度、拓扑、mem_fraction_static、overlap、PrefillDelayer、DeepEP 一致。

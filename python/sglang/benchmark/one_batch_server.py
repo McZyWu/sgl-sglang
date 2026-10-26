@@ -436,6 +436,8 @@ class BenchOneCaseResult(BaseModel):
     num_early_stopped: Optional[int] = None
     steady_state_output_throughput: Optional[float] = None
     steady_state_window_s: Optional[float] = None
+    mean_tpot_ms: Optional[float] = None
+    p95_tpot_ms: Optional[float] = None
     cache_hit_rate: Optional[float] = None
     profile_link: Optional[str] = None
 
@@ -455,6 +457,8 @@ class BenchOneCaseResult(BaseModel):
                 "acc_length": round(self.acc_length, 2),
                 "total_output_tokens": self.total_output_tokens,
                 "num_early_stopped": self.num_early_stopped,
+                "mean_tpot_ms": self.mean_tpot_ms,
+                "p95_tpot_ms": self.p95_tpot_ms,
                 "steady_state_output_throughput": (
                     round(self.steady_state_output_throughput, 2)
                     if self.steady_state_output_throughput is not None
@@ -922,6 +926,7 @@ def run_one_case(
         if steady_state_window is not None
         else None
     )
+    tpots_ms = recorder.tpots_ms() if recorder is not None else []
     if (
         ignore_eos
         and recorder is not None
@@ -1013,6 +1018,8 @@ def run_one_case(
         total_output_tokens=total_output_tokens,
         num_early_stopped=num_early_stopped,
         steady_state_output_throughput=steady_state_output_throughput,
+        mean_tpot_ms=float(np.mean(tpots_ms)) if tpots_ms else None,
+        p95_tpot_ms=float(np.percentile(tpots_ms, 95)) if tpots_ms else None,
         steady_state_window_s=(
             steady_state_window.duration if steady_state_window is not None else None
         ),

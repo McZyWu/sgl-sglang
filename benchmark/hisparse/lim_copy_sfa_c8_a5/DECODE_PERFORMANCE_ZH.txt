@@ -1,0 +1,106 @@
+A5 C8：只比较整网 decode 的 output 吞吐
+======================================
+
+入口：bash "$C8_SCRIPT" perf-decode baseline|lim_copy_sfa
+在 feat/hisparse-lim-copysfa-c8-a5-10-26 上新增，保留原 perf 的 E2E 口径。
+本次只修改 Python benchmark/脚本，不改 kernel/DeepEP，无需重编已验证的 wheel。
+A5 数值仍需用户在 A5 执行；217 CPU/HTTP 验证不代表 A5 性能结果。
+
+统计口径
+--------
+复用仓库 sglang.benchmark.one_batch_server 和 BatchStreamRecorder。
+每个点一次 /generate 批量提交 B 个请求，正式请求总数=B，最大在途请求数=B。
+random 数据集，输入 131072/65536/16384 tokens，输出固定 1024，ignore_eos=True。
+预热为同一个 B 的 1024 输入/16 输出，预热不计入正式统计。
+
+  t0 = 最后一个请求收到首 token 的时间
+  t1 = 第一个请求收到结束 chunk 的时间
+  Decode output tok/s = (t1 时所有请求的累计输出 - t0 时累计输出) / (t1-t0)
+
+边界累计数沿用仓库的逐请求插值，避免同一步 chunk 到达顺序改变统计。
+排除 t0 前的 prefill/排队和 t1 后的 batch 收尾；保留整网实际 decode 开销。
+这是服务端输出经客户端流式观测的吞吐，含调度/通信/attention 等整网开销。
+不是单算子速度，也不是设备纯 kernel 时间。计时期间应只有本次测试流量。
+TP8、attention DP1 时，tok/s 是这 8 卡共同运行的一个服务的总吞吐，不乘/除 TP。
+
+Mean TPOT = 各请求 (结束时间-首 token 时间)/(实际输出数-1) 的算术平均。
+同时保存 P95 TPOT。这个 TPOT 会包含该请求解码期间与其他请求 prefill 的交错影响。
+steady_batch_step_ms = 1000*B/Decode output tok/s 单独保存，不冒充请求平均 TPOT。
+默认用每轮 Mean TPOT<60 ms 筛候选，再选 Decode output tok/s 最高的点。
+可用 --tpot-limit-ms 改上限，默认 60 是按“50 多也可以”的约束。
+
+目标 B 与实测 batch
+------------------
+当前 A5 是 TP8/EP8/attention DP1，所以 B 就是请求 batch 目标；TP 不乘到 B 上。
+若有多个 attention DP，B 为全服务请求数，每个 DP 实际收到的数仍需看服务端日志。
+graph bucket 是每 DP 的捕获大小；请求 B/DP 落在对应捕获 bucket 时避免大 bucket padding。
+默认配置捕获 [1,2,4,8,16]；默认扫 B=2/4/8/16，可 --concurrencies 1 2 4 8 16。
+decode_batch 字段保留服务端 #running-req 的 min/median/max 样本，含预热日志。
+不能把目标 B 或 graph padding 数当成已测量的每一步实际 batch。
+
+capacity_limited：B*(输入+输出) 超过实际 token 池，记录 N/A，不发请求冒充目标 batch。
+no_full_batch_window：请求均完成，但第一条已结束时最后一条还没开始 decode，记录 N/A。
+这两类点不参与收益/最大吞吐选择。原始长度不满/异常结束/没有结束 chunk 则失败。
+长输入+短输出未必能形成大的共同窗口；不要用 E2E output 或 B/单请求 TPOT 补造结果。
+
+“波”是原 perf 的滚动发请求数量倍数：默认 N=max(4,B*2)，完成一个就补下一个。
+perf-decode 不使用波，正式请求总数固定 B；--rounds 才是独立重复次数。
+
+可复制运行方式（同一容器的两个终端）
+----------------------------------
+先让当前测试结束，再更新 SGLang，并重启自己的测试服务。客户端/服务端提交须一致。
+kernel 仓和已有 wheel 沿用；无需重新跑 build-kernel/build-deepep。
+
+  export BRANCH=feat/hisparse-lim-copysfa-c8-a5-10-26
+  git -C /mnt/share/wzy/sgl-sglang switch "$BRANCH"
+  git -C /mnt/share/wzy/sgl-sglang pull --ff-only https://github.com/McZyWu/sgl-sglang.git "$BRANCH"
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+
+沿用已经确定的 perf-configs 目录，无需重新生成。以下路径按此前示例，替换为你的实际目录。
+四个 case 依次为 c2048-baseline/c2048-lim_copy_sfa/c4096-baseline/c4096-lim_copy_sfa。
+每完成一个，Ctrl-C 停止自己的测试服务，两个终端同时切换 CASE，然后重复。
+
+终端一：
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-1026-slo
+  export CASE=c2048-lim_copy_sfa
+  export C8_CONFIG="$PERF_CONFIGS/$CASE.env"
+  # 两个 trace 开关均关闭；若配置里显式设成 1，先将配置改为 0。
+  test -f "$C8_CONFIG" && bash "$C8_SCRIPT" serve
+
+终端二：
+  export C8_SCRIPT=/mnt/share/wzy/sgl-sglang/benchmark/hisparse/lim_copy_sfa_c8_a5/container.sh
+  export PERF_CONFIGS=/workspace/c8-a5-results/perf-configs-1026-slo
+  export PERF_RUN="$PERF_CONFIGS/decode-results"
+  export CASE=c2048-lim_copy_sfa
+  export C8_CONFIG="$PERF_CONFIGS/$CASE.env"
+  test -f "$C8_CONFIG" && bash "$C8_SCRIPT" perf-decode "${CASE#*-}" \
+    --input-lengths 131072 65536 16384 --new-tokens 1024 \
+    --concurrencies 2 4 8 16 --rounds 1 --tpot-limit-ms 60 \
+    --output "$PERF_RUN/$CASE"
+
+输出目录必须是新目录，重复实验时换 PERF_RUN；不要覆盖旧的 performance.json。
+smoke/GSM8K 是另行做正确性/活性验证的命令，不是本次 decode 性能命令的依赖。
+
+四个 case 结束后，在客户端终端汇总（沿用同一 PERF_RUN）：
+  bash "$C8_SCRIPT" perf-compare \
+    "$PERF_RUN/c2048-baseline" "$PERF_RUN/c2048-lim_copy_sfa" \
+    "$PERF_RUN/c4096-baseline" "$PERF_RUN/c4096-lim_copy_sfa"
+
+表格在哪里
+----------
+每个点完成，客户端终端输出 PASS ... decode output=...；整个模式结束，直接打印点表。
+  $PERF_RUN/$CASE/decode-summary.md  每个长度/B/重复的 decode 吞吐与 TPOT
+  $PERF_RUN/$CASE/performance.json  完整配置/实际容量/每个点/观察到的 batch
+  $PERF_RUN/$CASE/slo-summary.json  各长度在 TPOT 上限内的最佳 decode 点
+  $PERF_RUN/$CASE/i*-o*-c*-r*.jsonl/.log/.command.json  仓库客户端原始结果/日志/命令
+perf-compare 在客户端终端打印 A/B 表；最后的 Results: ... 给出固定保存目录。
+该目录含 comparison.md/csv/json 和 all-points.csv，表头明确写 Decode output tok/s。
+比较会拒绝将原 perf 的 E2E 数据和 perf-decode 数据混在同一张收益表。
+
+为何原来服务端 gen throughput 60+，perf output 只有 10+
+----------------------------------------------------
+原 perf/bench_serving 的 output=总生成 token/整轮墙钟时间，包含 128K prefill 和排队。
+服务端 gen throughput 是最近日志窗口的生成速度，窗口也可能跨到 prefill/空闲。
+新流程以整个共同 decode 窗口为主，不能保证恰好等于某一条服务端日志。
+原来的结果若只有 output_lens/ttfts/itls，没有逐请求绝对时间，不能精确回算该窗口。
+已完成的 GSM8K 精度结果仍成立；吞吐新口径需要重新测，不能从旧 output=10+ 改名得到。

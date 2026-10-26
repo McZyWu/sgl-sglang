@@ -84,6 +84,109 @@ METRICS = (
 # aggregate indexer pool. req_to_token adds four columns before page alignment.
 MAX_C8_CONTEXT = 262144 - 4
 TUNING_KEYS = {"max_total_tokens", "max_running_requests", "cuda_graph_bs_decode"}
+DECODE_METRICS = (
+    "decode_output_throughput",
+    "steady_state_window_s",
+    "steady_batch_step_ms",
+    "mean_tpot_ms",
+    "p95_tpot_ms",
+)
+
+
+def metric_keys(record):
+    return (
+        DECODE_METRICS if record["protocol"].get("measurement") == "decode" else METRICS
+    )
+
+
+def decode_metrics(result, batch, length, output):
+    """Do not turn a clamped output or an empty full-batch window into a win."""
+    if (
+        result["batch_size"] != batch
+        or result["input_len"] != length
+        or result["output_len"] != output
+        or result["total_output_tokens"] != batch * output
+        or result["num_early_stopped"] != 0
+    ):
+        raise ValueError(
+            "Decode benchmark did not complete the requested batch/lengths"
+        )
+    values = {
+        "decode_output_throughput": result["steady_state_output_throughput"],
+        "steady_state_window_s": result["steady_state_window_s"],
+        "mean_tpot_ms": result["mean_tpot_ms"],
+        "p95_tpot_ms": result["p95_tpot_ms"],
+    }
+    if any(
+        values[key] is None or not math.isfinite(values[key]) or values[key] <= 0
+        for key in ("mean_tpot_ms", "p95_tpot_ms")
+    ):
+        raise ValueError("Invalid per-request TPOT")
+    if (
+        values["decode_output_throughput"] is None
+        and values["steady_state_window_s"] is None
+    ):
+        return values | {"steady_batch_step_ms": None, "status": "no_full_batch_window"}
+    if any(
+        value is None or not math.isfinite(value) or value <= 0
+        for value in values.values()
+    ):
+        raise ValueError(
+            "No valid full-batch decode window/TPOT; inspect the client log"
+        )
+    values["steady_batch_step_ms"] = 1000 * batch / values["decode_output_throughput"]
+    return values
+
+
+def decode_command(args, config, dataset, raw_path, length, batch):
+    return [
+        sys.executable,
+        "-m",
+        "sglang.benchmark.one_batch_server",
+        "--model-path",
+        "None",
+        "--base-url",
+        args.url,
+        "--local-tokenizer-path",
+        config["model_path"],
+        "--dataset-name",
+        "random",
+        "--dataset-path",
+        str(dataset),
+        "--batch-size",
+        str(batch),
+        "--input-len",
+        str(length),
+        "--output-len",
+        str(args.new_tokens),
+        "--temperature",
+        "0",
+        "--seed",
+        "42",
+        "--client-stream-interval",
+        "1",
+        "--result-filename",
+        str(raw_path),
+        "--no-append-to-github-summary",
+    ]
+
+
+def decode_table(record):
+    text = "| Input | Batch requests | Round | Decode output tok/s | Mean TPOT ms | P95 TPOT ms | Full-batch window s | Status |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    for row in record["cases"]:
+        cells = [row["input_tokens"], row["concurrency"], row["repeat"]]
+        cells += [
+            f"{row[key]:.2f}" if row.get(key) is not None else "N/A"
+            for key in (
+                "decode_output_throughput",
+                "mean_tpot_ms",
+                "p95_tpot_ms",
+                "steady_state_window_s",
+            )
+        ]
+        cells.append(row.get("status", "pass"))
+        text += "| " + " | ".join(map(str, cells)) + " |\n"
+    return text
 
 
 def validate_capacity(config, lengths, output):
@@ -350,6 +453,7 @@ def run(args):
     if summary_path.exists():
         raise ValueError("Use a fresh output directory")
     record = {"status": "running", "mode": args.mode, "cases": []}
+    decode = getattr(args, "measurement", "serving") == "decode"
     try:
         if (
             min(
@@ -412,15 +516,32 @@ def run(args):
                 "gate": "every measured repetition must satisfy the bound",
             },
             protocol={
+                "measurement": "decode" if decode else "serving",
                 "input_lengths": args.input_lengths,
                 "concurrencies": args.concurrencies,
                 "new_tokens": args.new_tokens,
                 "rounds": args.rounds,
-                "waves": args.waves,
+                "waves": 1 if decode else args.waves,
                 "seed": 42,
                 "dataset_sha256": hashlib.sha256(data).hexdigest(),
             },
         )
+        if decode:
+            record["objective"]["maximize"] = "decode_output_throughput"
+            states = info.get("internal_states") or [{}]
+            per_dp = (
+                states[0].get("effective_max_running_requests_per_dp")
+                or config["max_running_requests"]
+            )
+            dp_ranks = (config["dp_size"] or 1) * (config["attn_dp_size"] or 1)
+            if not per_dp or max(args.concurrencies) > per_dp * dp_ranks:
+                raise ValueError(
+                    "Decode batch exceeds the server's effective running-request cap; restart with a larger cap"
+                )
+            print(
+                "Decode metric: last request first token -> first request finish; one batch, no waves",
+                flush=True,
+            )
         write_json(args.output / "server_info.json", info)
         record["memory_before"] = memory_snapshot(args.output / "npu-smi-before.txt")
         server_log = path.parent / "server.log"
@@ -429,7 +550,7 @@ def run(args):
             for length in args.input_lengths:
                 for concurrency in args.concurrencies:
                     live_manifest(path, launch["port"])
-                    count = max(4, concurrency * args.waves)
+                    count = concurrency if decode else max(4, concurrency * args.waves)
                     name = f"i{length}-o{args.new_tokens}-c{concurrency}-r{repeat + 1}"
                     raw_path = args.output / f"{name}.jsonl"
                     record["active_case"] = {
@@ -438,6 +559,30 @@ def run(args):
                         "client_log": str(args.output / f"{name}.log"),
                     }
                     write_json(summary_path, record)
+                    if (
+                        decode
+                        and capacity
+                        and concurrency * (length + args.new_tokens) > capacity
+                    ):
+                        record["cases"].append(
+                            {
+                                "input_tokens": length,
+                                "concurrency": concurrency,
+                                "repeat": repeat + 1,
+                                "requests": count,
+                                "status": "capacity_limited",
+                                "meets_tpot_slo": False,
+                                "required_tokens": concurrency
+                                * (length + args.new_tokens),
+                                **dict.fromkeys(DECODE_METRICS),
+                            }
+                        )
+                        write_json(summary_path, record)
+                        print(
+                            f"CAPACITY LIMITED {name}: full batch cannot fit token pool={capacity}",
+                            flush=True,
+                        )
+                        continue
                     log_offset = (
                         server_log.stat().st_size if server_log.exists() else None
                     )
@@ -481,6 +626,10 @@ def run(args):
                         "--output-file",
                         str(raw_path),
                     ]
+                    if decode:
+                        command = decode_command(
+                            args, config, dataset, raw_path, length, concurrency
+                        )
                     write_json(args.output / f"{name}.command.json", command)
                     print(
                         f"START {name}: {count} requests; warmup={concurrency}",
@@ -505,10 +654,16 @@ def run(args):
                     if len(lines) != 1:
                         raise ValueError(f"Expected one benchmark record: {raw_path}")
                     result = json.loads(lines[0])
-                    validate_result(result, count, length, args.new_tokens)
-                    if {
-                        key: result["server_info"].get(key) for key in SERVER_KEYS
-                    } != config:
+                    if decode:
+                        metrics = decode_metrics(
+                            result, concurrency, length, args.new_tokens
+                        )
+                        result_info = server_info(args.url)
+                    else:
+                        validate_result(result, count, length, args.new_tokens)
+                        metrics = {key: result[key] for key in METRICS}
+                        result_info = result["server_info"]
+                    if {key: result_info.get(key) for key in SERVER_KEYS} != config:
                         raise ValueError(
                             "Server configuration changed during benchmarking"
                         )
@@ -518,8 +673,9 @@ def run(args):
                         "repeat": repeat + 1,
                         "requests": count,
                         "raw_result": raw_path.name,
-                        **{key: result[key] for key in METRICS},
-                        "meets_tpot_slo": result["mean_tpot_ms"] < args.tpot_limit_ms,
+                        **metrics,
+                        "meets_tpot_slo": metrics.get("status", "pass") == "pass"
+                        and result["mean_tpot_ms"] < args.tpot_limit_ms,
                         "decode_batch": batch_observations(server_log, log_offset)
                         if log_offset is not None
                         else {
@@ -530,16 +686,35 @@ def run(args):
                     }
                     record["cases"].append(case)
                     write_json(summary_path, record)
-                    print(
-                        f"PASS {name}: output={result['output_throughput']:.2f} tok/s; TTFT={result['mean_ttft_ms']:.2f} ms; TPOT={result['mean_tpot_ms']:.2f} ms",
-                        flush=True,
-                    )
+                    if decode:
+                        (args.output / "decode-summary.md").write_text(
+                            decode_table(record), encoding="utf-8"
+                        )
+                        if metrics.get("status", "pass") == "pass":
+                            print(
+                                f"PASS {name}: decode output={metrics['decode_output_throughput']:.3f} tok/s; mean TPOT={metrics['mean_tpot_ms']:.2f} ms; full-batch window={metrics['steady_state_window_s']:.2f} s",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"NO FULL-BATCH WINDOW {name}: no decode throughput eligible for comparison",
+                                flush=True,
+                            )
+                    else:
+                        print(
+                            f"PASS {name}: output={result['output_throughput']:.2f} tok/s; TTFT={result['mean_ttft_ms']:.2f} ms; TPOT={result['mean_tpot_ms']:.2f} ms",
+                            flush=True,
+                        )
         live_manifest(path, launch["port"])
         record["memory_after"] = memory_snapshot(args.output / "npu-smi-after.txt")
         record["status"] = "pass"
         record.pop("active_case", None)
         write_json(args.output / "slo-summary.json", slo_summary(record))
         print(json.dumps(slo_summary(record)["best"], indent=2), flush=True)
+        if decode:
+            text = decode_table(record)
+            (args.output / "decode-summary.md").write_text(text, encoding="utf-8")
+            print(text, flush=True)
         print(f"Completed {args.mode}: {summary_path}", flush=True)
     except Exception as error:
         record.update(status="fail", error=str(error))
@@ -569,6 +744,7 @@ def grouped(record):
 def slo_summary(record):
     """Keep workloads separate and gate *all* rounds, not just a fast median."""
     limit = record["objective"]["strict_upper_bound_ms"]
+    keys = metric_keys(record)
     points = []
     for (length, concurrency), samples in sorted(grouped(record).items()):
         batches = [
@@ -585,15 +761,30 @@ def slo_summary(record):
                 "input_tokens": length,
                 "output_tokens": record["protocol"]["new_tokens"],
                 "client_concurrency": concurrency,
+                "status": ";".join(
+                    sorted({item.get("status", "pass") for item in samples})
+                ),
                 **{
                     key: statistics.median(item[key] for item in samples)
-                    for key in METRICS
+                    if all(item.get("status", "pass") == "pass" for item in samples)
+                    else None
+                    for key in keys
                 },
                 "worst_round_mean_tpot_ms": max(
                     item["mean_tpot_ms"] for item in samples
+                )
+                if all(item["mean_tpot_ms"] is not None for item in samples)
+                else None,
+                "below_50ms_target": all(
+                    item["mean_tpot_ms"] is not None and item["mean_tpot_ms"] < 50
+                    for item in samples
                 ),
-                "below_50ms_target": all(item["mean_tpot_ms"] < 50 for item in samples),
-                "meets_slo": all(item["mean_tpot_ms"] < limit for item in samples),
+                "meets_slo": all(
+                    item.get("status", "pass") == "pass"
+                    and item["mean_tpot_ms"] is not None
+                    and item["mean_tpot_ms"] < limit
+                    for item in samples
+                ),
                 "observed_decode_batch_max": max(batches) if batches else None,
             }
         )
@@ -608,7 +799,7 @@ def slo_summary(record):
             max(
                 candidates,
                 key=lambda point: (
-                    point["output_throughput"],
+                    point[keys[0]],
                     -point["client_concurrency"],
                 ),
             )
@@ -661,6 +852,10 @@ def compare(args):
         if reference is None:
             reference = base
         for candidate in (base, tuned):
+            if set(candidate["protocol"]) != set(reference["protocol"]):
+                raise ValueError(
+                    "Different protocol keys; do not mix serving and decode runs"
+                )
             for key in ("objective",):
                 if candidate[key] != reference[key]:
                     raise ValueError(f"Different {key}")
@@ -715,12 +910,12 @@ def compare(args):
                 for key in (
                     "client_concurrency",
                     "observed_decode_batch_max",
-                    *METRICS,
+                    *metric_keys(base),
                     "worst_round_mean_tpot_ms",
                 ):
                     row[f"{prefix}_{key}"] = point[key] if point else None
             row["throughput_speedup"] = (
-                o["output_throughput"] / b["output_throughput"] if b and o else None
+                o[metric_keys(base)[0]] / b[metric_keys(base)[0]] if b and o else None
             )
             rows.append(row)
     args.output.mkdir(parents=True, exist_ok=True)
@@ -728,7 +923,7 @@ def compare(args):
         args.output / "comparison.json",
         {
             "objective": reference["objective"],
-            "scope": "highest measured whole-model output throughput satisfying mean TPOT in every round; independent concurrency optima, same model/topology/memory fraction",
+            "scope": f"highest measured {metric_keys(reference)[0]} satisfying mean TPOT in every round; independent concurrency optima, same model/topology/memory fraction",
             "rows": rows,
             "points": points,
             "configurations": configurations,
@@ -745,10 +940,16 @@ def compare(args):
     def cell(value):
         return "N/A" if value is None else f"{value:.2f}"
 
-    text = "| C | Input | Baseline clients | Baseline tok/s | Baseline mean TPOT ms | HiSparse clients | HiSparse tok/s | HiSparse mean TPOT ms | Throughput ratio |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+    metric = metric_keys(reference)[0]
+    label = "Decode output" if metric == "decode_output_throughput" else "E2E output"
+    text = f"| C | Input | Baseline clients | Baseline {label} tok/s | Baseline mean TPOT ms | HiSparse clients | HiSparse {label} tok/s | HiSparse mean TPOT ms | Throughput ratio |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
     for row in rows:
-        text += f"| {row['cache_tokens']} | {row['input_tokens']} | {cell(row['baseline_client_concurrency'])} | {cell(row['baseline_output_throughput'])} | {cell(row['baseline_mean_tpot_ms'])} | {cell(row['optimized_client_concurrency'])} | {cell(row['optimized_output_throughput'])} | {cell(row['optimized_mean_tpot_ms'])} | {cell(row['throughput_speedup'])} |\n"
-    text += "\nN/A = no measured point satisfies the bound. This is the best scanned point, not a proof of the global maximum. all-points.csv includes P95 TPOT, TTFT and observed decode batches; comparison.json records actual capacities/configurations and device-wide memory snapshots. Throughput includes prefill and queueing; batch observations include warmup.\n"
+        text += f"| {row['cache_tokens']} | {row['input_tokens']} | {cell(row['baseline_client_concurrency'])} | {cell(row['baseline_' + metric])} | {cell(row['baseline_mean_tpot_ms'])} | {cell(row['optimized_client_concurrency'])} | {cell(row['optimized_' + metric])} | {cell(row['optimized_mean_tpot_ms'])} | {cell(row['throughput_speedup'])} |\n"
+    text += "\nN/A = no valid measured point satisfies the bound (including capacity-limited batches). Best scanned point, not a proof of the global maximum. all-points.csv includes all scanned points; comparison.json records actual capacities/configurations and device-wide memory snapshots. Batch observations include warmup.\n"
+    if label == "Decode output":
+        text += "Decode output = tokens delivered between the last request's first token and the first request's finish, divided by that window. Mean TPOT is the arithmetic mean of each request's (finish - first token) / (output tokens - 1); steady_batch_step_ms = 1000 * batch / decode tok/s is a separate quantity.\n"
+    else:
+        text += "E2E output throughput includes prefill and queueing.\n"
     (args.output / "comparison.md").write_text(text, encoding="utf-8")
     print(text, flush=True)
     print(f"Results: {args.output}", flush=True)
@@ -770,6 +971,9 @@ if __name__ == "__main__":
     prepare.add_argument("--concurrencies", type=int, nargs="+", default=[2, 4, 8, 16])
     bench = subparsers.add_parser("run")
     bench.add_argument("--mode", choices=("baseline", "lim_copy_sfa"), required=True)
+    bench.add_argument(
+        "--measurement", choices=("serving", "decode"), default="serving"
+    )
     bench.add_argument("--url", default="http://127.0.0.1:8810")
     bench.add_argument("--results-root", type=Path, required=True)
     bench.add_argument("--launch-manifest", type=Path)

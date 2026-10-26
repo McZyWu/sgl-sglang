@@ -89,6 +89,7 @@ class BatchStreamRecorder:
         self._first_token_time: List[Optional[float]] = [None] * batch_size
         self._completion_tokens: List[int] = [0] * batch_size
         self._finish_types: List[Optional[str]] = [None] * batch_size
+        self._finish_time: List[Optional[float]] = [None] * batch_size
         self._num_started = 0
         self._t0: Optional[_Boundary] = None
         self._t1: Optional[_Boundary] = None
@@ -115,6 +116,7 @@ class BatchStreamRecorder:
                 self._t0 = _Boundary(time=now, before=list(self._last_obs))
         if finish_type is not None and self._finish_types[index] is None:
             self._finish_types[index] = finish_type
+            self._finish_time[index] = now
             if self._t1 is None:
                 self._t1 = _Boundary(time=now, before=list(self._last_obs))
 
@@ -128,6 +130,18 @@ class BatchStreamRecorder:
     @property
     def num_early_stopped(self) -> int:
         return sum(1 for t in self._finish_types if t == "stop")
+
+    def tpots_ms(self) -> List[float]:
+        """Per-request (finish - first token) / (completion tokens - 1)."""
+        if any(time is None for time in self._finish_time):
+            raise ValueError("Cannot measure TPOT: a request has no finish chunk")
+        return [
+            1000 * (end - start) / (tokens - 1)
+            for start, end, tokens in zip(
+                self._first_token_time, self._finish_time, self._completion_tokens
+            )
+            if start is not None and tokens > 1
+        ]
 
     @property
     def tokens_before_all_started(self) -> Optional[float]:
