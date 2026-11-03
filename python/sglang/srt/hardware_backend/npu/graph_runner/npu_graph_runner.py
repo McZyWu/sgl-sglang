@@ -367,7 +367,10 @@ class NPUGraphRunner(DecodeCudaGraphRunner):
                 )
                 self._replay_attn_backend().init_forward_metadata_out_graph(fb_view)
 
-        graph_key = self._make_graph_key(self.bs)
+        graph_key = self._make_graph_key(
+            self.bs,
+            attention_variant=self._resolve_attention_variant(forward_batch, self.bs),
+        )
 
         if not (
             is_deepseek_dsa(self.model_runner.model_config.hf_config)

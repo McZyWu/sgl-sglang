@@ -17,6 +17,7 @@ from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.budget import (
 )
 from sglang.srt.runtime_context import (
     attention_backends,
+    get_disagg,
     get_exec,
     get_parallel,
     get_schedule,
@@ -52,6 +53,10 @@ def is_sparsity_driven_kv_offload_enabled(
     if is_draft_worker:
         return False
     if not envs.SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD.get():
+        return False
+    # PD prefill produces the native split HBM cache for direct transfer.
+    # Only decode (or colocated serving) owns the MF-backed sparse host pool.
+    if use_fused_sparse_kv_offload() and get_disagg().disaggregation_mode == "prefill":
         return False
 
     prefill_attention_backend, decode_attention_backend = attention_backends()

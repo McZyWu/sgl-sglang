@@ -39,6 +39,9 @@ def test_fused_copy_sfa_metadata_width_and_graph(width, paged_host):
         .contiguous()
     )
 
+    resident_begin = torch.zeros(request_rows, dtype=torch.int32, device=device)
+    resident_end = torch.full_like(resident_begin, 128)
+
     def run():
         fused_lim_copy_sfa_metadata(
             source_ids=source,
@@ -59,11 +62,20 @@ def test_fused_copy_sfa_metadata_width_and_graph(width, paged_host):
             request_rows=request_rows,
             query_width=width,
             host_block_table=host_pages if paged_host else None,
+            resident_begin=resident_begin,
+            resident_end=resident_end,
         )
 
     def check(valid_cpu, sparse_cpu, slots_cpu):
         torch.npu.synchronize()
         active = [v and s for v, s in zip(valid_cpu, sparse_cpu)]
+        active_slots = {slot for slot, live in zip(slots_cpu, active) if live}
+        assert resident_begin.cpu().tolist() == [
+            -1 if slot in active_slots else 0 for slot in range(request_rows)
+        ]
+        assert resident_end.cpu().tolist() == [
+            -1 if slot in active_slots else 128 for slot in range(request_rows)
+        ]
         assert kv.cpu().tolist() == [
             capacity + width - 1 if sp else (int(prefix[row].cpu()) if v else 0)
             for row, (v, sp) in enumerate(zip(valid_cpu, sparse_cpu))
@@ -110,5 +122,7 @@ def test_fused_copy_sfa_metadata_width_and_graph(width, paged_host):
     source.copy_(original)
     topk.fill_(7)
     counts.fill_(9)
+    resident_begin.zero_()
+    resident_end.fill_(128)
     graph.replay()
     check([False, True, True], [False, True, True], [request_rows, 2, 3])

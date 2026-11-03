@@ -1,5 +1,6 @@
 """Real-manager dense/sparse mixed attention, replay and residency lifecycle."""
 
+import gc
 from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,7 +10,7 @@ import torch
 
 pytest.importorskip("torch_npu")
 
-from sgl_kernel_npu.sparsity_driven_kv_offload import free_shm
+from test_fused_host_kv import _SingleRankGroup
 
 from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_attention import (
     forward_sparsity_driven_kv_offload,
@@ -23,6 +24,17 @@ from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_manager im
 from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool, ReqToTokenPool
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.runtime_context import get_parallel
+
+
+@pytest.fixture(autouse=True)
+def _standalone_mf_group():
+    with get_parallel().override(attn_tp_group=_SingleRankGroup()):
+        yield
+    from memfabric_hybrid import offload
+
+    torch.npu.synchronize()
+    gc.collect()
+    offload.uninitialize()
 
 
 @pytest.fixture(autouse=True)
@@ -126,10 +138,13 @@ def test_prefill_attention_and_short_residency():
             sources = sources.masked_fill(
                 sources > torch.tensor(positions, device="npu")[:, None], -1
             )
-            for layer_id, host in enumerate(manager.host_kv_buffer):
+            for layer_id, (host_k, host_v) in enumerate(
+                zip(manager.host_k_buffer, manager.host_v_buffer)
+            ):
                 payload = torch.randn(2 * context, 576, dtype=torch.bfloat16)
                 fresh = torch.randn(4, 1, 576, device="npu", dtype=torch.bfloat16)
-                host.view(-1, 576).copy_(payload)
+                host_k.view(-1, 512).copy_(payload[:, :512])
+                host_v.view(-1, 64).copy_(payload[:, 512:])
                 payload[physical] = fresh.cpu().view(4, 576)
                 layer = SimpleNamespace(
                     layer_id=layer_id,
@@ -163,7 +178,17 @@ def test_prefill_attention_and_short_residency():
                     )
                 for row, length in enumerate(lengths[:2]):
                     torch.testing.assert_close(
-                        manager.device_kv_buffer[layer_id][row + 1, :length, 0].cpu(),
+                        torch.cat(
+                            (
+                                manager.device_k_buffer[layer_id][
+                                    row + 1, :length, 0
+                                ].cpu(),
+                                manager.device_v_buffer[layer_id][
+                                    row + 1, :length, 0
+                                ].cpu(),
+                            ),
+                            dim=-1,
+                        ),
                         payload[mapping[row, :length]],
                         rtol=0,
                         atol=0,
@@ -171,7 +196,6 @@ def test_prefill_attention_and_short_residency():
         finally:
             if manager is not None:
                 torch.npu.synchronize()
-                free_shm(torch.npu.current_device())
 
 
 @pytest.mark.parametrize(
@@ -224,7 +248,7 @@ def test_short_sparse_graph_lifecycle(
             )
             allocations = [
                 tensor
-                for owner in (manager, manager.lim_adapter)
+                for owner in (manager, manager.lim_adapter, manager.host_pool)
                 for value in vars(owner).values()
                 for tensor in (value if isinstance(value, (list, tuple)) else [value])
                 if isinstance(tensor, torch.Tensor)
@@ -238,8 +262,11 @@ def test_short_sparse_graph_lifecycle(
             payloads = [
                 torch.randn(2 * context, 576, dtype=torch.bfloat16) for _ in range(2)
             ]
-            for host, payload in zip(manager.host_kv_buffer, payloads):
-                host.view(-1, 576).copy_(payload)
+            for host_k, host_v, payload in zip(
+                manager.host_k_buffer, manager.host_v_buffer, payloads
+            ):
+                host_k.view(-1, 512).copy_(payload[:, :512])
+                host_v.view(-1, 64).copy_(payload[:, 512:])
             tokens = batch * width + 3  # TP suffix is separate from request padding.
             query = torch.randn(tokens, heads, 512, dtype=torch.bfloat16, device="npu")
             rope = torch.randn(tokens, heads, 64, dtype=torch.bfloat16, device="npu")
@@ -251,18 +278,18 @@ def test_short_sparse_graph_lifecycle(
             ]
             inputs = SimpleNamespace(
                 batch_size=batch,
-                forward_mode=ForwardMode.DECODE
-                if width == 1
-                else ForwardMode.TARGET_VERIFY,
+                forward_mode=(
+                    ForwardMode.DECODE if width == 1 else ForwardMode.TARGET_VERIFY
+                ),
                 req_pool_indices=torch.tensor(
                     [1, 2, 0], dtype=torch.int32, device="npu"
                 ),
                 seq_lens=torch.empty(batch, dtype=torch.int32, device="npu"),
                 positions=torch.empty(tokens, dtype=torch.int64, device="npu"),
                 out_cache_loc=torch.empty(tokens, dtype=torch.int64, device="npu"),
-                spec_info=None
-                if width == 1
-                else SimpleNamespace(num_tokens_per_req=width),
+                spec_info=(
+                    None if width == 1 else SimpleNamespace(num_tokens_per_req=width)
+                ),
             )
             layers = [
                 SimpleNamespace(
@@ -473,10 +500,18 @@ def test_short_sparse_graph_lifecycle(
 
             def check_chunk(ends):
                 torch.npu.synchronize()
-                for layer_id, cache in enumerate(manager.device_kv_buffer):
+                for layer_id, (cache_k, cache_v) in enumerate(
+                    zip(manager.device_k_buffer, manager.device_v_buffer)
+                ):
                     for r in range(2):
                         torch.testing.assert_close(
-                            cache[r + 1, : ends[r], 0].cpu(),
+                            torch.cat(
+                                (
+                                    cache_k[r + 1, : ends[r], 0].cpu(),
+                                    cache_v[r + 1, : ends[r], 0].cpu(),
+                                ),
+                                dim=-1,
+                            ),
                             payloads[layer_id][mapping[r, : ends[r]]],
                             rtol=0,
                             atol=0,
@@ -550,4 +585,3 @@ def test_short_sparse_graph_lifecycle(
         finally:
             if manager is not None:
                 torch.npu.synchronize()
-                free_shm(torch.npu.current_device())

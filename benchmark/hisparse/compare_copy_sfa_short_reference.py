@@ -49,7 +49,8 @@ def compare(width, graph):
         fused_scatter_copy_sparse_flash_attention(
             query,
             rope,
-            cache,
+            split_kv,
+            split_rope,
             ends,
             lengths,
             zeros,
@@ -62,6 +63,7 @@ def compare(width, graph):
             table,
             dram_table,
             dram_kv.data_ptr(),
+            dram_rope.data_ptr(),
             out,
             scale,
             operator=native,

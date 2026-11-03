@@ -43,6 +43,54 @@ class DsaGraphVariants:
         return DSA_DENSE if max_kv_len <= self.index_topk else DSA_SPARSE
 
 
+SPARSE_KV_RESIDENT = "sparse_kv_resident"
+SPARSE_KV_LONG = "sparse_kv_long"
+
+
+def sparse_kv_needs_residency(seq_lens_cpu, capacity: int) -> bool:
+    """Use only host metadata; missing lengths conservatively keep residency.
+
+    Verify CPU lengths describe the committed prefix. Treating that prefix
+    as a lower bound is safe even if acceptance/positions are still on device.
+    Padding rows (length <= 0) never require dense residency.
+    """
+    if seq_lens_cpu is None or seq_lens_cpu.device.type != "cpu":
+        return True
+    return bool(((seq_lens_cpu > 0) & (seq_lens_cpu < capacity)).any())
+
+
+def skip_sparse_kv_residency(
+    forward_batch, capacity: int, *, is_capturing: bool
+) -> bool:
+    fixed = getattr(forward_batch, "sparse_kv_skip_residency", None)
+    if fixed is not None:
+        return fixed
+    # Manual/unlabelled captures must remain valid for short/mixed replay.
+    return not is_capturing and not sparse_kv_needs_residency(
+        forward_batch.seq_lens_cpu, capacity
+    )
+
+
+@dataclass(frozen=True)
+class SparseKVGraphVariants:
+    capacity: int
+    capture_labels: ClassVar[tuple[str, ...]] = (SPARSE_KV_RESIDENT, SPARSE_KV_LONG)
+
+    def select(self, forward_batch: ForwardBatch) -> str:
+        return (
+            SPARSE_KV_RESIDENT
+            if sparse_kv_needs_residency(forward_batch.seq_lens_cpu, self.capacity)
+            else SPARSE_KV_LONG
+        )
+
+
+def create_sparse_kv_graph_variants(attn_backend) -> Optional[AttentionGraphVariants]:
+    manager = getattr(attn_backend, "sparse_kv_manager", None)
+    if getattr(attn_backend, "use_fused_sparse_kv", False) and manager is not None:
+        return SparseKVGraphVariants(manager.cache_capacity)
+    return None
+
+
 def create_attention_graph_variants(hf_config) -> Optional[AttentionGraphVariants]:
     from sglang.srt.configs.model_config import (
         get_dsa_index_kpool,

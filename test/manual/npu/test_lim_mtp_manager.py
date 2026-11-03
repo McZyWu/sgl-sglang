@@ -1,5 +1,6 @@
 """Real-manager chain-MTP LIM/CopySFA integration on one Ascend device."""
 
+import gc
 import json
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -9,8 +10,6 @@ import pytest
 import torch
 
 pytest.importorskip("torch_npu")
-
-from sgl_kernel_npu.sparsity_driven_kv_offload import free_shm
 
 from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_attention import (
@@ -24,8 +23,21 @@ from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_manager im
 )
 from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool, ReqToTokenPool
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
+from sglang.srt.runtime_context import get_parallel
+from test_fused_host_kv import _SingleRankGroup
 
 K = 2048
+
+
+@pytest.fixture(autouse=True)
+def _standalone_mf_group():
+    with get_parallel().override(attn_tp_group=_SingleRankGroup()):
+        yield
+    from memfabric_hybrid import offload
+
+    torch.npu.synchronize()
+    gc.collect()
+    offload.uninitialize()
 
 
 class _IndexPool(MLATokenToKVPool):
@@ -175,12 +187,11 @@ def test_real_manager_mtp_owner_share_lifecycle(
                 copy_sfa_padded_query_heads=heads,
                 paged_kv_cache=index_pool,
             )
-            for i in range(2):
-                manager.host_kv_buffer[i].copy_(
-                    torch.randn(
-                        manager.host_kv_buffer[i].shape, generator=generator
-                    ).to(torch.bfloat16)
-                )
+            for component in (manager.host_k_buffer, manager.host_v_buffer):
+                for host in component:
+                    host.copy_(
+                        torch.randn(host.shape, generator=generator).to(torch.bfloat16)
+                    )
             backend = SimpleNamespace(
                 graph_mode=graph,
                 device=device,
@@ -256,7 +267,9 @@ def test_real_manager_mtp_owner_share_lifecycle(
             assert plan.miss_counts.cpu().tolist() == [C, Q, 0]
             ids = plan.source_ids.cpu()
             for i in range(2):
-                host = manager.host_kv_buffer[i]
+                host = torch.cat(
+                    (manager.host_k_buffer[i], manager.host_v_buffer[i]), dim=-1
+                ).view(1, -1, 1, 576)
                 actual = outputs[i].cpu().float().view(token_rows, heads, 512)
                 errors = []
                 for row in range(2):
@@ -318,7 +331,9 @@ def test_real_manager_mtp_owner_share_lifecycle(
             assert plan.miss_counts.cpu().tolist() == [C, C, 0]
             ids = plan.source_ids.cpu()
             for i in range(2):
-                host = manager.host_kv_buffer[i]
+                host = torch.cat(
+                    (manager.host_k_buffer[i], manager.host_v_buffer[i]), dim=-1
+                ).view(1, -1, 1, 576)
                 actual = outputs[i].cpu().float().view(token_rows, heads, 512)
                 errors = []
                 for row in range(2):
@@ -361,4 +376,3 @@ def test_real_manager_mtp_owner_share_lifecycle(
                 assert padding_max == 0
     finally:
         torch.npu.synchronize()
-        free_shm(device_id)

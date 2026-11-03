@@ -7,10 +7,6 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, List, Optional, Union
 
 import torch
-from sgl_kernel_npu.sparsity_driven_kv_offload import (
-    create_shm_tensor,
-    unidex_copy_inplace,
-)
 
 from sglang.kernels.ops.attention.npu_copy_sfa import (
     fused_scatter_copy_sparse_flash_attention,
@@ -32,11 +28,9 @@ from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.mtp import (
     sparse_query_width,
 )
 from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
-from sglang.srt.mem_cache.memory_pool import (
-    MLATokenToKVPool,
-    ReqToTokenPool,
-)
+from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool, ReqToTokenPool
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils.common import get_eager_max_batch_size
 from sglang.srt.utils.torch_memory_saver_adapter import TorchMemorySaverAdapter
 
@@ -129,7 +123,7 @@ class SparseKVCacheManager:
         )
         self._slot_map_width = (self.max_context_len + 127) // 128 * 128
         logger.info(
-            "Sparse KV per rank: K=%d C=%d, managed HBM=%.2f MiB, host KV=%.2f MiB, host_layout=paged",
+            "Sparse KV per rank: K=%d C=%d, managed HBM=%.2f MiB, TP-shared host KV=%.2f MiB, host_layout=paged_split",
             self.sparse_context_len,
             self.device_cache_size,
             self.budget.managed_hbm_bytes / 1024**2,
@@ -161,13 +155,26 @@ class SparseKVCacheManager:
             with memory_saver_adapter.region(GPU_MEMORY_TYPE_KV_CACHE):
                 # [bs, ctx_len, head_num, head_dim] for each layer
                 # The padded slot 0 is used for writing dummy outputs from padded tokens.
-                self.device_kv_buffer: list[torch.Tensor] = [
+                self.device_k_buffer = [
                     torch.empty(
                         (
                             self.size,
                             self.device_cache_size,
                             self.head_num,
-                            self.head_dim,
+                            self.kv_lora_rank,
+                        ),
+                        dtype=self.store_dtype,
+                        device=self.device,
+                    )
+                    for _ in range(self.layer_num)
+                ]
+                self.device_v_buffer = [
+                    torch.empty(
+                        (
+                            self.size,
+                            self.device_cache_size,
+                            self.head_num,
+                            self.qk_rope_head_dim,
                         ),
                         dtype=self.store_dtype,
                         device=self.device,
@@ -175,7 +182,7 @@ class SparseKVCacheManager:
                     for _ in range(self.layer_num)
                 ]
         except Exception as e:
-            self._raise_buffer_allocation_error("device_kv_buffer", e)
+            self._raise_buffer_allocation_error("device_k_buffer/device_v_buffer", e)
         self.resident_begin = torch.full(
             (self.layer_num, self.size), -1, dtype=torch.int32, device=self.device
         )
@@ -227,38 +234,20 @@ class SparseKVCacheManager:
             device=self.device,
         )
 
-        # Host KV buffer
-        # [bs, ctx_len, head_num, head_dim] for each layer
-        # The padded slot 0 is used for writing dummy outputs from padded tokens.
-        self.host_kv_buffer: list[torch.Tensor] = []
-        self.host_ptr_list: list[int] = []
-        self.dev_ptr_list: list[int] = []
-
-        # Radix prefixes and accepted-token relocation are expressed in native
-        # physical token IDs. Keep host payloads in that same address space;
-        # request slots own only the bounded HBM residency maps.
-        host_kv_shape = (
-            1,
-            self.host_token_capacity,
-            self.head_num,
-            self.head_dim,
+        from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.memfabric_pool import (
+            MemFabricKVPool,
         )
-        logger.info("Sparse KV host buffer shape: %s", host_kv_shape)
-        device_id = torch.npu.current_device()
 
-        try:
-            for layer_idx in range(self.layer_num):
-                shm_cpu_tensor, host_ptr, dev_ptr = create_shm_tensor(
-                    shape=host_kv_shape,
-                    dtype=self.store_dtype,
-                    device_id=device_id,
-                    name=f"host_kv_pool_{id(paged_kv_cache)}_layer_{layer_idx}_rank_{device_id}",
-                )
-                self.host_kv_buffer.append(shm_cpu_tensor)
-                self.host_ptr_list.append(host_ptr)
-                self.dev_ptr_list.append(dev_ptr)
-        except Exception as e:
-            self._raise_buffer_allocation_error("host_kv_buffer", e)
+        self.host_pool = MemFabricKVPool(
+            tokens=self.host_token_capacity,
+            layers=self.layer_num,
+            widths=(self.kv_lora_rank, self.qk_rope_head_dim),
+            dtype=self.store_dtype,
+            device=self.device,
+            group=get_parallel().attn_tp_group,
+        )
+        self.host_k_buffer, self.host_v_buffer = self.host_pool.buffers
+
         from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_lim import (
             LIMDecodeAdapter,
         )
@@ -267,11 +256,7 @@ class SparseKVCacheManager:
 
         self._install_req_alloc_hook(req_to_token_pool)
 
-    def _raise_buffer_allocation_error(
-        self,
-        buffer_name: str,
-        exc: Exception,
-    ) -> None:
+    def _raise_buffer_allocation_error(self, buffer_name: str, exc: Exception) -> None:
         raise RuntimeError(
             "Failed to allocate sparse KV buffer "
             f"{buffer_name}: req_capacity={self.size}, "
@@ -293,39 +278,21 @@ class SparseKVCacheManager:
         """Mirror accepted-token compaction before native physical IDs recycle."""
         if source.numel() == 0:
             return
-        count = source.numel()
-        scratch = torch.empty(
-            (count, self.head_num, self.head_dim),
-            dtype=self.store_dtype,
-            device=self.device,
-        )
-        rows = torch.arange(count, device=self.device, dtype=torch.long)
-        valid = torch.ones(count, device=self.device, dtype=torch.bool)
-        # Stage the complete source set so overlapping/permuted moves have the
-        # same snapshot semantics as native advanced-index assignment.
-        for layer, pointer in zip(self.host_kv_buffer, self.dev_ptr_list):
-            unidex_copy_inplace(
-                layer,
-                scratch,
-                source,
-                rows,
-                valid,
-                2,
-                1,
-                block_dim=48,
-                src_ptr=pointer,
-            )
-            unidex_copy_inplace(
-                scratch,
-                layer,
-                rows,
-                target,
-                valid,
-                1,
-                2,
-                block_dim=48,
-                dst_ptr=pointer,
-            )
+        if self.host_pool.rank == 0:
+            rows = torch.arange(source.numel(), device=self.device, dtype=torch.long)
+            valid = torch.ones_like(source, dtype=torch.bool)
+            for host_k, host_v in zip(self.host_k_buffer, self.host_v_buffer):
+                scratch = [
+                    torch.empty(
+                        (source.numel(), 1, width),
+                        dtype=self.store_dtype,
+                        device=self.device,
+                    )
+                    for width in (self.kv_lora_rank, self.qk_rope_head_dim)
+                ]
+                self.host_pool.copy_rows((host_k, host_v), scratch, source, rows, valid)
+                self.host_pool.copy_rows(scratch, (host_k, host_v), rows, target, valid)
+        self.host_pool.publish()
 
     def reset_requests(self, req_ids: List[int]) -> None:
         if not req_ids:
@@ -345,21 +312,23 @@ class SparseKVCacheManager:
     ):
         batch = plan.request_slots.numel()
         rows = batch * plan.query_width
-        ends = self.lim_adapter.copy_sfa_metadata(self, plan)
+        layer_idx = layer.layer_id - self.start_layer
+        ends = self.lim_adapter.copy_sfa_metadata(self, plan, layer_idx)
         padded_heads = self.fused_attn_out.shape[1]
         if query_nope.shape[1] < padded_heads:
             padding = padded_heads - query_nope.shape[1]
             query_nope = torch.nn.functional.pad(query_nope, (0, 0, 0, padding))
             query_rope = torch.nn.functional.pad(query_rope, (0, 0, 0, padding))
         output = self.fused_attn_out[:rows]
-        layer_idx = layer.layer_id - self.start_layer
-        cache = self.device_kv_buffer[layer_idx].view(
-            -1, 128, self.head_num, self.head_dim
+        cache_k = self.device_k_buffer[layer_idx].view(-1, 128, 1, self.kv_lora_rank)
+        cache_v = self.device_v_buffer[layer_idx].view(
+            -1, 128, 1, self.qk_rope_head_dim
         )
         fused_scatter_copy_sparse_flash_attention(
             query_nope.contiguous(),
             query_rope.contiguous(),
-            cache,
+            cache_k,
+            cache_v,
             ends,
             self.planner_actual_seq_lengths_kv[:batch],
             self.planner_num_cache_tokens[:batch],
@@ -371,7 +340,8 @@ class SparseKVCacheManager:
             plan.miss_counts,
             self.planner_hbm_block_table[:batch],
             self.planner_dram_block_table[:batch],
-            self.dev_ptr_list[layer_idx],
+            self.host_k_buffer[layer_idx].data_ptr(),
+            self.host_v_buffer[layer_idx].data_ptr(),
             output,
             scale_value,
             operator=self._copy_sfa_operator,
@@ -415,13 +385,10 @@ class SparseKVCacheManager:
         layer_idx = layer.layer_id - self.start_layer
         device = k.device
 
-        # k:         [num_new_tokens, nhead, kv_lora_rank]
-        # k_rope:    [num_new_tokens, nhead, qk_rope_head_dim]
-        # kv_device: [num_new_tokens, nhead, kv_lora_rank + qk_rope_head_dim]
-        src_tensor = torch.cat([k, k_rope], dim=-1).contiguous()
-        dst_tensor = self.host_kv_buffer[layer_idx]
-        src_index = torch.arange(src_tensor.shape[0], device=device, dtype=torch.long)
-        num_src_rows = int(src_tensor.shape[0])
+        current = (k.contiguous(), k_rope.contiguous())
+        host = (self.host_k_buffer[layer_idx], self.host_v_buffer[layer_idx])
+        src_index = torch.arange(k.shape[0], device=device, dtype=torch.long)
+        num_src_rows = int(k.shape[0])
 
         if not forward_batch.forward_mode.is_extend_without_speculative():
             req_ids, token_pos, valid_mask = prepare_mtp_rows(
@@ -557,22 +524,26 @@ class SparseKVCacheManager:
         valid_mask = (
             valid_mask & (dst_index >= 0) & (dst_index < self.host_token_capacity)
         )
-        assert src_tensor.shape[1:] == dst_tensor.shape[2:]
         assert src_index.shape == dst_index.shape == valid_mask.shape
 
         actual_stream = stream if stream is not None else torch.npu.current_stream()
         with torch.npu.stream(actual_stream):
-            unidex_copy_inplace(
-                src_tensor,
-                dst_tensor,
-                src_index,
-                dst_index,
-                valid_mask,
-                1,  # src_tensor: [num_new_tokens, nhead, head_dim]
-                2,  # dst_tensor: [num_req, max_context_len, nhead, head_dim]
-                block_dim=48,
-                dst_ptr=self.dev_ptr_list[layer_idx],
+            if self.host_pool.rank == 0:
+                self.host_pool.copy_rows(
+                    current, host, src_index, dst_index, valid_mask
+                )
+            self.host_pool.publish()
+
+            from sglang.srt.layers.attention.graph_variants import (
+                skip_sparse_kv_residency,
             )
+
+            if skip_sparse_kv_residency(
+                forward_batch,
+                self.cache_capacity,
+                is_capturing=torch.npu.is_current_stream_capturing(),
+            ):
+                return
 
             from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.npu_kv_residency import (
                 stage_resident_kv,
@@ -607,11 +578,14 @@ class SparseKVCacheManager:
                     torch.empty(num_src_rows, dtype=torch.bool, device=device),
                 )
             stage_resident_kv(
-                current=src_tensor,
+                current=current,
                 source_indices=src_index,
-                host=dst_tensor,
-                host_address=self.dev_ptr_list[layer_idx],
-                cache=self.device_kv_buffer[layer_idx],
+                host=host,
+                host_address=tuple(t.data_ptr() for t in host),
+                cache=(
+                    self.device_k_buffer[layer_idx],
+                    self.device_v_buffer[layer_idx],
+                ),
                 req_to_token=self.req_to_token_pool.req_to_token,
                 requests=forward_batch.req_pool_indices,
                 lengths=lengths,
@@ -704,11 +678,14 @@ class SparseKVCacheManager:
             req_ids = req_ids.index_select(0, keep)
             seq_lens = seq_lens.index_select(0, keep)
 
-        kv_cat = torch.empty(
-            (total_tokens, self.head_num, self.head_dim),
-            dtype=self.store_dtype,
-            device=device,
-        )
+        outputs = [
+            torch.empty(
+                (total_tokens, self.head_num, width),
+                dtype=self.store_dtype,
+                device=device,
+            )
+            for width in (self.kv_lora_rank, self.qk_rope_head_dim)
+        ]
 
         seq_starts = torch.cumsum(seq_lens, dim=0) - seq_lens
         src_req_ids = torch.repeat_interleave(
@@ -726,17 +703,11 @@ class SparseKVCacheManager:
 
         actual_stream = stream if stream is not None else torch.npu.current_stream()
         with torch.npu.stream(actual_stream):
-            unidex_copy_inplace(
-                self.host_kv_buffer[layer_idx],
-                kv_cat,
+            self.host_pool.copy_rows(
+                (self.host_k_buffer[layer_idx], self.host_v_buffer[layer_idx]),
+                outputs,
                 src_index,
                 dst_index,
                 valid_mask,
-                2,  # host_kv_buffer: [num_req, max_context_len, nhead, head_dim]
-                1,  # kv_cat: [total_tokens, nhead, head_dim]
-                block_dim=48,
-                src_ptr=self.dev_ptr_list[layer_idx],
             )
-
-        k_nope, k_pe = kv_cat.split([self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        return k_nope.contiguous(), k_pe.contiguous()
+        return tuple(outputs)

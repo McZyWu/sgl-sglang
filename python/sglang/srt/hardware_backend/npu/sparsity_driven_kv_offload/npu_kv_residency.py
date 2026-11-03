@@ -121,7 +121,12 @@ def stage_resident_kv(
 ):
     """Stage current KV and refill only absent short history from host."""
     batch = requests.numel()
-    stride = cache.shape[1]
+    split = isinstance(cache, (tuple, list))
+    caches = cache if split else (cache,)
+    hosts = host if split else (host,)
+    addresses = host_address if split else (host_address,)
+    currents = current if split else (current,)
+    stride = caches[0].shape[1]
     hs, hd, hv = history_workspace
     nb, ne, nf = next_extents
     _history_metadata[(triton.cdiv(stride, 128), batch)](
@@ -146,18 +151,19 @@ def stage_resident_kv(
         128,
     )
     history_count = batch * stride
-    unidex_copy_inplace(
-        host,
-        cache,
-        hs[:history_count],
-        hd[:history_count],
-        hv[:history_count],
-        2,
-        2,
-        block_dim=48,
-        src_ptr=host_address,
-    )
-    count = current.shape[0]
+    for host_tensor, cache_tensor, address in zip(hosts, caches, addresses):
+        unidex_copy_inplace(
+            host_tensor,
+            cache_tensor,
+            hs[:history_count],
+            hd[:history_count],
+            hv[:history_count],
+            2,
+            2,
+            block_dim=48,
+            src_ptr=address,
+        )
+    count = currents[0].shape[0]
     cd, cv = current_workspace
     _current_metadata[(triton.cdiv(count, 128),)](
         token_requests,
@@ -175,13 +181,14 @@ def stage_resident_kv(
         stride,
         128,
     )
-    unidex_copy_inplace(
-        current,
-        cache,
-        source_indices,
-        cd[:count],
-        cv[:count],
-        1,
-        2,
-        block_dim=48,
-    )
+    for current_tensor, cache_tensor in zip(currents, caches):
+        unidex_copy_inplace(
+            current_tensor,
+            cache_tensor,
+            source_indices,
+            cd[:count],
+            cv[:count],
+            1,
+            2,
+            block_dim=48,
+        )

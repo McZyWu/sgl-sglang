@@ -582,6 +582,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # Set only on the opt-in NPU sparse-KV decode capture batch. The flag is
     # owned by that ForwardBatch so it cannot leak into concurrent eager work.
     sparse_kv_copy_sfa_capture: bool = False
+    # None: eager classification; bool: fixed sparse-KV graph variant.
+    sparse_kv_skip_residency: Optional[bool] = None
     # Draft-only companion to the generic DP decode graph vote.
     can_run_dp_draft_cuda_graph: bool = False
     can_run_dp_prefill_cuda_graph: bool = False

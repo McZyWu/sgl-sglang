@@ -23,6 +23,9 @@ def _lim_copy_sfa_metadata_kernel(
     dram_block_table_ptr,
     host_block_table_ptr,
     seq_lens_ptr,
+    resident_begin_ptr,
+    resident_end_ptr,
+    INVALIDATE_RESIDENT: tl.constexpr,
     B: tl.constexpr,
     K: tl.constexpr,
     Q: tl.constexpr,
@@ -86,6 +89,11 @@ def _lim_copy_sfa_metadata_kernel(
         )
 
     if tile_id == 0:
+        if INVALIDATE_RESIDENT:
+            # Sparse attention can overwrite the former dense row. Invalidate
+            # it here, including long graphs that omit the residency launches.
+            tl.store(resident_begin_ptr + base_request, -1, mask=active)
+            tl.store(resident_end_ptr + base_request, -1, mask=active)
         for route in range(Q):
             tl.store(topk_misses_ptr + row_id * Q + route, 0, mask=~active)
         tl.store(miss_counts_ptr + row_id, 0, mask=~active)
@@ -153,6 +161,8 @@ def fused_lim_copy_sfa_metadata(
     seq_lens: torch.Tensor,
     query_width: int = 1,
     host_block_table: torch.Tensor | None = None,
+    resident_begin: torch.Tensor | None = None,
+    resident_end: torch.Tensor | None = None,
 ) -> None:
     """Update preallocated LIM / Copy-SFA metadata in one NPU kernel launch.
 
@@ -231,6 +241,16 @@ def fused_lim_copy_sfa_metadata(
         )
 
     device = source_ids.device
+    if (resident_begin is None) != (resident_end is None):
+        raise ValueError("resident_begin and resident_end must be provided together")
+    if resident_begin is not None:
+        for name, tensor in (
+            ("resident_begin", resident_begin),
+            ("resident_end", resident_end),
+        ):
+            _validate_tensor(name, tensor, dtype=torch.int32, device=device)
+            if tensor.shape != (request_rows,):
+                raise ValueError(f"{name} must have shape [request_rows]")
     if device.type != "npu":
         raise ValueError("fused_lim_copy_sfa_metadata requires NPU tensors.")
     if host_block_table is not None:
@@ -292,6 +312,9 @@ def fused_lim_copy_sfa_metadata(
         dram_block_table,
         host_block_table if host_block_table is not None else dram_block_table,
         seq_lens,
+        resident_begin if resident_begin is not None else last_prefix,
+        resident_end if resident_end is not None else last_prefix,
+        resident_begin is not None,
         batch,
         2048,
         query_width,

@@ -14,7 +14,7 @@ from sglang.srt.mem_cache.memory_pool import (
     get_tensor_size_bytes,
     unwrap_write_loc,
 )
-from sglang.srt.runtime_context import get_parallel
+from sglang.srt.runtime_context import get_disagg, get_parallel
 from sglang.srt.utils import get_bool_env_var
 from sglang.srt.utils.async_probe import maybe_detect_oob
 from sglang.srt.utils.common import is_npu
@@ -671,7 +671,12 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
         self.qk_rope_head_dim = qk_rope_head_dim
         self.index_head_dim = index_head_dim
         self.enable_sparsity_driven_kv_offload = (
-            envs.SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD.get() and not is_draft_worker
+            envs.SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD.get()
+            and not is_draft_worker
+            and not (
+                envs.SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA.get()
+                and get_disagg().disaggregation_mode == "prefill"
+            )
         )
         if self.enable_sparsity_driven_kv_offload and self.index_head_dim is None:
             raise ValueError("Sparsity-driven KV offload requires an index KV cache.")
@@ -958,11 +963,16 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
 
     def _get_disagg_buffer_entries(self):
         """Return (buffer, uses_global_slots) entries in PD transfer order."""
-        self._raise_if_native_kv_cache_disabled()
-        global_kv = self.is_draft_worker
-        entries = [(buffer, global_kv) for buffer in self.k_buffer]
-        if not getattr(self, "dsa_kv_cache_store_fp8", False):
-            entries += [(buffer, global_kv) for buffer in self.v_buffer]
+        manager = getattr(self, "sparse_kv_manager", None)
+        if manager is not None and hasattr(manager, "host_pool"):
+            entries = [(buffer, True) for buffer in manager.host_k_buffer]
+            entries += [(buffer, True) for buffer in manager.host_v_buffer]
+        else:
+            self._raise_if_native_kv_cache_disabled()
+            global_kv = self.is_draft_worker
+            entries = [(buffer, global_kv) for buffer in self.k_buffer]
+            if not getattr(self, "dsa_kv_cache_store_fp8", False):
+                entries += [(buffer, global_kv) for buffer in self.v_buffer]
         if self.index_head_dim is not None:
             entries += [(buffer, True) for buffer in self.index_k_buffer]
             if self.index_k_scale_buffer is not None:
@@ -971,6 +981,14 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
 
     # for disagg
     def get_contiguous_buf_infos(self):
+        manager = getattr(self, "sparse_kv_manager", None)
+        if manager is not None and hasattr(manager, "host_pool"):
+            # Prefill exports split HBM CKV/KPE. Decode exports identically
+            # paged MF GVAs, so AscendTransferEngine writes directly to DRAM.
+            # Indexer (and optional scale) pages stay device-resident.
+            main_infos = manager.host_pool.get_transfer_buf_infos()
+            state_infos = self.get_state_buf_infos()
+            return tuple(main + state for main, state in zip(main_infos, state_infos))
         entries = self._get_disagg_buffer_entries()
         return (
             [buffer.data_ptr() for buffer, _ in entries],

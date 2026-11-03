@@ -51,6 +51,7 @@ from sglang.srt.layers.attention.graph_variants import (
     AttentionGraphVariants,
     create_attention_graph_variants,
     create_dsv41_candidate_graph_variants,
+    create_sparse_kv_graph_variants,
 )
 from sglang.srt.layers.cp.utils import is_mla_cp_enabled
 from sglang.srt.layers.dp_attention import (
@@ -306,7 +307,9 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         if model_runner.spec_algorithm.is_speculative():
             if self.model_runner.is_draft_worker:
                 # Draft workers can use TARGET_VERIFY mode.
-                if not self.model_runner.spec_algorithm.supports_target_verify_for_draft():
+                if (
+                    not self.model_runner.spec_algorithm.supports_target_verify_for_draft()
+                ):
                     raise RuntimeError("This should not happen")
             self.capture_forward_mode = ForwardMode.TARGET_VERIFY
         elif self.is_dllm:
@@ -316,7 +319,8 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         self.attention_graph_variants: Optional[AttentionGraphVariants] = (
             self.dllm_attention.graph_variants(self.captured_req_width)
             if self.dllm_attention is not None and self.is_dllm
-            else create_attention_graph_variants(model_runner.model_config.hf_config)
+            else create_sparse_kv_graph_variants(self.attn_backend)
+            or create_attention_graph_variants(model_runner.model_config.hf_config)
             or create_dsv41_candidate_graph_variants(
                 model_runner, self.capture_forward_mode, self.captured_req_width
             )
@@ -1101,6 +1105,18 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             and forward_batch.forward_mode.is_decode()
             and sparse_kv_manager.cache_capacity in (2048, 4096, 8192)
         )
+        if getattr(attn_backend, "use_fused_sparse_kv", False):
+            from sglang.srt.layers.attention.graph_variants import SPARSE_KV_LONG
+            from sglang.srt.model_executor.runner_utils.capture_mode import (
+                get_capture_attention_variant,
+            )
+
+            # This is a capture-time constant. Replay selects the corresponding
+            # variant from CPU lengths; a Python test inside a graph cannot
+            # remove residency kernels after capture.
+            forward_batch.sparse_kv_skip_residency = (
+                get_capture_attention_variant() == SPARSE_KV_LONG
+            )
         self.model_runner.kv_index_translator.bind_runner_slots(forward_batch)
 
         # Trip the coordinator so the hisparse code path is captured into the
@@ -1250,9 +1266,9 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
 
         # Sanity-check: --debug-cuda-graph requires breakable backend.
         if get_exec().graph.debug_cuda_graph:
-            assert isinstance(self.backend, BreakableCudaGraphBackend), (
-                "Breakable CUDA graph is required for --debug-cuda-graph"
-            )
+            assert isinstance(
+                self.backend, BreakableCudaGraphBackend
+            ), "Breakable CUDA graph is required for --debug-cuda-graph"
 
         forward_batch, attn_backend, pp_proxy_tensors = self.capture_prepare(
             bs, stream_idx=stream_idx, num_tokens=num_tokens

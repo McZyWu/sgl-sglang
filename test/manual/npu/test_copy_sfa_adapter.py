@@ -23,20 +23,30 @@ def inputs():
     query = torch.zeros(4, 4, 512, dtype=torch.bfloat16)
     rope = torch.zeros(4, 4, 64, dtype=query.dtype)
     metadata = [torch.empty(0, dtype=torch.int32) for _ in range(11)]
-    return [query, rope, torch.empty(0), *metadata, 123, torch.empty_like(query), 0.1]
+    return [
+        query,
+        rope,
+        torch.empty(0),
+        torch.empty(0),
+        *metadata,
+        123,
+        456,
+        torch.empty_like(query),
+        0.1,
+    ]
 
 
 @pytest.mark.parametrize("full_visible", [False, True])
-def test_existing_operator_does_not_receive_a_new_keyword(adapter, full_visible):
+def test_split_operator_receives_separate_caches_and_addresses(adapter, full_visible):
     calls = []
 
-    def legacy_operator(*args, full_visible=False):
+    def split_operator(*args, full_visible=False):
         calls.append((len(args), full_visible))
         args[-2].fill_(2)
 
     args = inputs()
-    adapter(*args, operator=legacy_operator, full_visible=full_visible)
-    assert calls == [(17, full_visible)]
+    adapter(*args, operator=split_operator, full_visible=full_visible)
+    assert calls == [(19, full_visible)]
     assert torch.all(args[-2] == 2)
 
 

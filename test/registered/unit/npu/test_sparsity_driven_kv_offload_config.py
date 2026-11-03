@@ -3,12 +3,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.config import (
     get_sparsity_driven_kv_offload_cell_size,
     get_sparsity_driven_kv_offload_sparse_context_len,
     is_sparsity_driven_kv_offload_enabled,
 )
+from sglang.srt.runtime_context import get_context
 from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=1, suite="base-a-test-cpu")
 
@@ -26,7 +29,28 @@ def _make_glm51_model_config():
     )
 
 
-class TestSparsityDrivenKVOffloadConfig(unittest.TestCase):
+class TestSparsityDrivenKVOffloadConfig(CustomTestCase):
+    def test_fused_pd_prefill_keeps_native_hbm_cache(self):
+        with (
+            get_context().override_server_args(disaggregation_mode="prefill"),
+            envs.SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD.override(True),
+            envs.SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA.override(True),
+        ):
+            model_config = _make_glm51_model_config()
+            self.assertFalse(
+                is_sparsity_driven_kv_offload_enabled(
+                    model_config=model_config, use_mla_backend=True
+                )
+            )
+            self.assertIsNone(
+                get_sparsity_driven_kv_offload_cell_size(
+                    model_config=model_config,
+                    use_mla_backend=True,
+                    num_layers=2,
+                    element_size=2,
+                )
+            )
+
     def test_glm_dsa_model_enables_sparse_kv_offload(self):
         with (
             patch.dict(

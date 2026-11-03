@@ -1,4 +1,4 @@
-"""Public adapter for the normal-wheel Ascend combined-cache Copy-SFA operator."""
+"""Public adapter for the normal-wheel Ascend split-cache Copy-SFA operator."""
 
 from __future__ import annotations
 
@@ -10,7 +10,12 @@ def load_copy_sfa_operator():
     try:
         import sgl_kernel_npu  # noqa: F401
 
-        return torch.ops.npu.fused_scatter_copy_sparse_flash_attention.default
+        operator = torch.ops.npu.fused_scatter_copy_sparse_flash_attention.default
+        names = {arg.name for arg in operator._schema.arguments}
+        required = {"hbm_k_cache", "hbm_v_cache", "dram_k_dev_ptr", "dram_v_dev_ptr"}
+        if not required.issubset(names):
+            raise RuntimeError("Copy-SFA requires the split-K/V sgl-kernel-npu wheel.")
+        return operator
     except (ImportError, AttributeError) as error:
         raise RuntimeError(
             "Copy-SFA requires an sgl-kernel-npu A3 wheel containing "
@@ -21,7 +26,8 @@ def load_copy_sfa_operator():
 def fused_scatter_copy_sparse_flash_attention(
     query,
     query_rope,
-    combined_hbm_cache,
+    hbm_k_cache,
+    hbm_v_cache,
     actual_seq_lengths_query,
     actual_seq_lengths_kv,
     num_cache_tokens,
@@ -33,7 +39,8 @@ def fused_scatter_copy_sparse_flash_attention(
     miss_counts,
     hbm_block_table,
     dram_block_table,
-    dram_kv_dev_ptr,
+    dram_k_dev_ptr,
+    dram_v_dev_ptr,
     attention_out,
     scale_value,
     *,
@@ -41,7 +48,7 @@ def fused_scatter_copy_sparse_flash_attention(
     full_visible=False,
     resident_refresh_tail=False,
 ) -> None:
-    """Copy resident KV and attend to selected combined-cache tokens.
+    """Copy resident KV and attend to selected split-cache tokens.
 
     Query tensors use contiguous TND ``[T, H, 512|64]`` and request-level
     cumulative query lengths. The default mode retains the native sparse-plus-
@@ -68,7 +75,8 @@ def fused_scatter_copy_sparse_flash_attention(
     inputs = (
         query,
         query_rope,
-        combined_hbm_cache,
+        hbm_k_cache,
+        hbm_v_cache,
         actual_seq_lengths_query,
         actual_seq_lengths_kv,
         num_cache_tokens,
@@ -80,7 +88,8 @@ def fused_scatter_copy_sparse_flash_attention(
         miss_counts,
         hbm_block_table,
         dram_block_table,
-        dram_kv_dev_ptr,
+        dram_k_dev_ptr,
+        dram_v_dev_ptr,
         attention_out,
         scale_value,
     )
