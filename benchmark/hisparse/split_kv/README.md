@@ -1,6 +1,6 @@
 # Ascend split-KV：两机 PD 自动启动与验证
 
-本目录从两个已准备好的容器分别运行一条命令：P 容器常驻 Prefill；D 容器自动依次运行普通参考、强制回退功能验证、正式压测。脚本不依赖 Codex、远程登录或外部 PASS 文件。2026-11-04 已在 209/217 的 A3 上完成 kernel 构建、真实 MF TP16 小探针和三个 CopySFA 用例；首次 PD 请求因 router 注册尚未完成而失败。补门禁后第二次首组四请求均 HTTP 200，但原生 greedy 输出有一条不一致，正在独立诊断，尚无完整精度通过或有效性能结果。
+本目录从两个已准备好的容器分别运行一条命令：P 容器常驻 Prefill；D 容器自动依次运行普通参考、强制回退功能验证、正式压测。脚本不依赖 Codex、远程登录或外部 PASS 文件。2026-11-04 已在 209/217 的 A3 上完成 kernel 构建、真实 MF TP16 小探针、三个 CopySFA 用例和完整 BS16 controller：固定自然语言三组正确且恢复后逐 token 一致，共17次实际回退；五轮正式输出吞吐中位数310.27 tokens/s，全部轮次保留。这个数值来自两机各TP16，旧203.72来自单机TP16，资源与统计规则有差异。早期router注册失败、随机原生输入分叉及MF旧连接native段错误记录保留，范围和未解决项见验证记录；新增性能cache专项与扩BS仍待后续实测。
 
 本次修改及检查范围见 [验证记录](VALIDATION_zh.md)，历史压测资产的来源和还原方式见 [冻结客户端说明](frozen_client/README.md)。
 
@@ -85,7 +85,7 @@ Decode 控制端执行：
 
 1. 等 P readiness；启动关闭 KV offload 的原生 D 和路由器。除 `/health` 外，还等待 `/workers` 中预期的 P、D URL 以正确角色注册且健康，再发送请求。使用独立冻结的自然语言取值输入，测试 512/64、4096/64 各四条相同输入，以及 64000/64 两条 greedy 请求；每条必须正确输出文首密钥的逐行重复前缀，每组 token 必须一致，保存为 `reference-short.json`、`reference-long.json`、`reference-target64k.json`。
 2. 停止本次启动的 D 和路由器，启动开启 KV offload 的 forced-retraction D（`SGLANG_TEST_RETRACT=1`、间隔 3，`cpu_tensor` 备份）及路由器。三组请求分别逐 token 比对对应的原生 reference，且每组响应 `meta_info.num_retractions` 总数大于零；结果保存为对应 `functional-*.json`。这是这三组输入的 greedy 一致性检查，不代替完整模型评测。
-3. 停止本次功能模式的 D 和路由器，启动不含强制回退开关的性能 D 和路由器。每轮先对 P、D 分别调用 `/flush_cache`，再发一条 64000 输入、1 输出的 prefix seed，随后并发测量。默认调用随仓冻结的历史 `bench_serving` 客户端，固定两轮 warmup 和五轮 formal，保留每轮完整报告与原始结果。任一请求错误、输入/输出长度不符或每条 cached tokens 不等于 63872 时退出非零。可用 `--client stdlib` 显式选择本目录的 SSE 客户端用于诊断，诊断客户端还严格要求结束原因是 length。
+3. 停止本次功能模式的 D 和路由器，启动不含强制回退开关的性能 D 和路由器。默认先在 decode prefix cache 开启的实际配置下做一次独立语义检查：64000-token 取值输入 seed 输出 1，再发 BS 条并发请求，各输出 64，要求答案正确、与原生 target64k 逐 token 一致且每条 cached_tokens 为正整数；保存为 `performance-prefix-accuracy.json`，不计入吞吐测量。随后每轮先对 P、D 分别调用 `/flush_cache`，再发历史随机 64000 输入、1 输出的 prefix seed，随后并发测量。默认调用随仓冻结的历史 `bench_serving` 客户端，固定两轮 warmup 和五轮 formal，保留每轮完整报告与原始结果。任一请求错误、输入/输出长度不符或每条 cached tokens 不等于 63872 时退出非零。可用 `--client stdlib` 显式选择本目录的 SSE 客户端用于诊断，诊断客户端还严格要求结束原因是 length。显式关闭 decode prefix cache 时，此 cache 语义专项标为 skipped；仍不把该诊断模式当作正式对齐成绩。
 
 脚本为每个自己创建的服务分配独立 session 和随机运行标记，核对标记及进程启动时间后逐个发送 SIGTERM，等待后对仍存活的本次进程发送 SIGKILL；不使用 `pkill`、不停止其他容器。同 session 中若进程暂时读不到标记，会最多等待一秒并复查退出与身份；持续未知的活进程仍拒绝发信号，并记录 stat 字段供排障。清理失败会报错并保留证据。D 结束后，可在 P 的命令窗口按 Ctrl-C 停止本任务的 Prefill。任何阶段失败后保留原始日志；重试应启动一次新运行，不复用已有结果。
 

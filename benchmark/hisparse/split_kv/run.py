@@ -867,6 +867,27 @@ def validate_retrieval_answer(results, answer):
             )
 
 
+def validate_prefix_cache_accuracy(results, reference_tokens, answer):
+    validate_retrieval_answer(results, answer)
+    if any(
+        result["response"].get("output_ids") != reference_tokens for result in results
+    ):
+        raise ValueError(
+            "Performance decode-prefix-cache accuracy outputs differ from "
+            "the native target64k reference"
+        )
+    cached_tokens = [
+        result["response"].get("meta_info", {}).get("cached_tokens")
+        for result in results
+    ]
+    if any(type(value) is not int or value <= 0 for value in cached_tokens):
+        raise ValueError(
+            "Performance decode-prefix-cache accuracy requires positive integer "
+            f"cached_tokens for every request; got {cached_tokens}"
+        )
+    return {"exact_match": True, "cache_hit": True, "cached_tokens": cached_tokens}
+
+
 def generate(router, ids, output, rid):
     payload = {
         "input_ids": ids,
@@ -1202,6 +1223,7 @@ def main():
         wait_http(prefill + "/health", timeout=args.ready_timeout)
         round_reports = []
         references = {}
+        performance_prefix_cache_accuracy = None
         for phase in ("reference", "functional", "performance"):
             port_free(args.decode_port)
             port_free(args.router_port)
@@ -1236,6 +1258,76 @@ def main():
             wait_router_workers(
                 router, prefill, decode, router_proc, args.ready_timeout
             )
+            if phase == "performance":
+                if args.disable_decode_prefix_cache:
+                    performance_prefix_cache_accuracy = {
+                        "status": "skipped",
+                        "reason": "decode prefix cache explicitly disabled",
+                        "cache_mode": "disabled",
+                    }
+                else:
+                    prefix_case = precision["cases"]["target64k"]
+                    flush(prefill, decode)
+                    seed = generate(
+                        router,
+                        prefix_case["input_ids"],
+                        1,
+                        "performance-prefix-seed",
+                    )
+                    dump(out / "performance-prefix-seed.json", seed)
+                    validate([seed], prefix_case["token_count"], 1)
+                    results, duration = concurrent_generate(
+                        router,
+                        prefix_case["input_ids"],
+                        precision["manifest"]["output_tokens"],
+                        args.bs,
+                        "performance-prefix-accuracy",
+                    )
+                    report_path = out / "performance-prefix-accuracy.json"
+                    dump(
+                        report_path,
+                        {
+                            "fixture": {
+                                "case": "target64k",
+                                "token_count": prefix_case["token_count"],
+                                "gzip_sha256": prefix_case["gzip_sha256"],
+                                "raw_sha256": prefix_case["raw_sha256"],
+                            },
+                            "cache_mode": "enabled",
+                            "answer_validation": {
+                                "expected": precision["manifest"]["answer"],
+                                "passed": None,
+                            },
+                            "exact_match": None,
+                            "cache_hit": None,
+                            "results": results,
+                            "duration_seconds": duration,
+                        },
+                    )
+                    validate(
+                        results,
+                        prefix_case["token_count"],
+                        precision["manifest"]["output_tokens"],
+                    )
+                    validation = validate_prefix_cache_accuracy(
+                        results,
+                        references["target64k"],
+                        precision["manifest"]["answer"],
+                    )
+                    report = json.loads(report_path.read_text(encoding="utf-8"))
+                    report["answer_validation"]["passed"] = True
+                    report.update(validation)
+                    report["passed"] = True
+                    dump(report_path, report)
+                    performance_prefix_cache_accuracy = {
+                        "status": "passed",
+                        "cache_mode": "enabled",
+                        "requests": len(results),
+                        "answer": precision["manifest"]["answer"],
+                        "exact_match": validation["exact_match"],
+                        "cache_hit": validation["cache_hit"],
+                        "passed": True,
+                    }
             if phase in ("reference", "functional"):
                 for case, case_fixture in precision["cases"].items():
                     flush(prefill, decode)
@@ -1373,6 +1465,7 @@ def main():
                 "answer": precision["manifest"]["answer"],
                 "scope": precision["manifest"]["scope"],
             },
+            "performance_decode_prefix_cache_accuracy": performance_prefix_cache_accuracy,
             "rounds": round_reports,
             "observed_decode_batch": active_batch,
             "formal_output_tps": {

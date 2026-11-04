@@ -1,19 +1,20 @@
 # 本次交接的验证范围
 
-记录日期：2026-11-04。本次提交提供回退修复、两机 PD 控制器、冻结压测客户端和容器构建脚本。真实 MF TP16 小探针、CopySFA 三个设备用例和配套 kernel 构建已通过；**完整 PD、整模精度与性能仍未完成，没有本次有效实测 TPS。**
+记录日期：2026-11-04。本次提交提供回退修复、两机 PD 控制器、冻结压测客户端和容器构建脚本。真实 MF TP16 小探针、CopySFA 三个设备用例、kernel 构建及完整 BS16 controller 已通过。固定三输入取值与17次真实回退恢复对齐；五轮正式中位数310.265693 output tokens/s。通用模型评测、新增性能cache专项及BS扩展尚未完成，不能扩大已验证范围。
 
 | 项目 | 结果 | 范围 |
 | --- | --- | --- |
 | 原始 NoneType 回退问题 | CPU 重现后修复 | 原版读取 `self.k_buffer=None`；修复改读权威 MF split K/V |
 | Linux 完整测试模块 | 8/8，通过，exit 0 | 2 项新增 retraction 测试、6 项既有 MF CPU 测试；MF/设备边界使用模拟 |
-| 自动控制器自检 | 27/27，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁和 PF_EXITING 等待 |
+| 自动控制器自检 | 28/28，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁、PF_EXITING 等待和性能配置的 prefix 准确性门禁 |
 | 冻结资产与报告自检 | 3/3，通过，exit 0 | 原始 SHA、BS16 pickle 原字节、BS20 扩展、seed 1 输出、正式 1024 输出及 cached63872、输入缓存命中 |
 | 静态检查 | 通过 | Ruff 0.15.1、isort 7.0.0、codespell 2.4.1、AST、空白/EOF、Bash 语法、文件大小与 diff check |
 | kernel 构建及安装 | 通过，exit 0 | 217 A3/CANN 9.1.0 构建；两侧安装同一 wheel，检查 split K/V 算子 schema |
 | 真实 MF 回收/恢复小探针 | 16/16 rank 通过，exit 0 | 每 rank 39 项检查，原始字节校验跨页 K/V、owner 恢复和每 rank index/scale；reset 为 spy |
 | CopySFA eager/graph | 3/3，通过，exit 0 | Q4 跨页、128 head、C12288 Q4 首填；独立 CPU oracle 最大绝对误差分别为 0.00066914、0.00065416、0.00059916 |
 | PD 首次尝试 | 失败，exit 1，已补启动门禁 | P/D 服务 ready 后 router 尚无 P worker，首组请求 503；不能记作精度或性能结果 |
-| 完整 PD、模型精度、吞吐 | 验证中 | 等待修正控制器后重试；请求逐 token 对照也不能替代完整模型评测 |
+| 完整 BS16 PD、固定输入精度与吞吐 | 通过，exit 0 | 三组10请求正确且forced对native exact，3请求共17次回退；5轮全留median310.265693；不是通用模型评测 |
+| 新增性能cache专项、BS扩展 | 待验证 | 性能D的decode prefix cache组合新增显式语义门禁，七轮冻结随机计时不变 |
 
 Linux 8 项测试使用 Python 3.12.13、torch 2.10.0+cpu、torch_npu 2.10.0.post6、memfabric_hybrid 1.3.0。采集日志结束时间为 `2026-11-03T23:16:50+00:00`，pytest 输出 `8 passed, 15 warnings in 12.28s`。修复文件的 SHA256 为 `3faf59ed016a26bfe5447f7bf4dfa7c02a4f663fccfb911164aac20e9319a5c9`；新增 retraction 测试文件为 `339177370819502c9ff25944f8478ae31c24b8e5fc8fefeda02357e49f9585fa`。本次发布前核对过这两个文件与当时通过测试的版本一致。
 
@@ -76,3 +77,13 @@ MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构�
 将精度和性能输入明确分开：精度使用固定自然语言文首密钥取值，模板关闭 thinking，输入精确为 512/4096/64000 token；性能继续历史随机输入。独立原生诊断中，short 的 warm + 四次顺序 + 四次并发均正确且逐 token 一致，long 四请求、target64k 两请求也正确且一致；64-token 输出实际为重复密钥的截断前缀，不冒称输出六十四行。三份原始 JSON 已按 SHA 冻结到 `fixtures/precision/`，在候选强制回退前确定；门禁继续要求正确答案、组内 exact、候选对原生 exact 和实际 retraction，不以放宽 token 差异阈值处理。
 
 该独立原生结果不是完整 controller 或强制回退通过，也不是通用模型精度得分。原生 64K 取值诊断的 cached token 为 63360，性能仍严格检查每请求 63872，二者输入和用途不同。
+
+## 完整 BS16 controller 结果与后续 cache 专项
+
+在 `dd2fe408d770334f467b64955ae9d64954012424` 驱动、相同 254fce93 服务端核心下，209 P / 217 D 完整 BS16 controller 已通过，退出与清理均为 0。原生与 forced 三组共各十条请求：答案正确，候选逐 token 对齐参考；实际回退分别 `[0,0,0,6]`、`[0,0,0,6]`、`[5,0]`，即三条请求共回退17次，另外七条是并发控制。原来的 MF host-backed 回退不再读取空 native K/V；这是固定三输入、BF16 KV 和该 TP16 配置的实机覆盖。
+
+两轮预热为 279.678281、336.179454 output tokens/s。五轮正式全部保留：314.285515、294.316999、310.265693、312.411012、279.010060；中位数 **310.265693**、范围279.010060–314.285515、总体标准差13.52918。每轮16/16完成，逐请求64000输入、1024输出、cached63872，实际decode running BS达16。它是客户端测量窗口输出吞吐，前缀seed独立计时，不是scheduler瞬时decode吞吐。旧203.723894是单机TP16/16die、筛选clean三轮的中位数；本次两机各TP16共32die、五轮不筛，不能把差值全归因于回退补丁。
+
+该次性能D启用实验性decode radix prefix cache，而前面的自然精度在D cache关闭的reference/forced配置下执行。为补足这个组合的答案验证，新增性能D ready后、七轮计时前的64K语义seed+BS并发64-token准确性门禁，要求与原生exact、正确答案且实际有cache hit；七轮冻结随机性能流程原样保留。正常完整流程因此共14次flush。此新增cache专项在BS16旧运行中未执行，将在BS扩展实机运行中验证，不倒填为BS16已有证据。
+
+本轮期间长时间保留的旧P曾在MF `AccTcpWorker` native栈段错误，之后出现Gloo peer断开；SMEM对旧D端口重连与该错误因果未确认。恢复P后上述完整controller完成，不把重启称为MF根因修复。新实验每次干净启动两端，并继续保留失败证据。

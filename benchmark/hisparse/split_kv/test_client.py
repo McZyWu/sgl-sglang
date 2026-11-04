@@ -531,6 +531,7 @@ class TestClient(unittest.TestCase):
                         "meta_info": {
                             "prompt_tokens": len(ids),
                             "completion_tokens": length,
+                            "cached_tokens": 1,
                             "finish_reason": {"type": "length"},
                             "num_retractions": int(phase["value"] == "functional"),
                         },
@@ -617,6 +618,29 @@ class TestClient(unittest.TestCase):
                 ],
             )
             self.assertEqual(summary["formal_output_tps"]["median"], 42.0)
+            self.assertEqual(
+                summary["performance_decode_prefix_cache_accuracy"],
+                {
+                    "status": "passed",
+                    "cache_mode": "enabled",
+                    "requests": 2,
+                    "answer": "731954",
+                    "exact_match": True,
+                    "cache_hit": True,
+                    "passed": True,
+                },
+            )
+            self.assertTrue(
+                (next(output.iterdir()) / "performance-prefix-seed.json").is_file()
+            )
+            prefix_report = json.loads(
+                (
+                    next(output.iterdir()) / "performance-prefix-accuracy.json"
+                ).read_text()
+            )
+            self.assertEqual(prefix_report["cache_mode"], "enabled")
+            self.assertEqual(len(prefix_report["results"]), 2)
+            self.assertTrue(prefix_report["passed"])
             self.assertEqual(len(performance_fixture_inputs), 7)
             self.assertTrue(
                 all(ids == [1] * 64000 for ids in performance_fixture_inputs)
@@ -651,7 +675,7 @@ class TestClient(unittest.TestCase):
             self.assertEqual(
                 summary["observed_decode_batch"]["max_running_requests"], 2
             )
-            self.assertEqual(sequence.count("flush"), 13)
+            self.assertEqual(sequence.count("flush"), 14)
             for index, item in enumerate(sequence):
                 if item != "flush":
                     self.assertGreater(index, 0)
@@ -1008,6 +1032,34 @@ class TestClient(unittest.TestCase):
                     "731954",
                 )
 
+    def test_prefix_accuracy_gate_rejects_wrong_answer_tokens_and_cache_miss(self):
+        valid_result = {
+            "request_id": "ok",
+            "response": {
+                "output_ids": [7] * 64,
+                "text": "731954\n" * 12 + "731954",
+                "meta_info": {"cached_tokens": 100},
+            },
+        }
+        passed = runner.validate_prefix_cache_accuracy(
+            [valid_result], [7] * 64, "731954"
+        )
+        self.assertEqual(
+            passed, {"exact_match": True, "cache_hit": True, "cached_tokens": [100]}
+        )
+        wrong_answer = json.loads(json.dumps(valid_result))
+        wrong_answer["response"]["text"] = "other\n" * 12 + "other"
+        with self.assertRaisesRegex(ValueError, "valid repeated-answer prefix"):
+            runner.validate_prefix_cache_accuracy([wrong_answer], [7] * 64, "731954")
+        wrong_tokens = json.loads(json.dumps(valid_result))
+        wrong_tokens["response"]["output_ids"] = [8] * 64
+        with self.assertRaisesRegex(ValueError, "differ from the native"):
+            runner.validate_prefix_cache_accuracy([wrong_tokens], [7] * 64, "731954")
+        cache_miss = json.loads(json.dumps(valid_result))
+        cache_miss["response"]["meta_info"]["cached_tokens"] = 0
+        with self.assertRaisesRegex(ValueError, "positive integer cached_tokens"):
+            runner.validate_prefix_cache_accuracy([cache_miss], [7] * 64, "731954")
+
     def test_full_sequence_keeps_seven_rounds_and_checks_retraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             model = Path(tmp) / "model"
@@ -1124,6 +1176,12 @@ class TestClient(unittest.TestCase):
                     for _ in range(count)
                 ],
             )
+            self.assertEqual(
+                json.loads(
+                    (directory / "performance-prefix-accuracy.json").read_text()
+                )["passed"],
+                True,
+            )
             for name, expected_count in (
                 ("reference-short.json", 4),
                 ("reference-long.json", 4),
@@ -1170,7 +1228,7 @@ class TestClient(unittest.TestCase):
                     )
             self.assertEqual(len(list(directory.glob("warm-[12].json"))), 2)
             self.assertEqual(len(list(directory.glob("formal-[1-5].json"))), 5)
-            self.assertEqual(len(list(directory.glob("*-seed.json"))), 7)
+            self.assertEqual(len(list(directory.glob("*-seed.json"))), 8)
             for name in (
                 "decode-reference.log",
                 "decode-functional.log",
