@@ -48,6 +48,11 @@ class TestDraftGraphBuckets(CustomTestCase):
             # alignment-rounded capacity, rather than the requested size.
             graph.cuda_graph_config.decode.bs = [64]
             self.assertEqual(capture(runner, 1, pad_unaligned=True)[0], [32])
+            # A six-request baseline uses an eight-request verify bucket.
+            runner.req_to_token_pool.size = 6
+            graph.cuda_graph_config.decode.bs = [8]
+            self.assertEqual(capture(runner, 4)[0], [8])
+            self.assertEqual(capture(runner, 1, pad_unaligned=True)[0], [16])
 
 
 if __name__ == "__main__":

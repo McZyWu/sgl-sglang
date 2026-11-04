@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 原始 NoneType 回退问题 | CPU 重现后修复 | 原版读取 `self.k_buffer=None`；修复改读权威 MF split K/V |
 | Linux 完整测试模块 | 8/8，通过，exit 0 | 2 项新增 retraction 测试、6 项既有 MF CPU 测试；MF/设备边界使用模拟 |
-| 自动控制器自检 | 30/30，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁、PF_EXITING 等待、性能配置的 prefix 准确性门禁和 Q4/TP 图尺寸预检 |
+| 自动控制器自检 | 33/33，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁、PF_EXITING 等待、性能配置的 prefix 准确性门禁、Q4/TP 图尺寸预检及 native 模式、图桶与真实并发分离 |
 | 冻结资产与报告自检 | 3/3，通过，exit 0 | 原始 SHA、BS16 pickle 原字节、BS20 扩展、seed 1 输出、正式 1024 输出及 cached63872、输入缓存命中 |
 | 静态检查 | 通过 | Ruff 0.15.1、isort 7.0.0、codespell 2.4.1、AST、空白/EOF、Bash 语法、文件大小与 diff check |
 | kernel 构建及安装 | 通过，exit 0 | 217 A3/CANN 9.1.0 构建；两侧安装同一 wheel，检查 split K/V 算子 schema |
@@ -99,3 +99,9 @@ MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构�
 针对这个确定的draft问题，NPU普通EAGLE draft-decode显式允许将桶按实际宽度向上对齐；BS20得到32槽、BS16仍16槽；target verify与普通draft-extend按真实宽度保留20×4。padding使用既有零号request/KV槽，结果裁到raw batch；不修改ModelRunner、不增加数学算子、不修改CUDA/ROCm或multi-layer逻辑。新增CPU单元测试在217独立任务源码副本实际运行 `1 passed`、exit0，覆盖20→32、16不变、混合桶、width4保留20、旧路径与容量边界；原生产源码当时未改。此时真实NPU padding、精度及性能仍待完整验证。
 
 BS16新cache专项的重跑还遇到外部占卡以及来源不明的SIGKILL，未产出新性能轮次；没有OOM证据时不定性为OOM，也不归因为其他作业的发送行为。现场资源冲突及清理记录单独保留，已完成的第一组BS16五轮成绩不受这些后续失败影响。
+
+2026-11-04 18:46 北京时间，固定 `f57c0632` 的 BS20 新运行再次在原生参考的 target verify 图捕获阶段失败：`RunAicpuRpcSrvLaunchV2_allgather` / `execute kernel param invalid` / `0x2a`，随后同步报 `507018`。尚未执行 draft decode 的32槽图、功能精度或计时，因此本轮不能验证 draft padding，也没有有效 BS20 TPS。原始运行目录为 `/workspace/splitkv-pd-live/runs/decode-20261104T104034122416Z`。仅任务 PID 的 signal trace 记录了 server 主进程向 scheduler 发出的 SIGKILL，与 `Received sigquit` 后 `kill_process_tree` 调用一致；另外两条 sender 已退出、身份不可核实，不据此推断外部发送者。该证据也不能解释更早运行中来源未知的 SIGKILL。
+
+用户随后要求关闭 HiSparse、实际 BS6 的两机 PD 基线。该 case 保持模型、TP16、BF16、NEXTN3/Q4、64000/1024、prefix100、seed42、原冻结客户端及2轮预热加5轮正式，另记录 HiSparse 开关、实际 batch 和图捕获 bucket 的差异。计划用8槽 target/extend 图承载真实6请求，draft图16槽；前缀共享开启时先保留163840-token池与0.92内存比例，以实际缓存命中及同时运行BS6验收，不能按无共享的6条独立64K请求预判内存。C12288是关闭的HiSparse驻留策略，在普通KV基线不生效。此处为待执行配置说明，不是已通过记录。
+
+BS6 桶选择已在217独立CPU源码副本验证：请求池大小6、配置`[8]`时，width4得到`[8]`，NPU draft width1及padding得到`[16]`；pytest `1 passed, 14 warnings in 14.13s`，exit0。它不加载模型或NPU，不能替代实际图捕获和输出验证。普通KV仍使用模型原生DSA注意力；关闭HiSparse不等于切换为稠密注意力。

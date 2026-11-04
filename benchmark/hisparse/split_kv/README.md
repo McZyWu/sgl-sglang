@@ -77,7 +77,9 @@ P 自动创建 Ascend transfer 的配置存储：framework 的 `start_disagg_ser
 
 两侧的 `--tp`、`--bs`、端口、内存比例等参数须一致；默认 TP16、DP1、BS16、MTP3/Q4、mode1、C12288、BF16 KV、context 67584、page 128、max-total-tokens 163840、静态显存比例 0.92。扩大 BS 时在两侧同时指定 `--bs N`，并根据现场显存和容量设 `--max-total-tokens`；不能把不同配置的数据当成同一基线。`--help` 显示完整参数。以上启动参数来自历史单机 203 TPS 配置的已知部分；PD 结构与历史单机不同。
 
-本脚本固定 Q4：decode 捕获的 token 行数为 `BS * 4`，须能被 TP 整除。TP16 时 BS 应是 4 的倍数；BS18 会在模型加载前被参数预检拒绝。满足此关系仍不保证具体模型的图能工作：本轮 BS20 原生 verify 图启动阶段出现 HCCL/AICPU 参数错误，开始捕获时可用显存约14.83GB，未发现 OOM 证据，尚未产生BS20性能数据。默认推荐已完成全流程的BS16，不把BS20失败记为零TPS，也不把相邻模型支持BS20扩大为当前GLM路径已通过。
+本脚本固定 Q4：decode 捕获 token 行数为 `graph-bs * 4`，须能被 TP 整除；`graph-bs` 默认等于 `bs`，可单独设更大的捕获桶。TP16 时默认图桶应为4的倍数；默认 `bs=18` 会在模型加载前被参数预检拒绝。满足此关系仍不保证具体模型的图能工作：本轮 BS20 原生 verify 图启动阶段出现 HCCL/AICPU 参数错误，开始捕获时可用显存约14.83GB，未发现 OOM 证据，尚未产生BS20性能数据。默认推荐已完成全流程的BS16，不把BS20失败记为零TPS，也不把相邻模型支持BS20扩大为当前GLM路径已通过。
+
+如需跑不启用 HiSparse 的原生 KV 对照，在 P、D 两侧都增加 `--kv-mode native --bs 6 --graph-bs 8`。原生 KV 仍使用模型自身的 DSA/MLA attention cache，不会切换成 dense attention。`--bs 6` 是运行时并发上限；`--graph-bs 8` 是目标 Q4 verify 图的捕获桶，脚本保持 `--max-running-requests 6`。NPU draft decode 的单 token 行按 TP16 对齐到16槽，draft-extend 与 target verify 使用8槽；这不改变客户端发出的请求数。Native 模式每阶段显式关闭 sparse-KV offload 和 fused LIM Copy-SFA，并清除 LIM/GVA 专属环境覆盖；保留 MTP、Ascend PD 传输和性能阶段 decode radix prefix cache。它不配置 `C12288` sparse resident cache。reference、强制回退精度校验以及性能阶段的输入、缓存门禁和2轮预热+5轮正式测量仍照常执行。`--graph-bs` 默认等于 `--bs`，未指定 `--kv-mode` 时仍为 `hisparse`；BS6 native 对照需实际通过两机精度、cache 和 decode admission 检查后再报告性能。
 
 后续隔离诊断的 BS20 target verify 图已成功捕获，之前的 HCCL 错误没有复现；随后明确遇到 draft decode 的空桶断言：每请求1个token，20行不满足TP16对齐。配套 Python 修复仅在 NPU 普通 EAGLE draft decode 中把桶向上补齐，BS20使用32槽draft图；target verify保持20×4，draft extend按实际宽度保持20×4。额外槽沿用已有零号padding行，输出裁回实际请求；BS16桶不变，CUDA/ROCm行为不变。CPU桶选择测试已通过，真实BS20图、精度和性能仍须本轮验证；这不被描述成修复了此前未复现的HCCL错误，也不覆盖multi-layer draft路径。
 

@@ -531,7 +531,41 @@ class TestClient(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
             self.assertIn("decode graph capture has no valid bucket", result.stderr)
-            self.assertIn("--bs * 4 must be divisible by --tp", result.stderr)
+            self.assertIn("--graph-bs * 4 must be divisible by --tp", result.stderr)
+            self.assertFalse(output.exists())
+
+    def test_graph_bs_must_cover_runtime_batch_before_initialization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "model"
+            model.mkdir()
+            output = root / "runs"
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("run.py")),
+                "decode",
+                "--model",
+                str(model),
+                "--prefill-host",
+                "127.0.0.2",
+                "--decode-host",
+                "127.0.0.1",
+                "--devices",
+                ",".join(str(index) for index in range(16)),
+                "--interface",
+                "lo",
+                "--tp",
+                "16",
+                "--bs",
+                "6",
+                "--graph-bs",
+                "5",
+                "--output-dir",
+                str(output),
+            ]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("graph-bs must be greater than or equal to bs", result.stderr)
             self.assertFalse(output.exists())
 
     def test_server_env_records_deepep_dispatch_limit_when_unset(self):
@@ -540,6 +574,56 @@ class TestClient(unittest.TestCase):
             runner.record_server_env(output, "decode", {})
             recorded = json.loads((output / "env-decode.json").read_text())
         self.assertIsNone(recorded["SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK"])
+
+    def test_native_kv_mode_disables_sparse_and_lim_env_for_every_phase(self):
+        args = types.SimpleNamespace(
+            role="decode",
+            prefill_host="127.0.0.2",
+            decode_host="127.0.0.1",
+            devices="0,1",
+            store_port=24669,
+            transfer_protocol="device_sdma",
+            interface="lo",
+            kv_mode="native",
+        )
+        sparse_env = {
+            "SGLANG_NPU_SPARSE_KV_INDEXER": "lim",
+            "SGLANG_NPU_SPARSE_KV_CACHE_SIZE": "12288",
+            "SGLANG_NPU_SPARSE_KV_HBM_BUDGET_MB": "512",
+            "SGLANG_ENABLE_NPU_LIM_MTP_FULL_VISIBLE": "1",
+            "SGLANG_NPU_MTP_SEPARATE_KV_TAIL": "0",
+            "SGLANG_NPU_FUSED_LIM_PRE_METADATA": "1",
+            "SGLANG_NPU_FUSED_LIM_COPY_SFA_METADATA": "1",
+        }
+        with patch.dict("os.environ", sparse_env):
+            for functional, reference in ((False, True), (True, False), (False, False)):
+                env = runner.server_env(
+                    args, functional=functional, reference=reference
+                )
+                self.assertEqual(env["SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD"], "0")
+                self.assertEqual(env["SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA"], "0")
+                self.assertTrue(all(name not in env for name in sparse_env))
+                self.assertEqual(
+                    env.get("SGLANG_TEST_RETRACT"), "1" if functional else None
+                )
+
+    def test_server_command_uses_graph_bs_and_preserves_runtime_bs(self):
+        args = types.SimpleNamespace(
+            model="/model",
+            model_name="test-model",
+            tp=16,
+            mem_fraction=0.92,
+            graph_bs=8,
+            bs=6,
+            max_total_tokens=163840,
+            prefill_port=41000,
+            decode_port=30001,
+            bootstrap_port=8998,
+            disable_decode_prefix_cache=False,
+        )
+        command = runner.server_command(args, "decode")
+        self.assertEqual(command[command.index("--cuda-graph-bs-decode") + 1], "8")
+        self.assertEqual(command[command.index("--max-running-requests") + 1], "6")
 
     def test_default_frozen_controller_runs_all_rounds_after_flush(self):
         with tempfile.TemporaryDirectory() as tmp:

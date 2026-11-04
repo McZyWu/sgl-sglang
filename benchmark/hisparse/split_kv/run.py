@@ -462,9 +462,24 @@ def server_env(args, functional=False, reference=False):
         "SGLANG_D2RH_VERIFY",
     ):
         env.pop(name, None)
+    if args.kv_mode == "native":
+        env.update(
+            SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD="0",
+            SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA="0",
+        )
+        for name in (
+            "SGLANG_NPU_SPARSE_KV_INDEXER",
+            "SGLANG_NPU_SPARSE_KV_CACHE_SIZE",
+            "SGLANG_NPU_SPARSE_KV_HBM_BUDGET_MB",
+            "SGLANG_ENABLE_NPU_LIM_MTP_FULL_VISIBLE",
+            "SGLANG_NPU_MTP_SEPARATE_KV_TAIL",
+            "SGLANG_NPU_FUSED_LIM_PRE_METADATA",
+            "SGLANG_NPU_FUSED_LIM_COPY_SFA_METADATA",
+        ):
+            env.pop(name, None)
     if functional:
         env.update(SGLANG_TEST_RETRACT="1", SGLANG_TEST_RETRACT_INTERVAL="3")
-    if reference:
+    if reference and args.kv_mode == "hisparse":
         env.update(
             SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD="0",
             SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA="0",
@@ -473,6 +488,7 @@ def server_env(args, functional=False, reference=False):
 
 
 def server_command(args, role, functional=False, performance=False):
+    graph_bs = args.bs if args.graph_bs is None else args.graph_bs
     command = [
         sys.executable,
         str(HERE / "no_thp_launch.py"),
@@ -500,7 +516,7 @@ def server_command(args, role, functional=False, performance=False):
         "--mem-fraction-static",
         str(args.mem_fraction),
         "--cuda-graph-bs-decode",
-        str(args.bs),
+        str(graph_bs),
         "--max-running-requests",
         str(args.bs),
         "--max-total-tokens",
@@ -1121,6 +1137,17 @@ def main():
     parser.add_argument("--model-name", default="GLM-5.2-w4a8")
     parser.add_argument("--tp", type=int, default=16)
     parser.add_argument("--bs", type=int, default=16)
+    parser.add_argument(
+        "--graph-bs",
+        type=int,
+        help="Decode graph capture bucket; defaults to --bs",
+    )
+    parser.add_argument(
+        "--kv-mode",
+        choices=("hisparse", "native"),
+        default="hisparse",
+        help="KV path for functional/performance phases; reference remains native",
+    )
     parser.add_argument("--max-total-tokens", type=int, default=163840)
     parser.add_argument(
         "--disable-decode-prefix-cache",
@@ -1148,10 +1175,13 @@ def main():
     args = parser.parse_args()
     if args.bs < 2 or args.tp < 1:
         parser.error("bs >= 2 and tp >= 1 are required")
-    if args.role == "decode" and args.bs * 4 % args.tp != 0:
+    graph_bs = args.bs if args.graph_bs is None else args.graph_bs
+    if graph_bs < args.bs:
+        parser.error("graph-bs must be greater than or equal to bs")
+    if args.role == "decode" and graph_bs * 4 % args.tp != 0:
         parser.error(
             "decode graph capture has no valid bucket: with the current MTP draft width 4, "
-            "--bs * 4 must be divisible by --tp"
+            "--graph-bs * 4 must be divisible by --tp"
         )
     try:
         validate_host_addresses(args.prefill_host, args.decode_host, args.role)
@@ -1193,7 +1223,10 @@ def main():
         Tee(sys.stdout, controller_log),
         Tee(sys.stderr, controller_log),
     )
-    dump(out / "config.json", vars(args))
+    config = vars(args).copy()
+    config.update(runtime_bs=args.bs, capture_bs=graph_bs)
+    config["sparse_kv_cache_tokens"] = 12288 if args.kv_mode == "hisparse" else None
+    dump(out / "config.json", config)
     prefill = f"http://{args.prefill_host}:{args.prefill_port}"
     decode = f"http://{args.decode_host}:{args.decode_port}"
     router = f"http://127.0.0.1:{args.router_port}"
@@ -1459,6 +1492,10 @@ def main():
             if r["round"].startswith("formal-")
         ]
         summary = {
+            "kv_mode": args.kv_mode,
+            "runtime_bs": args.bs,
+            "capture_bs": graph_bs,
+            "sparse_kv_cache_tokens": 12288 if args.kv_mode == "hisparse" else None,
             "greedy_accuracy_validation": {
                 "cases": [
                     {
