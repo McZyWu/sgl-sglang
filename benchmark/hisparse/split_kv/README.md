@@ -31,9 +31,13 @@ env -u CUDA_VISIBLE_DEVICES TORCH_DEVICE_BACKEND_AUTOLOAD=0 \
   test/registered/unit/hardware_backend/npu/test_memfabric_sparse_kv.py
 python benchmark/hisparse/split_kv/test_client.py
 python benchmark/hisparse/split_kv/test_frozen_bench.py
+python benchmark/hisparse/split_kv/test_no_thp_launch.py
+python benchmark/hisparse/split_kv/test_spawn_startup.py
 ```
 
 请在 source CANN 后、framework 仓根执行。测试进程中 `CUDA_VISIBLE_DEVICES` 应 unset，不要设为空字符串；`env` 只改变该测试进程，不会污染后续 NPU 启动环境。
+
+若旧版在启动时出现 `current process has finished its bootstrapping phase`，先更新 framework 分支。`no_thp_launch.py` 的 THP 设置和 SGLang 启动现在只在 `__name__ == "__main__"` 时执行；spawn 子进程以 `__mp_main__` 重放脚本时不会重复启动服务。`test_spawn_startup.py` 使用真实 spawn 和假的服务/系统调用验证此入口，不加载模型或初始化 NPU。这个修复只更新 Python 文件，已安装的配套 kernel target 可继续使用。
 
 两容器均应使用同一 framework 提交和补丁。`P_IP`/`D_IP` 必须分别是各自容器内可绑定或访问、并且两机之间可达的地址；确认相应地址及防火墙允许 HTTP、bootstrap、MF store 和传输所需端口。`--devices` 是**容器内可见编号**而非未经核实的宿主卡号；`--interface` 是每个节点用于本机 TP 的 HCCL/Gloo 接口（例如 `lo`），MF TransferEngine 的节点地址通过 `SGLANG_HOST_IP` 明确设置为各自 IP。P 默认占用端口 41000、8998、24669；D 占用 30001、8000。启动前脚本检查本机端口是否空闲，已占用时退出，不清理已有进程。
 
