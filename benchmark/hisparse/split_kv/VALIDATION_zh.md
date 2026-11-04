@@ -1,8 +1,12 @@
 # 本次交接的验证范围
 
-记录日期：2026-11-04。本次提交提供回退修复、两机 PD 控制器、冻结压测客户端和容器构建脚本。真实 MF TP16 小探针、CopySFA 三个设备用例、kernel 构建及完整 BS16 controller 已通过。固定三输入取值与17次真实回退恢复对齐；五轮正式中位数310.265693 output tokens/s。普通KV BS6的新增性能cache专项与正式测试随后完成，见下；HiSparse专项仍需补测，BS20图捕获失败且没有有效TPS，不扩大为通用模型评测通过。
+全部已审轮值：[JSON及配置边界](results/20261104/rounds.json)、[CSV](results/20261104/rounds.csv)、[SVG](results/20261104/comparison.svg)。中断运行只画实际完成点，不计算完整五轮中位数。
 
-随后固定 `437a8431` 的普通 KV BS6 基线也完成全部流程，D controller/外层 exit0、清理完成。该运行已覆盖新增的性能 cache-ON 语义门禁；早先 HiSparse BS16 的此项覆盖仍需独立补测，不能由普通 KV 结果替代。
+![三次运行全部已完成轮值与中断边界](results/20261104/comparison.png)
+
+记录日期：2026-11-04。本次提交提供回退修复、两机 PD 控制器、冻结压测客户端和容器构建脚本。真实 MF TP16 小探针、CopySFA 三个设备用例、kernel 构建及首轮完整 BS16 controller 已通过。固定三输入取值与17次真实回退恢复对齐；首轮五轮正式中位数310.265693 output tokens/s。普通KV BS6的性能cache专项与正式测试随后完成，见下；同版HiSparse性能cache专项也已通过，但新五轮计时被SIGKILL中断。BS20图捕获失败且没有有效TPS，不扩大为通用模型评测通过。
+
+随后固定 `437a8431` 的普通 KV BS6 基线也完成全部流程，D controller/外层 exit0、清理完成。该运行覆盖新增的性能 cache-ON 语义门禁；随后同版HiSparse BS16也独立通过该门禁，不能倒填为早先dd2运行已执行该检查。
 
 | 项目 | 结果 | 范围 |
 | --- | --- | --- |
@@ -16,7 +20,8 @@
 | CopySFA eager/graph | 3/3，通过，exit 0 | Q4 跨页、128 head、C12288 Q4 首填；独立 CPU oracle 最大绝对误差分别为 0.00066914、0.00065416、0.00059916 |
 | PD 首次尝试 | 失败，exit 1，已补启动门禁 | P/D 服务 ready 后 router 尚无 P worker，首组请求 503；不能记作精度或性能结果 |
 | 完整 BS16 PD、固定输入精度与吞吐 | 通过，exit 0 | 三组10请求正确且forced对native exact，3请求共17次回退；5轮全留median310.265693；不是通用模型评测 |
-| HiSparse性能cache专项、BS20扩展 | 专项待补，BS20失败 | 新增显式语义门禁未由早先HiSparse BS16覆盖；BS20在target图捕获阶段all-gather参数异常，无有效TPS，七轮冻结随机计时未改 |
+| 同版HiSparse性能cache专项 | 通过，16/16 | 437a的64K/64输出全部答案正确、逐token对native exact、cached63872；新性能全流程在第三轮被SIGKILL中断，不能记为全5轮通过 |
+| BS20扩展 | 失败 | target图捕获阶段all-gather参数异常，无有效TPS，尚未运行后续draft/精度/正式计时 |
 | 普通KV BS6完整两机PD基线 | 通过，D exit0 | `437a8431`，实际BS6、target/extend图8、draft图16；原生与forced三组逐token一致，3请求共16次真实回退；性能缓存语义6/6正确且cached63872；2轮预热+5轮正式全部保留，median198.473719；原始日志71个decode样本确认实际max running6 |
 
 Linux 8 项测试使用 Python 3.12.13、torch 2.10.0+cpu、torch_npu 2.10.0.post6、memfabric_hybrid 1.3.0。采集日志结束时间为 `2026-11-03T23:16:50+00:00`，pytest 输出 `8 passed, 15 warnings in 12.28s`。修复文件的 SHA256 为 `3faf59ed016a26bfe5447f7bf4dfa7c02a4f663fccfb911164aac20e9319a5c9`；新增 retraction 测试文件为 `339177370819502c9ff25944f8478ae31c24b8e5fc8fefeda02357e49f9585fa`。本次发布前核对过这两个文件与当时通过测试的版本一致。
@@ -127,3 +132,13 @@ BS6 桶选择已在217独立CPU源码副本验证：请求池大小6、配置`[8
 正式范围193.568778至207.670098，5轮总体标准差5.192811。固定取值验证：512/4096/64000输入各4/4/2请求、输出64tokens，正确key且逐token对齐；forced实际回退分别5/6/5，共16次。性能配置另验证6条64000/64、答案对native exact、cached63872。该范围不是GSM8K等通用模型准确率。
 
 两机governor为performance、numa_balancing=0、sched_migration_cost_ns=50000。217 swappiness在性能阶段前于19:02:47+08从10改0，209复核0；未swapoff，采样si/so为0。早先BS16当时的该值没有直接记录，不倒填。当前两端进程allowlist实测ASCEND_USE_FIA、SGLANG_NPU_USE_MLAPO、SGLANG_USE_FIA_NZ及相应额外timeout/allocator覆盖均未设置；旧151与早先BS16没有这些键的直接运行证据。普通KV BS6和HiSparse BS16使用不同BS，旧203另为单机16die和筛选三轮；这些对照不能解释为单一开关的因果收益。
+
+## 同版 HiSparse BS16 补充验证与计时中断（437a8431）
+
+新P run `/workspace/splitkv-pd-live/runs/prefill-20261104T113310215931Z`；新D run `/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z`。C12288、mode1、16实际并发及其余已知条件与首轮保持；没有以较高结果替换早先五轮。reference/forced三组逐token一致且key正确，实际回退6/6/5，共17次。新增性能cache专项16/16通过：每条64000输入、64输出、cached63872，并对原生参考逐token一致；主模型已独立读取原始JSON复核。
+
+两轮预热304.990530/304.923707 token/s；前两轮正式302.414405/294.726847，均16/16成功、每条64000/1024/cached63872，原始结果全部保留。第三轮期间控制器被SIGKILL中断，**不计算或冒称完整5轮中位数**，不将此运行标为controller PASS。
+
+追踪记录2026-11-04 12:01:54 UTC（20:01:54北京时间），宿主SSH服务cgroup下`bash` PID1497817向D controller PID1249322发送SIGKILL；发送者随后消失，不能确定其用户或来源，也不能仅凭SSH cgroup断定是他人的操作。Docker events另记12:02:41 TERM、12:03:11 KILL并stop；容器exit137、OOMKilled=false。这是两个先后事件，不将容器FinishedAt误当控制器首个信号时间。
+
+已审本次监控1800秒到期路径仅关闭本任务trace实例；TERM分支仅适用于控制器尚未释放的初始化失败，外层EXIT trap只写退出码。未发现这两份脚本有超时stop容器的逻辑，但不能排除其他已结束操作。P自行结束，stderr为SystemExit143而外层记录0，差异原文保留，未冒称正常外层143。两端设备和服务端口已释放；停止自动重试，需协调进程/容器清理操作及可用时段后才能补完。普通KV BS6完整结果和首轮HiSparse BS16完整五轮不受本次中断影响。

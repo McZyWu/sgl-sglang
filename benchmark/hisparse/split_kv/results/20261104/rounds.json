@@ -1,0 +1,437 @@
+{
+  "date": "2026-11-04",
+  "metric_zh": "完整PD客户端输出token总数除以计时时长，前缀种子不在计时内",
+  "common": {
+    "prefill_tp": 16,
+    "decode_tp": 16,
+    "total_npu_dies": 32,
+    "model": "GLM-5.2-w4a8",
+    "quantization": "modelslim",
+    "compute_dtype": "bfloat16",
+    "kv_dtype": "bfloat16",
+    "context_length": 67584,
+    "page_size": 128,
+    "max_total_tokens": 163840,
+    "mem_fraction_static": 0.92,
+    "speculative_steps": 3,
+    "speculative_topk": 1,
+    "speculative_draft_tokens": 4,
+    "prefix_mode": "prefix100",
+    "fixture_ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+    "seed": 42,
+    "warmup_rounds": 2,
+    "formal_rounds_required": 5
+  },
+  "historical_reference": {
+    "output_tokens_per_second": 203.723894,
+    "npu_dies": 16,
+    "topology": "single_host",
+    "bs": 16,
+    "aggregation": "selected formal_2/3/5 median"
+  },
+  "limitations_zh": "BS和KV策略同时变化，不是单一开关收益。旧151单机资源及筛轮规则不同。437a的HiSparse运行中断，仅两轮正式有效，不计算五轮中位数。dd2未执行新增cache语义专项，不能倒填覆盖。",
+  "cases": [
+    {
+      "case_id": "native6_437a",
+      "label_zh": "普通KV BS6",
+      "kv_mode": "native",
+      "bs": 6,
+      "measurement_driver_commit": "437a8431aa72c80fcd8c93bff3d7934d6b09a090",
+      "resident_cache_tokens": null,
+      "mode1_sparse_tail_setting": null,
+      "graph_buckets": {
+        "target_verify": 8,
+        "draft_decode": 16,
+        "draft_extend": 8
+      },
+      "full_protocol_passed": true,
+      "archive_sha256": "18b96a957dd8c4734b9b336e95295e217f85802396e20d09be896a513a607300",
+      "run": "runs/decode-20261104T105713496775Z",
+      "rounds": [
+        {
+          "round": "warm-1",
+          "output_tokens_per_second": 209.37468283780527,
+          "duration_seconds": 29.344522063154727,
+          "seed_duration_seconds": 50.65913974540308,
+          "requests_passed": 6
+        },
+        {
+          "round": "warm-2",
+          "output_tokens_per_second": 182.87777267372414,
+          "duration_seconds": 33.59620969882235,
+          "seed_duration_seconds": 49.90735197998583,
+          "requests_passed": 6
+        },
+        {
+          "round": "formal-1",
+          "output_tokens_per_second": 204.7441783223871,
+          "duration_seconds": 30.008179232943803,
+          "seed_duration_seconds": 50.078833412379026,
+          "requests_passed": 6
+        },
+        {
+          "round": "formal-2",
+          "output_tokens_per_second": 196.81821009326362,
+          "duration_seconds": 31.216623690910637,
+          "seed_duration_seconds": 49.961733567062765,
+          "requests_passed": 6
+        },
+        {
+          "round": "formal-3",
+          "output_tokens_per_second": 193.56877810807492,
+          "duration_seconds": 31.740656008943915,
+          "seed_duration_seconds": 49.690382447093725,
+          "requests_passed": 6
+        },
+        {
+          "round": "formal-4",
+          "output_tokens_per_second": 198.47371863329136,
+          "duration_seconds": 30.95623965887353,
+          "seed_duration_seconds": 50.21082760486752,
+          "requests_passed": 6
+        },
+        {
+          "round": "formal-5",
+          "output_tokens_per_second": 207.67009803427356,
+          "duration_seconds": 29.585385947022587,
+          "seed_duration_seconds": 49.8140564057976,
+          "requests_passed": 6
+        }
+      ],
+      "formal_median": 198.47371863329136,
+      "formal_stddev_population": 5.192811420155911,
+      "cache_semantic_requests_verified": 6,
+      "retractions_per_request": {
+        "short": [
+          0,
+          0,
+          0,
+          5
+        ],
+        "long": [
+          0,
+          0,
+          0,
+          6
+        ],
+        "target64k": [
+          0,
+          5
+        ]
+      },
+      "full_run_exitcode": 0
+    },
+    {
+      "case_id": "hisparse16_dd2",
+      "label_zh": "HiSparse BS16 首轮dd2",
+      "kv_mode": "hisparse",
+      "bs": 16,
+      "measurement_driver_commit": "dd2fe408d770334f467b64955ae9d64954012424",
+      "resident_cache_tokens": 12288,
+      "mode1_sparse_tail_setting": 0,
+      "graph_buckets": {
+        "target_verify": 16,
+        "draft_decode": 16,
+        "draft_extend": 16
+      },
+      "full_protocol_passed": true,
+      "archive_sha256": "d5c8b48202c33a2877cff81c92cff2a6a65e39a6a43899ebba563b9f1c84a669",
+      "run": "runs/decode-20261104T083759538868Z",
+      "rounds": [
+        {
+          "round": "warm-1",
+          "duration_seconds": 58.58159582596272,
+          "output_tokens_per_second": 279.6782806783626,
+          "requests_passed": 16
+        },
+        {
+          "round": "warm-2",
+          "duration_seconds": 48.7358754738234,
+          "output_tokens_per_second": 336.1794538563288,
+          "requests_passed": 16
+        },
+        {
+          "round": "formal-1",
+          "duration_seconds": 52.13094220124185,
+          "output_tokens_per_second": 314.2855146709722,
+          "requests_passed": 16
+        },
+        {
+          "round": "formal-2",
+          "duration_seconds": 55.66786852804944,
+          "output_tokens_per_second": 294.3169988939773,
+          "requests_passed": 16
+        },
+        {
+          "round": "formal-3",
+          "duration_seconds": 52.80635395506397,
+          "output_tokens_per_second": 310.2656929115407,
+          "requests_passed": 16
+        },
+        {
+          "round": "formal-4",
+          "duration_seconds": 52.44373393477872,
+          "output_tokens_per_second": 312.41101215973384,
+          "requests_passed": 16
+        },
+        {
+          "round": "formal-5",
+          "duration_seconds": 58.72189699113369,
+          "output_tokens_per_second": 279.01005995214683,
+          "requests_passed": 16
+        }
+      ],
+      "formal_median": 310.2656929115407,
+      "formal_stddev_population": 13.529182068457681,
+      "cache_semantic_requests_verified": null,
+      "retractions_per_request": {
+        "short": [
+          0,
+          0,
+          0,
+          6
+        ],
+        "long": [
+          0,
+          0,
+          0,
+          6
+        ],
+        "target64k": [
+          5,
+          0
+        ]
+      },
+      "full_run_exitcode": 0
+    },
+    {
+      "case_id": "hisparse16_437a_interrupted",
+      "label_zh": "HiSparse BS16 同版437a中断",
+      "kv_mode": "hisparse",
+      "bs": 16,
+      "measurement_driver_commit": "437a8431aa72c80fcd8c93bff3d7934d6b09a090",
+      "resident_cache_tokens": 12288,
+      "mode1_sparse_tail_setting": 0,
+      "graph_buckets": {
+        "target_verify": 16,
+        "draft_decode": 16,
+        "draft_extend": 16
+      },
+      "full_protocol_passed": false,
+      "archive_sha256": "35134c475c7272b4b05206b0ce8d42a92058c2dd540034b8b2ca16b58f7fef5a",
+      "run": "runs/decode-20261104T113311799200Z",
+      "rounds": [
+        {
+          "requests": 16,
+          "successful_requests": 16,
+          "failed_requests": 0,
+          "input_tokens": 1024000,
+          "output_tokens": 16384,
+          "duration_seconds": 53.719700773246586,
+          "output_tokens_per_second": 304.9905298087501,
+          "mean_latency_seconds": 46.01341012879857,
+          "mean_ttft_seconds": 6.027038939268095,
+          "mean_tpot_seconds": 0.0390873618665987,
+          "mean_spec_accept_length": null,
+          "cached_tokens": [
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872
+          ],
+          "round": "warm-1",
+          "fixture_ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+          "fixture_count": 64000,
+          "fixture_expansion": {
+            "formal_rows": 16,
+            "formal_pickle_exact_historical_bytes": true,
+            "expansion": null,
+            "ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+            "warm_pickle_exact_historical_bytes": true
+          },
+          "seed": {
+            "requests": 1,
+            "directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/warm-1/seed"
+          },
+          "formal_directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/warm-1/measure",
+          "frozen_finish_reason": false
+        },
+        {
+          "requests": 16,
+          "successful_requests": 16,
+          "failed_requests": 0,
+          "input_tokens": 1024000,
+          "output_tokens": 16384,
+          "duration_seconds": 53.731473251245916,
+          "output_tokens_per_second": 304.92370688198264,
+          "mean_latency_seconds": 46.41304107903852,
+          "mean_ttft_seconds": 5.85158650111407,
+          "mean_tpot_seconds": 0.03964951571644619,
+          "mean_spec_accept_length": null,
+          "cached_tokens": [
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872
+          ],
+          "round": "warm-2",
+          "fixture_ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+          "fixture_count": 64000,
+          "fixture_expansion": {
+            "formal_rows": 16,
+            "formal_pickle_exact_historical_bytes": true,
+            "expansion": null,
+            "ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+            "warm_pickle_exact_historical_bytes": true
+          },
+          "seed": {
+            "requests": 1,
+            "directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/warm-2/seed"
+          },
+          "formal_directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/warm-2/measure",
+          "frozen_finish_reason": false
+        },
+        {
+          "requests": 16,
+          "successful_requests": 16,
+          "failed_requests": 0,
+          "input_tokens": 1024000,
+          "output_tokens": 16384,
+          "duration_seconds": 54.1773133398965,
+          "output_tokens_per_second": 302.4144054026895,
+          "mean_latency_seconds": 47.58598840187187,
+          "mean_ttft_seconds": 6.00627366208937,
+          "mean_tpot_seconds": 0.04064488244358016,
+          "mean_spec_accept_length": null,
+          "cached_tokens": [
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872
+          ],
+          "round": "formal-1",
+          "fixture_ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+          "fixture_count": 64000,
+          "fixture_expansion": {
+            "formal_rows": 16,
+            "formal_pickle_exact_historical_bytes": true,
+            "expansion": null,
+            "ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+            "warm_pickle_exact_historical_bytes": true
+          },
+          "seed": {
+            "requests": 1,
+            "directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/formal-1/seed"
+          },
+          "formal_directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/formal-1/measure",
+          "frozen_finish_reason": false
+        },
+        {
+          "requests": 16,
+          "successful_requests": 16,
+          "failed_requests": 0,
+          "input_tokens": 1024000,
+          "output_tokens": 16384,
+          "duration_seconds": 55.590456638950855,
+          "output_tokens_per_second": 294.72684684730825,
+          "mean_latency_seconds": 45.426407041959465,
+          "mean_ttft_seconds": 5.762508525454905,
+          "mean_tpot_seconds": 0.03877213931232117,
+          "mean_spec_accept_length": null,
+          "cached_tokens": [
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872,
+            63872
+          ],
+          "round": "formal-2",
+          "fixture_ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+          "fixture_count": 64000,
+          "fixture_expansion": {
+            "formal_rows": 16,
+            "formal_pickle_exact_historical_bytes": true,
+            "expansion": null,
+            "ids_sha256": "56ded406d42ff4e77fe908ee4a340694a6af74cc6d633957441a233a148feb1e",
+            "warm_pickle_exact_historical_bytes": true
+          },
+          "seed": {
+            "requests": 1,
+            "directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/formal-2/seed"
+          },
+          "formal_directory": "/workspace/splitkv-pd-live/runs/decode-20261104T113311799200Z/formal-2/measure",
+          "frozen_finish_reason": false
+        }
+      ],
+      "formal_median": null,
+      "formal_stddev_population": null,
+      "cache_semantic_requests_verified": 16,
+      "retractions_per_request": {
+        "short": [
+          0,
+          0,
+          0,
+          6
+        ],
+        "long": [
+          0,
+          0,
+          0,
+          6
+        ],
+        "target64k": [
+          0,
+          5
+        ]
+      },
+      "full_run_exitcode": 137
+    }
+  ]
+}

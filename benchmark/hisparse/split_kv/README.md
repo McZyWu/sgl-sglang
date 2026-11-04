@@ -2,6 +2,8 @@
 
 普通KV BS6已用固定`437a8431`在209/217完成全部流程：D exit0、实际并发6，五轮正式中位数**198.473719 token/s**，全部6/6成功、每条64000/1024/cached63872；原生与forced逐token一致、共16次真实回退，性能cache专项6/6正确。全部轮值与边界见[验证记录](VALIDATION_zh.md)。对照的HiSparse BS16为310.265693；两组BS不同，旧203.723894另为单机16die、选定三轮统计，不能将差值全部归因于HiSparse。
 
+同版HiSparse BS16随后独立通过三组原生/forced精度（17次实际回退）及新增cache-ON语义门禁：16/16各64000/64/cached63872、正确且逐token对native一致。该补测前两轮正式为302.414405/294.726847 token/s，第三轮期间controller被SSH会话中来源未确认的SIGKILL终止，随后容器被停止；没有完整5轮结果，不给它计算全流程中位数。全部旧、新原始数据保留；当前设备已释放，后续需协调进程/容器清理操作后补完，详见验证记录中的精确时间线。
+
 已准备容器可用[BS6预设脚本](run_native_bs6_209_217.sh)直接复现，无需Codex或host signal-trace包装器。在209的P容器源码根目录执行并保持运行：
 
 ```bash
@@ -16,7 +18,7 @@ bash benchmark/hisparse/split_kv/run_native_bs6_209_217.sh decode
 
 此预设对应本次核实的IP、16个可见die、模型及`/workspace/splitkv-pd-live`前缀，保持native/BS6/graph8/max-total163840/mem0.92。可用`SPLITKV_WORKSPACE`、`MODEL_PATH`及已有CANN/kernel/MF环境路径覆盖目录；其它机器、IP或设备范围请使用下方通用`run.sh`参数。每次创建新run，不覆盖已有结果，也不清理占用端口的其它任务。D结束后P仍常驻，可在其前台终端按Ctrl-C停止。
 
-本目录从两个已准备好的容器分别运行一条命令：P 容器常驻 Prefill；D 容器自动依次运行普通参考、强制回退功能验证、正式压测。脚本不依赖 Codex、远程登录或外部 PASS 文件。2026-11-04 已在 209/217 的 A3 上完成 kernel 构建、真实 MF TP16 小探针、三个 CopySFA 用例和完整 BS16 controller：固定自然语言三组正确且恢复后逐 token 一致，共17次实际回退；五轮正式输出吞吐中位数310.27 tokens/s，全部轮次保留。这个数值来自两机各TP16，旧203.72来自单机TP16，资源与统计规则有差异。早期router注册失败、随机原生输入分叉及MF旧连接native段错误记录保留，范围和未解决项见验证记录；新增性能cache专项与扩BS仍待后续实测。
+本目录从两个已准备好的容器分别运行一条命令：P 容器常驻 Prefill；D 容器自动依次运行普通参考、强制回退功能验证、正式压测。脚本不依赖 Codex、远程登录或外部 PASS 文件。2026-11-04 已在 209/217 的 A3 上完成 kernel 构建、真实 MF TP16 小探针、三个 CopySFA 用例和首轮完整 BS16 controller：固定自然语言三组正确且恢复后逐 token 一致，共17次实际回退；首轮五轮正式输出吞吐中位数310.27 tokens/s，全部轮次保留。这个数值来自两机各TP16，旧203.72来自单机TP16，资源与统计规则有差异。早期router注册失败、随机原生输入分叉及MF旧连接native段错误记录保留，范围和未解决项见验证记录；新增性能cache专项已独立通过，BS20图捕获失败，同版BS16正式计时被SIGKILL中断。
 
 本次修改及检查范围见 [验证记录](VALIDATION_zh.md)，历史压测资产的来源和还原方式见 [冻结客户端说明](frozen_client/README.md)。
 
@@ -97,11 +99,11 @@ P 自动创建 Ascend transfer 的配置存储：framework 的 `start_disagg_ser
 
 如需跑不启用 HiSparse 的原生 KV 对照，在 P、D 两侧都增加 `--kv-mode native --bs 6 --graph-bs 8`。原生 KV 仍使用模型自身的 DSA/MLA attention cache，不会切换成 dense attention。`--bs 6` 是运行时并发上限；`--graph-bs 8` 是目标 Q4 verify 图的捕获桶，脚本保持 `--max-running-requests 6`。NPU draft decode 的单 token 行按 TP16 对齐到16槽，draft-extend 与 target verify 使用8槽；这不改变客户端发出的请求数。Native 模式每阶段显式关闭 sparse-KV offload 和 fused LIM Copy-SFA，并清除 LIM/GVA 专属环境覆盖；保留 MTP、Ascend PD 传输和性能阶段 decode radix prefix cache。它不配置 `C12288` sparse resident cache。reference、强制回退精度校验以及性能阶段的输入、缓存门禁和2轮预热+5轮正式测量仍照常执行。`--graph-bs` 默认等于 `--bs`，未指定 `--kv-mode` 时仍为 `hisparse`；BS6 native 对照需实际通过两机精度、cache 和 decode admission 检查后再报告性能。
 
-后续隔离诊断的 BS20 target verify 图已成功捕获，之前的 HCCL 错误没有复现；随后明确遇到 draft decode 的空桶断言：每请求1个token，20行不满足TP16对齐。配套 Python 修复仅在 NPU 普通 EAGLE draft decode 中把桶向上补齐，BS20使用32槽draft图；target verify保持20×4，draft extend按实际宽度保持20×4。额外槽沿用已有零号padding行，输出裁回实际请求；BS16桶不变，CUDA/ROCm行为不变。CPU桶选择测试已通过，真实BS20图、精度和性能仍须本轮验证；这不被描述成修复了此前未复现的HCCL错误，也不覆盖multi-layer draft路径。
+一次隔离诊断中 BS20 target verify 图成功捕获，当次未复现此前HCCL错误；随后遇到draft decode空桶断言：每请求1个token，20行不满足TP16对齐。配套Python修复仅在NPU普通EAGLE draft decode中把桶向上补齐，BS20得到32槽draft图；target verify与draft extend按实际宽度保持20×4。额外槽沿用既有零号padding行，输出裁回实际请求；BS16桶、CUDA/ROCm和multi-layer逻辑不变。CPU桶选择及BS6真实8/16/8图均已通过；后续固定f57的BS20在target图再次出现all-gather参数异常，仍无有效BS20精度或吞吐，不能称该HCCL错误已修复。
 
 环境记录保留 `SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK` 的原始设置；未设置时 JSON 为 `null`，框架 `environ.py` 的当前默认值为128。本脚本不为记录而更改它。本轮BS20失败后的环境重建读到128，不支持“沿用64导致80个verify token超限”的猜测；死进程的有效值没有被事后直接读取。
 
-Decode 所有阶段显式设置 `--disaggregation-decode-extra-slots 0`，避免默认的额外请求槽同时扩大 C12288 resident 预算。性能阶段启用实验性的 `--disaggregation-decode-enable-radix-cache`，让共享前缀有机会复用物理槽；参考与强制回退阶段保持 Decode radix cache 关闭。此组合的 MF prefix 复用尚未实机验证。脚本在性能结束时从 Decode 原始打屏提取最大 `#running-req`，缺失或小于目标 BS 时以非零退出，避免把客户端排队并发误称实际 Decode BS。
+Decode 所有阶段显式设置 `--disaggregation-decode-extra-slots 0`，避免默认的额外请求槽同时扩大 C12288 resident 预算。性能阶段启用实验性的 `--disaggregation-decode-enable-radix-cache`，让共享前缀复用物理槽；参考与强制回退阶段保持Decode radix cache关闭。该性能配置已在同版HiSparse16完成16/16自然64K缓存语义校验，实际cached63872且对native逐token一致；其后续五轮计时被SIGKILL中断，不作为全流程通过。脚本正常结束时从Decode原始打屏提取最大`#running-req`，缺失或小于目标BS以非零退出，避免把客户端排队并发误称实际Decode BS。
 
 `--disable-decode-prefix-cache` 仅用于诊断，需同时设 `--max-total-tokens` 至少为 `BS * (64000 + 1024 + 128)`；这只是保守预检，实际池大小、空闲显存与 admission 仍需查看运行日志。该模式不保证满足 63872 cached tokens 门禁，不应与 prefix100 正式数据混用。
 
