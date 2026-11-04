@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+PROC_ROOT = Path("/proc")
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 EVENT_DIR = None
 RUN_OUT = None
@@ -80,6 +81,76 @@ def wait_http(url, process=None, timeout=3600):
             last_error = error
             time.sleep(2)
     raise TimeoutError(f"Timed out waiting for {url}: {last_error}")
+
+
+def wait_router_workers(
+    router, expected_prefill, expected_decode, process, timeout=3600
+):
+    deadline = time.monotonic() + timeout
+    last_snapshot = None
+    last_error = None
+    expected = {
+        "prefill": expected_prefill.rstrip("/"),
+        "decode": expected_decode.rstrip("/"),
+    }
+    while True:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(
+                "Router exited before both healthy PD workers registered: "
+                f"exit={process.returncode}; last_workers={last_snapshot!r}; "
+                f"last_error={last_error!r}"
+            )
+        try:
+            request_timeout = max(0.1, min(5.0, max(0.0, deadline - time.monotonic())))
+            payload = json.loads(
+                request(router.rstrip("/") + "/workers", timeout=request_timeout)
+            )
+            last_snapshot = payload
+            workers = payload.get("workers") if isinstance(payload, dict) else None
+            if not isinstance(workers, list):
+                raise ValueError("/workers response must contain a workers list")
+            healthy = {
+                role: any(
+                    isinstance(worker, dict)
+                    and isinstance(worker.get("url"), str)
+                    and worker["url"].rstrip("/") == expected_url
+                    and worker.get("worker_type") == role
+                    and worker.get("is_healthy") is True
+                    for worker in workers
+                )
+                for role, expected_url in expected.items()
+            }
+            if all(healthy.values()):
+                return payload
+            last_error = (
+                f"expected one healthy prefill and decode worker; matched={healthy}"
+            )
+        except (OSError, urllib.error.URLError, ValueError, TypeError) as error:
+            last_error = repr(error)
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                "Timed out waiting for both healthy PD router workers at "
+                f"{router.rstrip('/')}/workers; last_workers={last_snapshot!r}; "
+                f"last_error={last_error!r}"
+            )
+        time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+
+
+def _read_proc_stat(path):
+    return (path / "stat").read_text().rsplit(") ", 1)[1].split()
+
+
+def _same_live_session(path, expected_birth, session_id):
+    try:
+        stat = _read_proc_stat(path)
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    return (
+        len(stat) > 19
+        and stat[0] not in ("Z", "X")
+        and stat[3] == str(session_id)
+        and stat[19] == expected_birth
+    )
 
 
 def port_free(port):
@@ -171,24 +242,28 @@ def stop(proc):
 
     def members():
         found = []
-        for path in Path("/proc").iterdir():
+        for path in PROC_ROOT.iterdir():
             if not path.name.isdigit():
                 continue
             try:
-                stat = (path / "stat").read_text().rsplit(") ", 1)[1].split()
-                if stat[0] == "Z" or int(stat[19]) < int(proc.start_ticks):
+                stat = _read_proc_stat(path)
+                if (
+                    len(stat) <= 19
+                    or stat[0] in ("Z", "X")
+                    or int(stat[19]) < int(proc.start_ticks)
+                ):
                     continue
                 try:
                     environment = (path / "environ").read_bytes().split(b"\0")
                 except PermissionError:
-                    if int(stat[3]) == proc.pid:
+                    if _same_live_session(path, stat[19], proc.pid):
                         raise RuntimeError(
                             f"Cannot verify ownership of session member {path.name}"
                         )
                     continue
                 if f"SPLITKV_RUN_TOKEN={proc.run_token}".encode() in environment:
-                    found.append((int(path.name), stat[19]))
-                elif int(stat[3]) == proc.pid:
+                    found.append((int(path.name), stat[19], stat[3]))
+                elif _same_live_session(path, stat[19], proc.pid):
                     raise RuntimeError(
                         f"Cannot verify ownership of session member {path.name}: run token missing"
                     )
@@ -202,18 +277,24 @@ def stop(proc):
             if not current:
                 break
             print(
-                f"Stopping owned session={proc.pid} signal={sig.name} members={[p for p, _ in current]}",
+                f"Stopping owned session={proc.pid} signal={sig.name} members={[p for p, _, _ in current]}",
                 flush=True,
             )
-            for pid, birth in current:
+            for pid, birth, session_id in current:
+                path = PROC_ROOT / str(pid)
                 try:
-                    stat = (
-                        Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
-                    )
-                    env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+                    stat = _read_proc_stat(path)
                     if (
-                        stat[19] == birth
-                        and f"SPLITKV_RUN_TOKEN={proc.run_token}".encode() in env
+                        len(stat) <= 19
+                        or stat[0] in ("Z", "X")
+                        or stat[3] != session_id
+                        or stat[19] != birth
+                    ):
+                        continue
+                    env = (path / "environ").read_bytes().split(b"\0")
+                    if (
+                        f"SPLITKV_RUN_TOKEN={proc.run_token}".encode() in env
+                        and _same_live_session(path, birth, session_id)
                     ):
                         os.kill(pid, sig)
                 except (FileNotFoundError, ProcessLookupError):
@@ -391,6 +472,11 @@ def record_server_env(out, phase, env):
         "STREAMS_PER_DEVICE",
         "SGLANG_SET_CPU_AFFINITY",
         "MF_HYBM_USE_VMM_SEGMENT",
+        "MF_PYTHON_PATH",
+        "MEMFABRIC_HYBRID_EXTEND_LIB_PATH",
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "ASCEND_HOME_PATH",
         "DEEPEP_NORMAL_LONG_SEQ_ROUND",
         "DEEPEP_NORMAL_LONG_SEQ_PER_ROUND_TOKENS",
         "DEEPEP_NORMAL_COMBINE_ENABLE_LONG_SEQ",
@@ -916,11 +1002,22 @@ def main():
                 router_env.pop(name, None)
             router_proc = start(command, router_env, out / f"router-{phase}.log")
             wait_http(router + "/health", router_proc, args.ready_timeout)
+            wait_router_workers(
+                router, prefill, decode, router_proc, args.ready_timeout
+            )
             if phase in ("reference", "functional"):
-                for case, input_length in (("short", 512), ("long", 4096)):
+                for case, input_length, request_count in (
+                    ("short", 512, 4),
+                    ("long", 4096, 4),
+                    ("target64k", 64000, 2),
+                ):
                     flush(prefill, decode)
                     results, duration = concurrent_generate(
-                        router, ids[:input_length], 64, 4, f"{phase}-{case}"
+                        router,
+                        ids[:input_length],
+                        64,
+                        request_count,
+                        f"{phase}-{case}",
                     )
                     dump(
                         out / f"{phase}-{case}.json",
@@ -1019,8 +1116,9 @@ def main():
                 "cases": [
                     {"input_tokens": 512, "output_tokens": 64, "requests": 4},
                     {"input_tokens": 4096, "output_tokens": 64, "requests": 4},
+                    {"input_tokens": 64000, "output_tokens": 64, "requests": 2},
                 ],
-                "scope": "Greedy token equality for these two fixed cases only; not a full model benchmark accuracy evaluation.",
+                "scope": "Greedy token equality for these three fixed cases only; not a full model benchmark accuracy evaluation.",
             },
             "rounds": round_reports,
             "observed_decode_batch": active_batch,

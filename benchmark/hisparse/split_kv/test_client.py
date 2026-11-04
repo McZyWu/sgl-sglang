@@ -3,6 +3,7 @@
 import errno
 import gzip
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -23,6 +24,239 @@ spec.loader.exec_module(runner)
 
 
 class TestClient(unittest.TestCase):
+    def test_router_waits_for_both_healthy_exact_role_workers(self):
+        expected_prefill = "http://127.0.0.1:41000"
+        expected_decode = "http://127.0.0.1:30001"
+        snapshots = [
+            {"workers": [], "total": 0, "stats": {}},
+            {
+                "workers": [
+                    {
+                        "url": expected_prefill,
+                        "worker_type": "prefill",
+                        "is_healthy": True,
+                    },
+                    {
+                        "url": expected_decode,
+                        "worker_type": "prefill",
+                        "is_healthy": True,
+                    },
+                    {
+                        "url": "http://127.0.0.9:30001",
+                        "worker_type": "decode",
+                        "is_healthy": True,
+                    },
+                    {
+                        "url": expected_decode,
+                        "worker_type": "decode",
+                        "is_healthy": False,
+                    },
+                ],
+                "total": 4,
+                "stats": {"prefill_count": 2, "decode_count": 2},
+            },
+            {
+                "workers": [
+                    {
+                        "url": expected_prefill,
+                        "worker_type": "prefill",
+                        "is_healthy": True,
+                    },
+                    {
+                        "url": expected_decode,
+                        "worker_type": "decode",
+                        "is_healthy": True,
+                    },
+                ],
+                "total": 2,
+                "stats": {"prefill_count": 1, "decode_count": 1},
+            },
+        ]
+
+        class Handler(BaseHTTPRequestHandler):
+            polls = 0
+
+            def do_GET(self):
+                self.__class__.polls += 1
+                payload = snapshots[min(self.__class__.polls - 1, len(snapshots) - 1)]
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            result = runner.wait_router_workers(
+                f"http://127.0.0.1:{server.server_port}",
+                expected_prefill,
+                expected_decode,
+                process=None,
+                timeout=5,
+            )
+            self.assertEqual(result, snapshots[-1])
+            self.assertGreaterEqual(Handler.polls, 3)
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_router_worker_timeout_includes_last_snapshot(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(
+                    {
+                        "workers": [
+                            {
+                                "url": "http://127.0.0.1:41000",
+                                "worker_type": "prefill",
+                                "is_healthy": True,
+                            }
+                        ],
+                        "total": 1,
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaisesRegex(
+                TimeoutError, r"last_workers=.*127\.0\.0\.1:41000"
+            ):
+                runner.wait_router_workers(
+                    f"http://127.0.0.1:{server.server_port}",
+                    "http://127.0.0.1:41000",
+                    "http://127.0.0.1:30001",
+                    process=None,
+                    timeout=0,
+                )
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_router_exit_before_worker_registration_is_reported(self):
+        process = types.SimpleNamespace(poll=lambda: 1, returncode=1)
+        with self.assertRaisesRegex(RuntimeError, "Router exited.*last_workers=None"):
+            runner.wait_router_workers(
+                "http://127.0.0.1:1",
+                "http://127.0.0.1:41000",
+                "http://127.0.0.1:30001",
+                process=process,
+                timeout=0,
+            )
+
+    @staticmethod
+    def proc_stat(state, session_id=123, birth="101"):
+        fields = [state, "1", "123", str(session_id)] + ["0"] * 16
+        fields[19] = birth
+        return fields
+
+    def make_proc_fixture(self, root, environment=b""):
+        process_path = Path(root) / "123"
+        process_path.mkdir()
+        (process_path / "environ").write_bytes(environment)
+        return process_path
+
+    def make_stop_process(self):
+        return types.SimpleNamespace(
+            pid=123,
+            run_token="owned-token",
+            start_ticks="100",
+            log_file=io.StringIO(),
+            poll=lambda: 0,
+            returncode=0,
+        )
+
+    def test_stop_skips_process_that_turns_zombie_while_reading_empty_environ(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process_path = self.make_proc_fixture(Path(tmp))
+            states = iter(("S", "Z", "Z"))
+            process = self.make_stop_process()
+            with (
+                patch.object(runner, "PROC_ROOT", Path(tmp)),
+                patch.object(runner.signal, "SIGKILL", 9, create=True),
+                patch.object(
+                    runner,
+                    "_read_proc_stat",
+                    side_effect=lambda path: self.proc_stat(next(states)),
+                ),
+            ):
+                runner.stop(process)
+            self.assertTrue(process.log_file.closed)
+            self.assertTrue((process_path / "environ").exists())
+
+    def test_stop_still_rejects_live_same_session_without_owner_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.make_proc_fixture(Path(tmp))
+            process = self.make_stop_process()
+            with (
+                patch.object(runner, "PROC_ROOT", Path(tmp)),
+                patch.object(runner.signal, "SIGKILL", 9, create=True),
+                patch.object(
+                    runner,
+                    "_read_proc_stat",
+                    side_effect=lambda path: self.proc_stat("S"),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "run token missing"):
+                    runner.stop(process)
+            self.assertTrue(process.log_file.closed)
+
+    def test_stop_rechecks_state_before_signalling_zombie(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.make_proc_fixture(Path(tmp), b"SPLITKV_RUN_TOKEN=owned-token\0")
+            states = iter(("S", "S", "Z", "Z", "Z", "Z"))
+            process = self.make_stop_process()
+            with (
+                patch.object(runner, "PROC_ROOT", Path(tmp)),
+                patch.object(runner.signal, "SIGKILL", 9, create=True),
+                patch.object(
+                    runner,
+                    "_read_proc_stat",
+                    side_effect=lambda path: self.proc_stat(next(states)),
+                ),
+                patch.object(runner.os, "kill") as kill,
+            ):
+                runner.stop(process)
+            kill.assert_not_called()
+
+    def test_stop_signals_owned_token_child_in_a_different_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            child_path = Path(tmp) / "234"
+            child_path.mkdir()
+            (child_path / "environ").write_bytes(b"SPLITKV_RUN_TOKEN=owned-token\0")
+            states = iter(("S", "S", "S", "Z", "Z", "Z"))
+            process = self.make_stop_process()
+            with (
+                patch.object(runner, "PROC_ROOT", Path(tmp)),
+                patch.object(runner.signal, "SIGKILL", 9, create=True),
+                patch.object(
+                    runner,
+                    "_read_proc_stat",
+                    side_effect=lambda path: self.proc_stat(
+                        next(states), session_id=999
+                    ),
+                ),
+                patch.object(runner.os, "kill") as kill,
+            ):
+                runner.stop(process)
+            kill.assert_called_once_with(234, runner.signal.SIGTERM)
+
     def test_host_validation_rejects_noncanonical_or_unsupported_addresses(self):
         for bad_host in (
             "809",
@@ -197,6 +431,7 @@ class TestClient(unittest.TestCase):
                     patch.object(runner, "check_split_abi", return_value={}),
                     patch.object(runner, "fixture", return_value=[1] * 64000),
                     patch.object(runner, "wait_http"),
+                    patch.object(runner, "wait_router_workers"),
                     patch.object(runner, "port_free"),
                     patch.object(
                         runner,
@@ -232,6 +467,14 @@ class TestClient(unittest.TestCase):
                 summary["greedy_accuracy_validation"]["scope"],
             )
             self.assertEqual(
+                summary["greedy_accuracy_validation"]["cases"],
+                [
+                    {"input_tokens": 512, "output_tokens": 64, "requests": 4},
+                    {"input_tokens": 4096, "output_tokens": 64, "requests": 4},
+                    {"input_tokens": 64000, "output_tokens": 64, "requests": 2},
+                ],
+            )
+            self.assertEqual(
                 server_envs["reference"]["SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD"], "0"
             )
             self.assertEqual(
@@ -249,7 +492,7 @@ class TestClient(unittest.TestCase):
             self.assertEqual(
                 summary["observed_decode_batch"]["max_running_requests"], 2
             )
-            self.assertEqual(sequence.count("flush"), 11)
+            self.assertEqual(sequence.count("flush"), 13)
             for index, item in enumerate(sequence):
                 if item != "flush":
                     self.assertGreater(index, 0)
@@ -521,6 +764,7 @@ class TestClient(unittest.TestCase):
                     patch.object(runner, "check_split_abi", return_value={}),
                     patch.object(runner, "fixture", return_value=[1] * 64000),
                     patch.object(runner, "wait_http"),
+                    patch.object(runner, "wait_router_workers"),
                     patch.object(runner, "port_free"),
                     patch.object(runner, "flush"),
                     patch.object(runner, "start", side_effect=start),
@@ -549,18 +793,35 @@ class TestClient(unittest.TestCase):
                 [
                     (phase_name, input_length, 64)
                     for phase_name in ("reference", "functional")
-                    for input_length in (512, 512, 512, 512, 4096, 4096, 4096, 4096)
+                    for input_length in (
+                        512,
+                        512,
+                        512,
+                        512,
+                        4096,
+                        4096,
+                        4096,
+                        4096,
+                        64000,
+                        64000,
+                    )
                 ],
             )
-            for name in (
-                "reference-short.json",
-                "reference-long.json",
-                "functional-short.json",
-                "functional-long.json",
+            for name, expected_count in (
+                ("reference-short.json", 4),
+                ("reference-long.json", 4),
+                ("reference-target64k.json", 2),
+                ("functional-short.json", 4),
+                ("functional-long.json", 4),
+                ("functional-target64k.json", 2),
             ):
                 report = json.loads((directory / name).read_text())
-                self.assertEqual(len(report["results"]), 4)
-                expected_prompt_length = 512 if "short" in name else 4096
+                self.assertEqual(len(report["results"]), expected_count)
+                expected_prompt_length = {
+                    "short": 512,
+                    "long": 4096,
+                    "target64k": 64000,
+                }[name.split("-")[1].removesuffix(".json")]
                 self.assertTrue(
                     all(
                         item["response"]["meta_info"]["prompt_tokens"]
@@ -568,6 +829,27 @@ class TestClient(unittest.TestCase):
                         for item in report["results"]
                     )
                 )
+                outputs = [item["response"]["output_ids"] for item in report["results"]]
+                if name.startswith("reference-"):
+                    self.assertTrue(all(output == outputs[0] for output in outputs))
+                else:
+                    reference_name = name.replace("functional-", "reference-", 1)
+                    reference_report = json.loads(
+                        (directory / reference_name).read_text()
+                    )
+                    reference_output = reference_report["results"][0]["response"][
+                        "output_ids"
+                    ]
+                    self.assertTrue(
+                        all(output == reference_output for output in outputs)
+                    )
+                    self.assertGreater(
+                        sum(
+                            item["response"]["meta_info"].get("num_retractions", 0)
+                            for item in report["results"]
+                        ),
+                        0,
+                    )
             self.assertEqual(len(list(directory.glob("warm-[12].json"))), 2)
             self.assertEqual(len(list(directory.glob("formal-[1-5].json"))), 5)
             self.assertEqual(len(list(directory.glob("*-seed.json"))), 7)
