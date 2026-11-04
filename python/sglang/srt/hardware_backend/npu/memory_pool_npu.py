@@ -1142,6 +1142,17 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
     ):
         chunk_size = self.cpu_offloading_chunk_size
         out = []
+
+        def copy_buffer(tensor, chunk_indices, uses_global):
+            selected = tensor[
+                self._copy_indices_for_buffer(chunk_indices, uses_global).to(
+                    tensor.device
+                )
+            ]
+            if tensor.device.type == "cpu":
+                return selected.clone()
+            return selected.to("cpu", non_blocking=True)
+
         for tensors_per_layer, uses_global_slots in zip(
             buf_of_layers, uses_global_slots_per_layer, strict=True
         ):  # [k_buf, v_buf, ik_buf/None]
@@ -1150,9 +1161,7 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
                 ci = indices[i : i + chunk_size]
                 layer_chunks.append(
                     [
-                        t[self._copy_indices_for_buffer(ci, uses_global)].to(
-                            "cpu", non_blocking=True
-                        )
+                        copy_buffer(t, ci, uses_global)
                         for t, uses_global in zip(
                             tensors_per_layer, uses_global_slots, strict=True
                         )
@@ -1164,10 +1173,17 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
 
     def _get_cpu_offload_layer_buffers(self, local_layer_id):
         # flatten(page, slot) also works for the zero-width packed V placeholder.
-        buffers = [
-            self.k_buffer[local_layer_id].flatten(0, 1),
-            self.v_buffer[local_layer_id].flatten(0, 1),
-        ]
+        manager = getattr(self, "sparse_kv_manager", None)
+        if manager is not None and hasattr(manager, "host_pool"):
+            buffers = [
+                manager.host_k_buffer[local_layer_id].flatten(0, 1),
+                manager.host_v_buffer[local_layer_id].flatten(0, 1),
+            ]
+        else:
+            buffers = [
+                self.k_buffer[local_layer_id].flatten(0, 1),
+                self.v_buffer[local_layer_id].flatten(0, 1),
+            ]
         slot = self.indexer_layer_id_to_slot.get(local_layer_id + self.start_layer)
         if slot is not None:
             buffers.append(self.index_k_buffer[slot].flatten(0, 1))
@@ -1187,18 +1203,51 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
         buf_of_layers = [
             self._get_cpu_offload_layer_buffers(i) for i in range(self.layer_num)
         ]
+        manager = getattr(self, "sparse_kv_manager", None)
+        shared_host = manager is not None and hasattr(manager, "host_pool")
         uses_global_slots_per_layer = []
         for buffers in buf_of_layers:
             # MLA K/V is rank-local under DCP. The replicated
             # indexer buffers retain allocator-global slot identities.
             uses_global_slots_per_layer.append(
-                [self.is_draft_worker, self.is_draft_worker]
-                + [True] * (len(buffers) - 2)
+                [self.is_draft_worker or shared_host] * 2 + [True] * (len(buffers) - 2)
             )
 
-        kv_cache_cpu = self._chunk_copy_npu_to_cpu(
-            buf_of_layers, indices, uses_global_slots_per_layer
-        )
+        if shared_host:
+            kv_cache_cpu = []
+            for buffers in buf_of_layers:
+                index_chunks = self._chunk_copy_npu_to_cpu(
+                    [buffers[2:]], indices, [[True] * (len(buffers) - 2)]
+                )[0]
+                layer_chunks = []
+                for i in range(0, len(indices), self.cpu_offloading_chunk_size):
+                    ci = indices[i : i + self.cpu_offloading_chunk_size]
+                    rows = torch.arange(len(ci), device=self.device)
+                    valid = torch.ones_like(rows, dtype=torch.bool)
+                    scratch = tuple(
+                        torch.empty(
+                            (len(ci), *buffer.shape[1:]),
+                            dtype=buffer.dtype,
+                            device=self.device,
+                        )
+                        for buffer in buffers[:2]
+                    )
+                    manager.host_pool.copy_rows(
+                        buffers[:2],
+                        scratch,
+                        ci.to(self.device, dtype=torch.int64),
+                        rows,
+                        valid,
+                    )
+                    payload = [tensor.to("cpu", copy=True) for tensor in scratch]
+                    layer_chunks.append(
+                        payload + index_chunks[i // self.cpu_offloading_chunk_size]
+                    )
+                kv_cache_cpu.append(layer_chunks)
+        else:
+            kv_cache_cpu = self._chunk_copy_npu_to_cpu(
+                buf_of_layers, indices, uses_global_slots_per_layer
+            )
         torch.npu.synchronize()
         return kv_cache_cpu
 
@@ -1207,25 +1256,44 @@ class NPUMLATokenToKVPool(MLATokenToKVPool):
     ):
         torch.npu.synchronize()
         chunk_size = self.cpu_offloading_chunk_size
+        manager = getattr(self, "sparse_kv_manager", None)
+        shared_host = manager is not None and hasattr(manager, "host_pool")
         for local_layer_id in range(self.layer_num):
             buffers = self._get_cpu_offload_layer_buffers(local_layer_id)
             for i in range(0, len(indices), chunk_size):
                 chunk_indices = indices[i : i + chunk_size]
                 chunk = kv_cache_cpu[local_layer_id][i // chunk_size]
+                if shared_host and manager.host_pool.rank == 0:
+                    source = tuple(t.to(self.device) for t in chunk[:2])
+                    rows = torch.arange(len(chunk_indices), device=self.device)
+                    target = chunk_indices.to(self.device, dtype=torch.int64)
+                    valid = torch.ones_like(rows, dtype=torch.bool)
+                    manager.host_pool.copy_rows(
+                        source, buffers[:2], rows, target, valid
+                    )
                 cpu_index = 0
-                for buffer, uses_global_slots in zip(
-                    buffers,
-                    [self.is_draft_worker, self.is_draft_worker]
-                    + [True] * (len(buffers) - 2),
-                    strict=True,
+                for component, (buffer, uses_global_slots) in enumerate(
+                    zip(
+                        buffers,
+                        [self.is_draft_worker or shared_host] * 2
+                        + [True] * (len(buffers) - 2),
+                        strict=True,
+                    )
                 ):
                     if buffer is None:
                         continue
                     cpu = chunk[cpu_index]
                     cpu_index += 1
+                    if shared_host and component < 2:
+                        continue
                     target_indices = self._copy_indices_for_buffer(
                         chunk_indices, uses_global_slots
-                    )
+                    ).to(buffer.device)
                     assert cpu.shape[0] == len(target_indices)
                     buffer[target_indices] = cpu.to(buffer.device, non_blocking=True)
         torch.npu.synchronize()
+        if shared_host:
+            manager.host_pool.publish()
+            if req_pool_index is not None:
+                manager.reset_requests([int(req_pool_index)])
+            torch.npu.synchronize()
