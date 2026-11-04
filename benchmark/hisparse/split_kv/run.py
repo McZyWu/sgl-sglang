@@ -153,6 +153,58 @@ def _same_live_session(path, expected_birth, session_id):
     )
 
 
+def _proc_identity_evidence(path, stat):
+    flags = stat[6] if len(stat) > 6 else "unavailable"
+    return (
+        f"state={stat[0]!r},ppid={stat[1]!r},pgrp={stat[2]!r},"
+        f"session={stat[3]!r},birth={stat[19]!r},flags={flags!r}"
+    )
+
+
+def _wait_for_owned_token_or_exit(
+    path, proc, expected_birth, expected_session, timeout=1.0
+):
+    token = f"SPLITKV_RUN_TOKEN={proc.run_token}".encode()
+    deadline = time.monotonic() + timeout
+    last_stat = None
+    last_environment_error = None
+    while True:
+        try:
+            stat = _read_proc_stat(path)
+        except (FileNotFoundError, ProcessLookupError):
+            return False
+        if len(stat) <= 19:
+            return False
+        if (
+            stat[19] != expected_birth
+            or stat[3] != str(expected_session)
+            or stat[0] in ("Z", "X")
+        ):
+            return False
+        last_stat = stat
+        try:
+            environment = (path / "environ").read_bytes().split(b"\0")
+            last_environment_error = None
+            if token in environment:
+                return True
+        except PermissionError as error:
+            last_environment_error = repr(error)
+        except (FileNotFoundError, ProcessLookupError) as error:
+            last_environment_error = repr(error)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.1, remaining))
+
+    evidence = _proc_identity_evidence(path, last_stat)
+    raise RuntimeError(
+        f"Cannot verify ownership of session member {path.name}: run token "
+        f"missing after {timeout:.1f}s; {evidence}; "
+        f"environ_error={last_environment_error}"
+    )
+
+
 def port_free(port):
     with socket.socket() as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -264,9 +316,8 @@ def stop(proc):
                 if f"SPLITKV_RUN_TOKEN={proc.run_token}".encode() in environment:
                     found.append((int(path.name), stat[19], stat[3]))
                 elif _same_live_session(path, stat[19], proc.pid):
-                    raise RuntimeError(
-                        f"Cannot verify ownership of session member {path.name}: run token missing"
-                    )
+                    if _wait_for_owned_token_or_exit(path, proc, stat[19], proc.pid):
+                        found.append((int(path.name), stat[19], stat[3]))
             except (FileNotFoundError, ProcessLookupError, PermissionError):
                 continue
         return found

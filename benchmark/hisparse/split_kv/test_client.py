@@ -163,6 +163,7 @@ class TestClient(unittest.TestCase):
     @staticmethod
     def proc_stat(state, session_id=123, birth="101"):
         fields = [state, "1", "123", str(session_id)] + ["0"] * 16
+        fields[6] = "4194304"
         fields[19] = birth
         return fields
 
@@ -181,6 +182,81 @@ class TestClient(unittest.TestCase):
             poll=lambda: 0,
             returncode=0,
         )
+
+    def test_unknown_live_member_waits_for_delayed_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process_path = self.make_proc_fixture(Path(tmp))
+            process = self.make_stop_process()
+
+            class FakeClock:
+                now = 0.0
+                sleeps = 0
+
+                def sleep(self, delay):
+                    self.now += delay
+                    self.sleeps += 1
+                    if self.sleeps == 1:
+                        (process_path / "environ").write_bytes(
+                            b"SPLITKV_RUN_TOKEN=owned-token\0"
+                        )
+
+            clock = FakeClock()
+            with (
+                patch.object(
+                    runner, "_read_proc_stat", return_value=self.proc_stat("S")
+                ),
+                patch.object(runner.time, "monotonic", side_effect=lambda: clock.now),
+                patch.object(runner.time, "sleep", side_effect=clock.sleep),
+            ):
+                self.assertTrue(
+                    runner._wait_for_owned_token_or_exit(
+                        process_path, process, "101", 123, timeout=1.0
+                    )
+                )
+            self.assertEqual(clock.sleeps, 1)
+
+    def test_unknown_live_member_times_out_with_proc_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process_path = self.make_proc_fixture(Path(tmp))
+            process = self.make_stop_process()
+
+            class FakeClock:
+                now = 0.0
+
+                def sleep(self, delay):
+                    self.now += delay
+
+            clock = FakeClock()
+            with (
+                patch.object(
+                    runner, "_read_proc_stat", return_value=self.proc_stat("S")
+                ),
+                patch.object(runner.time, "monotonic", side_effect=lambda: clock.now),
+                patch.object(runner.time, "sleep", side_effect=clock.sleep),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    r"after 0.2s; state='S',ppid='1',pgrp='123',session='123',"
+                    r"birth='101',flags='4194304'; environ_error=None",
+                ):
+                    runner._wait_for_owned_token_or_exit(
+                        process_path, process, "101", 123, timeout=0.2
+                    )
+
+    def test_unknown_member_that_exits_or_changes_identity_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process_path = self.make_proc_fixture(Path(tmp))
+            process = self.make_stop_process()
+            for stat in (self.proc_stat("Z"), self.proc_stat("S", birth="999")):
+                with (
+                    self.subTest(stat=stat[:1] + stat[19:20]),
+                    patch.object(runner, "_read_proc_stat", return_value=stat),
+                ):
+                    self.assertFalse(
+                        runner._wait_for_owned_token_or_exit(
+                            process_path, process, "101", 123, timeout=1.0
+                        )
+                    )
 
     def test_stop_skips_process_that_turns_zombie_while_reading_empty_environ(self):
         with tempfile.TemporaryDirectory() as tmp:
