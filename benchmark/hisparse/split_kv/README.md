@@ -79,6 +79,8 @@ P 自动创建 Ascend transfer 的配置存储：framework 的 `start_disagg_ser
 
 本脚本固定 Q4：decode 捕获的 token 行数为 `BS * 4`，须能被 TP 整除。TP16 时 BS 应是 4 的倍数；BS18 会在模型加载前被参数预检拒绝。满足此关系仍不保证具体模型的图能工作：本轮 BS20 原生 verify 图启动阶段出现 HCCL/AICPU 参数错误，开始捕获时可用显存约14.83GB，未发现 OOM 证据，尚未产生BS20性能数据。默认推荐已完成全流程的BS16，不把BS20失败记为零TPS，也不把相邻模型支持BS20扩大为当前GLM路径已通过。
 
+后续隔离诊断的 BS20 target verify 图已成功捕获，之前的 HCCL 错误没有复现；随后明确遇到 draft decode 的空桶断言：每请求1个token，20行不满足TP16对齐。配套 Python 修复仅在 NPU 普通 EAGLE draft decode 中把桶向上补齐，BS20使用32槽draft图；target verify保持20×4，draft extend按实际宽度保持20×4。额外槽沿用已有零号padding行，输出裁回实际请求；BS16桶不变，CUDA/ROCm行为不变。CPU桶选择测试已通过，真实BS20图、精度和性能仍须本轮验证；这不被描述成修复了此前未复现的HCCL错误，也不覆盖multi-layer draft路径。
+
 环境记录保留 `SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK` 的原始设置；未设置时 JSON 为 `null`，框架 `environ.py` 的当前默认值为128。本脚本不为记录而更改它。本轮BS20失败后的环境重建读到128，不支持“沿用64导致80个verify token超限”的猜测；死进程的有效值没有被事后直接读取。
 
 Decode 所有阶段显式设置 `--disaggregation-decode-extra-slots 0`，避免默认的额外请求槽同时扩大 C12288 resident 预算。性能阶段启用实验性的 `--disaggregation-decode-enable-radix-cache`，让共享前缀有机会复用物理槽；参考与强制回退阶段保持 Decode radix cache 关闭。此组合的 MF prefix 复用尚未实机验证。脚本在性能结束时从 Decode 原始打屏提取最大 `#running-req`，缺失或小于目标 BS 时以非零退出，避免把客户端排队并发误称实际 Decode BS。

@@ -153,9 +153,13 @@ class EAGLEDraftCudaGraphRunner(DecodeCudaGraphRunner):
         self.capture_hidden_mode = CaptureHiddenMode.LAST
 
         # Bucket sizes
-        self.capture_bs, _ = get_batch_sizes_to_capture(model_runner)
         # Static capture width.
         self.captured_req_width = resolve_num_tokens_per_req(phase="draft_decode")
+        self.capture_bs, _ = get_batch_sizes_to_capture(
+            model_runner,
+            self.captured_req_width if model_runner.device == "npu" else 1,
+            pad_unaligned=model_runner.device == "npu",
+        )
         self.max_bs = max(self.capture_bs)
         self.max_num_token = self.max_bs * self.captured_req_width
 

@@ -93,3 +93,9 @@ MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构�
 两端统一BS20、其余Q4/C12288/BF16/TP16与163840-token容量不变，原生D在target verify图启动阶段退出1。最早可见错误为HCCL watchdog `ERR02005` 与Python Aborted，后续同步报507018、AICPU `RunAicpuRpcSrvLaunchV2_allgather errorCode=0x2a` 参数错误；捕获开始可用14.83GB，不把它归为OOM。该次未执行任何用户精度请求、MF回退或性能轮次。纯TP16的若干BF16、int32/int64、FP32 all-gather eager/graph小探针均通过，不能据此把问题泛化为“所有HCCL图或BS20均不支持”。具体模型算子及参数仍在定位。
 
 随后BS18 startup-only对照退出1，源码和实机一致为 `AssertionError: capture_bs=[]`：Q4需要BS×4被TP16整除，72行不满足，80行满足；因此18不是当前配置的有效替代。脚本新增decode参数预检，在runtime导入及模型加载前拒绝不满足该关系的尺寸。这个预检不是BS20错误的修复。环境快照新增已有dispatch上限变量的原始值；未设置为null，默认128来自框架定义，未改变运行值。
+
+最后一次隔离 metadata-only 诊断中，BS20 target verify 图成功捕获；有界日志唯一记录的 all-gather 输入为 BF16 `(80,9680)`、连续、dim=-1，符合词表分片收集，未记录到之前推测的 GLM aux gather。原始HCCL故障没有复现，不能把诊断成功称为其修复。随后实际失败在draft-decode图：每请求1行，20不能被TP16整除，单一配置桶被过滤为空。
+
+针对这个确定的draft问题，NPU普通EAGLE draft-decode显式允许将桶按实际宽度向上对齐；BS20得到32槽、BS16仍16槽；target verify与普通draft-extend按真实宽度保留20×4。padding使用既有零号request/KV槽，结果裁到raw batch；不修改ModelRunner、不增加数学算子、不修改CUDA/ROCm或multi-layer逻辑。新增CPU单元测试在217独立任务源码副本实际运行 `1 passed`、exit0，覆盖20→32、16不变、混合桶、width4保留20、旧路径与容量边界；原生产源码当时未改。此时真实NPU padding、精度及性能仍待完整验证。
+
+BS16新cache专项的重跑还遇到外部占卡以及来源不明的SIGKILL，未产出新性能轮次；没有OOM证据时不定性为OOM，也不归因为其他作业的发送行为。现场资源冲突及清理记录单独保留，已完成的第一组BS16五轮成绩不受这些后续失败影响。

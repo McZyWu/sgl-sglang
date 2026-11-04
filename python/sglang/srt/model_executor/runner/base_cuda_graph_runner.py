@@ -20,6 +20,7 @@ import gc
 import logging
 from abc import abstractmethod
 from contextlib import contextmanager
+from math import gcd
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
 from sglang.srt.dllm.config import DllmConfig
@@ -67,6 +68,7 @@ def get_batch_sizes_to_capture(
     captured_req_width: int = 1,
     *,
     gathered_buffer_required: Optional[bool] = None,
+    pad_unaligned: bool = False,
 ) -> Tuple[List[int], List[int]]:
     """Build the (capture_bs, compile_bs) lists for the decode runner.
 
@@ -95,6 +97,11 @@ def get_batch_sizes_to_capture(
         # In some cases (e.g., with a small GPU or --max-running-requests), the #max-running-requests
         # is very small. We add more values here to make sure we capture the maximum bs.
         capture_bs += [num_max_requests]
+
+    # Draft decode may need a larger bucket than the configured request limit.
+    if pad_unaligned:
+        batch_alignment = mul_base // gcd(mul_base, alignment_width)
+        capture_bs = [ceil_align(bs, batch_alignment) for bs in capture_bs]
 
     # Model input token count = bs * alignment_width; must be a multiple of attn_tp_size.
     capture_bs = [bs for bs in capture_bs if bs * alignment_width % mul_base == 0]
