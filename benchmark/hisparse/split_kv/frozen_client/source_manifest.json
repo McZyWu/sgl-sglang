@@ -1,0 +1,41 @@
+{
+  "source": "C:\\Users\\Administrator\\Documents\\ChatGPT\\hisparse\\analysis\\mtp_latest_20261102\\historical_200_comparison\\old-baseline",
+  "files": [
+    {
+      "path": "bench_client.tar.gz",
+      "sha256": "9c4b0054fd80137d5b9bed6ffa26dfb5912e495fb533409c866d6fb1c993d94a",
+      "bytes": 17058551
+    },
+    {
+      "path": "bench_serving_with_acceptance.py",
+      "sha256": "685fe36ef7762d4e43cad945b40a73ea129980469858a39eb7a49b4f0bc74965",
+      "bytes": 111570
+    },
+    {
+      "path": "run_bench.py",
+      "sha256": "57f9f6dda3a01402e31c9250e49837441dd1ca82357a3af5a0c60a90ce6bb6a6",
+      "bytes": 164
+    },
+    {
+      "path": "input_fixtures/gen_shared_prefix_42_1_1_64000_0_1_ids_TokenizersBackend.pkl",
+      "sha256": "59706e2cf1d0ca6e3326c88c94f0d8331f975fae16d06f1e4790a951ce837432",
+      "bytes": 266121
+    },
+    {
+      "path": "input_fixtures/gen_shared_prefix_42_1_16_64000_0_1024_ids_TokenizersBackend.pkl",
+      "sha256": "55fec582626bfc99ea76b63d56a70db367e63a430798cfb6ba2143e809dcd223",
+      "bytes": 4255283
+    },
+    {
+      "path": "input_fixtures/manifest.json",
+      "sha256": "f9c8eb71dadd766599cc7a510ded270b0a1b57ca0010403eeffbd0ddb14bb722",
+      "bytes": 1376
+    },
+    {
+      "path": "input_fixtures/token_fixture_contract.json",
+      "sha256": "9e91c5da61d64306db74d06899a965828f11dafd1846eb58f1cfbda7c5ce3cdc",
+      "bytes": 860
+    }
+  ],
+  "archive_sha256": "ea734b8eff690c85f6d53b8b5f5cb22698b3f4f369be772eaf60f1a062dc6425"
+}

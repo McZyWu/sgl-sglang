@@ -1,0 +1,51 @@
+{
+  "all_old_python_sources_gzipped": true,
+  "client_archive_sha256": "9c4b0054fd80137d5b9bed6ffa26dfb5912e495fb533409c866d6fb1c993d94a",
+  "entrypoint_source_path": "bench_serving_with_acceptance.py",
+  "entrypoint_source_sha256": "685fe36ef7762d4e43cad945b40a73ea129980469858a39eb7a49b4f0bc74965",
+  "fixtures": [
+    {
+      "compressed_bytes": 185863,
+      "compressed_sha256": "878a29bd3d3f0a3b9067fc10ff2a90b7f2f130841194c5d93b8b379f15cb36c9",
+      "source_bytes": 266121,
+      "source_path": "input_fixtures/gen_shared_prefix_42_1_1_64000_0_1_ids_TokenizersBackend.pkl",
+      "source_sha256": "59706e2cf1d0ca6e3326c88c94f0d8331f975fae16d06f1e4790a951ce837432",
+      "stored_path": "fixtures/prefix100_warm.pkl.gz"
+    },
+    {
+      "compressed_bytes": 2966052,
+      "compressed_sha256": "bdb7eb052fbc6ed3ecb9bd4bbb7f477073ed76333ca9bbd583654266bbff1cc1",
+      "source_bytes": 4255283,
+      "source_path": "input_fixtures/gen_shared_prefix_42_1_16_64000_0_1024_ids_TokenizersBackend.pkl",
+      "source_sha256": "55fec582626bfc99ea76b63d56a70db367e63a430798cfb6ba2143e809dcd223",
+      "stored_path": "fixtures/prefix100_formal16.pkl.gz"
+    }
+  ],
+  "note": "Original Python source payloads and fixture pickle payloads are gzip-compressed with mtime=0. Each decompressed payload was byte-verified against the source manifest; runtime writes originals only inside a task-private output directory.",
+  "old_python_payloads": [
+    {
+      "compressed_bytes": 24315,
+      "compressed_sha256": "d0141e28c6812e6382abcb7297997ea05a48e1165aa0551308ef5ad137bdb326",
+      "source_bytes": 111570,
+      "source_path": "bench_serving_with_acceptance.py",
+      "source_sha256": "685fe36ef7762d4e43cad945b40a73ea129980469858a39eb7a49b4f0bc74965",
+      "stored_path": "bench_serving_with_acceptance.py.gz"
+    },
+    {
+      "compressed_bytes": 140,
+      "compressed_sha256": "2f0eea6cf2171b9097139bacd12e14e47f1f55d643c512c67ab655b784284aa1",
+      "source_bytes": 164,
+      "source_path": "run_bench.py",
+      "source_sha256": "57f9f6dda3a01402e31c9250e49837441dd1ca82357a3af5a0c60a90ce6bb6a6",
+      "stored_path": "run_bench.py.gz"
+    }
+  ],
+  "schema_version": 1,
+  "source_archive_sha256": "ea734b8eff690c85f6d53b8b5f5cb22698b3f4f369be772eaf60f1a062dc6425",
+  "source_directory": "C:\\Users\\Administrator\\Documents\\ChatGPT\\hisparse\\analysis\\mtp_latest_20261102\\historical_200_comparison\\old-baseline",
+  "source_manifest_path": "D:\\code\\hisparse-split-kv-20261103\\bundles\\frozen-bench-prefix100.manifest.json",
+  "source_manifest_sha256": "ce358fd4bc272e9b0853dc1cde8a18fe7092bc8dd6c0f62cbf05f68ce2e63e97",
+  "wrapper_source_path": "run_bench.py",
+  "wrapper_source_sha256": "57f9f6dda3a01402e31c9250e49837441dd1ca82357a3af5a0c60a90ce6bb6a6",
+  "stored_source_manifest_sha256": "1bffbb9a52a7e72a6e8e4b25c60da7ab03854888f83dce1056c707d071c70cda"
+}

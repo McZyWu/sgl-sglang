@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "file": "prefix100_64000_token_ids.json.gz",
+  "format": "gzip-json-int-array",
+  "token_count": 64000,
+  "min_token_id": 1,
+  "max_token_id": 154855,
+  "tokenizer_vocab_size": 154856,
+  "token_ids_sha256": "62ddc5e8448554d7dbc1173eb6492ebadf50dc104669d0fe0d827c72b6b11889",
+  "gzip_sha256": "5e7a03d2aec1dfc78ea326670f4336b2af8aa7b764759dae8274a967ea43047e",
+  "seed": 42,
+  "model": "GLM-5.2-w4a8",
+  "source_warm_pickle": {
+    "file": "gen_shared_prefix_42_1_1_64000_0_1_ids_TokenizersBackend.pkl",
+    "sha256": "59706e2cf1d0ca6e3326c88c94f0d8331f975fae16d06f1e4790a951ce837432"
+  },
+  "source_formal_pickle": {
+    "file": "gen_shared_prefix_42_1_16_64000_0_1024_ids_TokenizersBackend.pkl",
+    "sha256": "55fec582626bfc99ea76b63d56a70db367e63a430798cfb6ba2143e809dcd223"
+  },
+  "all_16_formal_prompts_equal_warm_prefix": true,
+  "historical_expected_cached_tokens": 63872,
+  "historical_input_tokens": 64000,
+  "historical_output_tokens": 1024
+}
