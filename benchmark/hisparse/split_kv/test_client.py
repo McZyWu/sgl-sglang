@@ -1,5 +1,6 @@
 """CPU-only checks of client validation and the automatic phase sequence."""
 
+import errno
 import gzip
 import importlib.util
 import json
@@ -22,6 +23,103 @@ spec.loader.exec_module(runner)
 
 
 class TestClient(unittest.TestCase):
+    def test_host_validation_rejects_noncanonical_or_unsupported_addresses(self):
+        for bad_host in (
+            "809",
+            "127.0.0.1:41000",
+            "http://127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "255.255.255.255",
+        ):
+            with self.subTest(host=bad_host), self.assertRaises(ValueError):
+                runner.validate_host_addresses(bad_host, "192.168.1.20", "prefill")
+
+    def test_host_validation_binds_only_this_role_address(self):
+        class FakeSocket:
+            def __init__(self):
+                self.bound = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def bind(self, address):
+                self.bound.append(address)
+
+        fake_socket = FakeSocket()
+        with patch.object(runner.socket, "socket", return_value=fake_socket):
+            runner.validate_host_addresses("192.168.1.10", "192.168.1.20", "decode")
+        self.assertEqual(fake_socket.bound, [("192.168.1.20", 0)])
+
+    def test_host_validation_reports_nonlocal_bind_with_address_guidance(self):
+        class FakeSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def bind(self, address):
+                raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
+
+        with patch.object(runner.socket, "socket", return_value=FakeSocket()):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"--prefill-host 192\.168\.1\.10 cannot be bound.*EADDRNOTAVAIL.*ip -br -4 addr",
+            ):
+                runner.validate_host_addresses(
+                    "192.168.1.10", "192.168.1.20", "prefill"
+                )
+
+    def test_host_validation_accepts_private_ipv4_and_real_loopback_bind(self):
+        class FakeSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def bind(self, address):
+                pass
+
+        with patch.object(runner.socket, "socket", return_value=FakeSocket()):
+            runner.validate_host_addresses("10.1.2.3", "10.1.2.4", "prefill")
+        runner.validate_host_addresses("127.0.0.1", "127.0.0.2", "prefill")
+
+    def test_invalid_cli_host_fails_before_creating_run_or_loading_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "model"
+            model.mkdir()
+            output = root / "runs"
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("run.py")),
+                "prefill",
+                "--model",
+                str(model),
+                "--prefill-host",
+                "809",
+                "--decode-host",
+                "192.168.1.20",
+                "--devices",
+                "0",
+                "--interface",
+                "eth0",
+                "--tp",
+                "1",
+                "--output-dir",
+                str(output),
+            ]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--prefill-host must be a full IPv4 address", result.stderr)
+            self.assertFalse(output.exists())
+
     def test_default_frozen_controller_runs_all_rounds_after_flush(self):
         with tempfile.TemporaryDirectory() as tmp:
             model = Path(tmp) / "model"
@@ -29,11 +127,13 @@ class TestClient(unittest.TestCase):
             output = Path(tmp) / "runs"
             sequence = []
             phase = {"value": None}
+            server_envs = {}
 
             def start(command, env, log_path):
                 name = Path(log_path).name
                 if name.startswith("decode-"):
                     phase["value"] = name.removeprefix("decode-").removesuffix(".log")
+                    server_envs[phase["value"]] = env.copy()
                     if phase["value"] == "performance":
                         Path(log_path).write_text(
                             "Decode batch, #running-req: 2, #token: 1\n"
@@ -127,9 +227,29 @@ class TestClient(unittest.TestCase):
                 ],
             )
             self.assertEqual(summary["formal_output_tps"]["median"], 42.0)
+            self.assertIn(
+                "not a full model benchmark accuracy evaluation",
+                summary["greedy_accuracy_validation"]["scope"],
+            )
+            self.assertEqual(
+                server_envs["reference"]["SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD"], "0"
+            )
+            self.assertEqual(
+                server_envs["reference"]["SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA"], "0"
+            )
+            for phase_name in ("functional", "performance"):
+                self.assertEqual(
+                    server_envs[phase_name]["SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD"],
+                    "1",
+                )
+                self.assertEqual(
+                    server_envs[phase_name]["SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA"],
+                    "1",
+                )
             self.assertEqual(
                 summary["observed_decode_batch"]["max_running_requests"], 2
             )
+            self.assertEqual(sequence.count("flush"), 11)
             for index, item in enumerate(sequence):
                 if item != "flush":
                     self.assertGreater(index, 0)
@@ -336,6 +456,7 @@ class TestClient(unittest.TestCase):
             calls = []
             commands = {}
             phase = {"value": None}
+            generated_inputs = []
 
             def start(command, env, log_path):
                 name = Path(log_path).name
@@ -350,6 +471,8 @@ class TestClient(unittest.TestCase):
                 return object()
 
             def generate(router, ids, length, rid):
+                if phase["value"] in ("reference", "functional"):
+                    generated_inputs.append((phase["value"], len(ids), length))
                 time.sleep(0.02)
                 return {
                     "request_id": rid,
@@ -421,6 +544,30 @@ class TestClient(unittest.TestCase):
                     "router-performance.log",
                 ],
             )
+            self.assertCountEqual(
+                generated_inputs,
+                [
+                    (phase_name, input_length, 64)
+                    for phase_name in ("reference", "functional")
+                    for input_length in (512, 512, 512, 512, 4096, 4096, 4096, 4096)
+                ],
+            )
+            for name in (
+                "reference-short.json",
+                "reference-long.json",
+                "functional-short.json",
+                "functional-long.json",
+            ):
+                report = json.loads((directory / name).read_text())
+                self.assertEqual(len(report["results"]), 4)
+                expected_prompt_length = 512 if "short" in name else 4096
+                self.assertTrue(
+                    all(
+                        item["response"]["meta_info"]["prompt_tokens"]
+                        == expected_prompt_length
+                        for item in report["results"]
+                    )
+                )
             self.assertEqual(len(list(directory.glob("warm-[12].json"))), 2)
             self.assertEqual(len(list(directory.glob("formal-[1-5].json"))), 5)
             self.assertEqual(len(list(directory.glob("*-seed.json"))), 7)

@@ -2,9 +2,11 @@
 
 import argparse
 import concurrent.futures
+import errno
 import gzip
 import hashlib
 import importlib.metadata
+import ipaddress
 import json
 import math
 import os
@@ -87,6 +89,49 @@ def port_free(port):
             sock.bind(("0.0.0.0", port))
         except OSError as error:
             raise RuntimeError(f"Local port {port} is unavailable: {error}") from error
+
+
+def validate_host_addresses(prefill_host, decode_host, role):
+    """Validate IPv4 CLI addresses and confirm this container can bind its own IP."""
+    addresses = {}
+    for option, value in (
+        ("--prefill-host", prefill_host),
+        ("--decode-host", decode_host),
+    ):
+        try:
+            address = ipaddress.IPv4Address(value)
+        except ipaddress.AddressValueError as error:
+            raise ValueError(
+                f"{option} must be a full IPv4 address (got {value!r}); "
+                "hostnames, abbreviated addresses, ports, and IPv6 are unsupported"
+            ) from error
+        if address.is_unspecified or address.is_multicast or int(address) == 0xFFFFFFFF:
+            raise ValueError(
+                f"{option} must be a usable unicast IPv4 address (got {value!r})"
+            )
+        addresses[option] = address
+
+    if addresses["--prefill-host"] == addresses["--decode-host"]:
+        raise ValueError("two distinct host addresses are required")
+
+    local_option = "--prefill-host" if role == "prefill" else "--decode-host"
+    local_address = addresses[local_option]
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((str(local_address), 0))
+    except OSError as error:
+        reason = error.strerror or str(error)
+        errno_name = getattr(error, "errno", None)
+        errno_label = (
+            errno.errorcode.get(errno_name, str(errno_name))
+            if errno_name
+            else "unknown errno"
+        )
+        raise ValueError(
+            f"{local_option} {local_address} cannot be bound in this container "
+            f"({errno_label}: {reason}). Check `ip -br -4 addr` inside this "
+            "container and use an address assigned in its network namespace."
+        ) from error
 
 
 def start(command, env, log_path):
@@ -189,7 +234,7 @@ def stop(proc):
         proc.log_file.close()
 
 
-def server_env(args, functional=False):
+def server_env(args, functional=False, reference=False):
     env = os.environ.copy()
     for name in INHERITED_ENV_TO_CLEAR:
         env.pop(name, None)
@@ -238,6 +283,11 @@ def server_env(args, functional=False):
         env.pop(name, None)
     if functional:
         env.update(SGLANG_TEST_RETRACT="1", SGLANG_TEST_RETRACT_INTERVAL="3")
+    if reference:
+        env.update(
+            SGLANG_NPU_ENABLE_SPARSE_KV_OFFLOAD="0",
+            SGLANG_NPU_ENABLE_FUSED_LIM_COPYSFA="0",
+        )
     return env
 
 
@@ -717,10 +767,12 @@ def main():
     parser.add_argument(
         "--prefill-host",
         required=True,
-        help="Prefill IP reachable from both containers",
+        help="Full IPv4 address reachable from both containers",
     )
     parser.add_argument(
-        "--decode-host", required=True, help="Decode IP reachable from its container"
+        "--decode-host",
+        required=True,
+        help="Full IPv4 address reachable from its container",
     )
     parser.add_argument(
         "--devices", required=True, help="Verified container-visible NPU IDs"
@@ -756,8 +808,12 @@ def main():
     parser.add_argument("--output-dir", default="split-kv-runs")
     parser.add_argument("--ready-timeout", type=int, default=3600)
     args = parser.parse_args()
-    if args.bs < 2 or args.tp < 1 or args.prefill_host == args.decode_host:
-        parser.error("bs >= 2, tp >= 1 and two distinct host addresses are required")
+    if args.bs < 2 or args.tp < 1:
+        parser.error("bs >= 2 and tp >= 1 are required")
+    try:
+        validate_host_addresses(args.prefill_host, args.decode_host, args.role)
+    except ValueError as error:
+        parser.error(str(error))
     devices = args.devices.split(",")
     if (
         len(devices) != args.tp
@@ -828,11 +884,12 @@ def main():
         ids = fixture(args, out)
         wait_http(prefill + "/health", timeout=args.ready_timeout)
         round_reports = []
+        references = {}
         for phase in ("reference", "functional", "performance"):
             port_free(args.decode_port)
             port_free(args.router_port)
             functional = phase == "functional"
-            env = server_env(args, functional)
+            env = server_env(args, functional, reference=phase == "reference")
             record_server_env(out, phase, env)
             proc = start(
                 server_command(args, "decode", functional, phase == "performance"),
@@ -859,36 +916,42 @@ def main():
                 router_env.pop(name, None)
             router_proc = start(command, router_env, out / f"router-{phase}.log")
             wait_http(router + "/health", router_proc, args.ready_timeout)
-            flush(prefill, decode)
             if phase in ("reference", "functional"):
-                results, duration = concurrent_generate(router, ids[:512], 64, 4, phase)
-                dump(
-                    out / f"{phase}.json",
-                    {"results": results, "duration_seconds": duration},
-                )
-                validate(results, 512, 64)
-                tokens = [x["response"]["output_ids"] for x in results]
-                if phase == "reference":
-                    reference = tokens[0]
-                    if any(value != reference for value in tokens):
-                        raise ValueError("Reference greedy outputs differ")
-                else:
-                    if any(value != reference for value in tokens):
-                        raise ValueError(
-                            "Functional greedy outputs differ from reference"
-                        )
-                    count = sum(
-                        x["response"]["meta_info"].get("num_retractions", 0)
-                        for x in results
+                for case, input_length in (("short", 512), ("long", 4096)):
+                    flush(prefill, decode)
+                    results, duration = concurrent_generate(
+                        router, ids[:input_length], 64, 4, f"{phase}-{case}"
                     )
-                    if count < 1:
-                        raise ValueError(
-                            "Functional requests did not report any retraction"
-                        )
-                    print(
-                        f"functional greedy exact match; retractions={count}",
-                        flush=True,
+                    dump(
+                        out / f"{phase}-{case}.json",
+                        {"results": results, "duration_seconds": duration},
                     )
+                    validate(results, input_length, 64)
+                    tokens = [x["response"]["output_ids"] for x in results]
+                    if phase == "reference":
+                        reference_tokens = tokens[0]
+                        if any(value != reference_tokens for value in tokens):
+                            raise ValueError(
+                                f"Native reference {case} greedy outputs differ"
+                            )
+                        references[case] = reference_tokens
+                    else:
+                        if any(value != references[case] for value in tokens):
+                            raise ValueError(
+                                f"Functional {case} greedy outputs differ from native reference"
+                            )
+                        count = sum(
+                            x["response"]["meta_info"].get("num_retractions", 0)
+                            for x in results
+                        )
+                        if count < 1:
+                            raise ValueError(
+                                f"Functional {case} requests did not report any retraction"
+                            )
+                        print(
+                            f"functional {case} greedy exact match; retractions={count}",
+                            flush=True,
+                        )
             else:
                 for index in range(7):
                     label = f"warm-{index + 1}" if index < 2 else f"formal-{index - 1}"
@@ -952,6 +1015,13 @@ def main():
             if r["round"].startswith("formal-")
         ]
         summary = {
+            "greedy_accuracy_validation": {
+                "cases": [
+                    {"input_tokens": 512, "output_tokens": 64, "requests": 4},
+                    {"input_tokens": 4096, "output_tokens": 64, "requests": 4},
+                ],
+                "scope": "Greedy token equality for these two fixed cases only; not a full model benchmark accuracy evaluation.",
+            },
             "rounds": round_reports,
             "observed_decode_batch": active_batch,
             "formal_output_tps": {
