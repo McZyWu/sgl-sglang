@@ -1,0 +1,19 @@
+case_id,label_zh,kv_mode,bs,round,output_tokens_per_second,requests_succeeded,input_tokens_per_request,output_tokens_per_request,cached_tokens_per_request,full_protocol_passed,full_run_exitcode
+native6_437a,普通KV BS6,native,6,warm-1,209.37468283780527,6,64000,1024,63872,True,0
+native6_437a,普通KV BS6,native,6,warm-2,182.87777267372414,6,64000,1024,63872,True,0
+native6_437a,普通KV BS6,native,6,formal-1,204.7441783223871,6,64000,1024,63872,True,0
+native6_437a,普通KV BS6,native,6,formal-2,196.81821009326362,6,64000,1024,63872,True,0
+native6_437a,普通KV BS6,native,6,formal-3,193.56877810807492,6,64000,1024,63872,True,0
+native6_437a,普通KV BS6,native,6,formal-4,198.47371863329136,6,64000,1024,63872,True,0
+native6_437a,普通KV BS6,native,6,formal-5,207.67009803427356,6,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,warm-1,279.6782806783626,16,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,warm-2,336.1794538563288,16,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,formal-1,314.2855146709722,16,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,formal-2,294.3169988939773,16,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,formal-3,310.2656929115407,16,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,formal-4,312.41101215973384,16,64000,1024,63872,True,0
+hisparse16_dd2,HiSparse BS16 首轮dd2,hisparse,16,formal-5,279.01005995214683,16,64000,1024,63872,True,0
+hisparse16_437a_interrupted,HiSparse BS16 同版437a中断,hisparse,16,warm-1,304.9905298087501,16,64000,1024,63872,False,137
+hisparse16_437a_interrupted,HiSparse BS16 同版437a中断,hisparse,16,warm-2,304.92370688198264,16,64000,1024,63872,False,137
+hisparse16_437a_interrupted,HiSparse BS16 同版437a中断,hisparse,16,formal-1,302.4144054026895,16,64000,1024,63872,False,137
+hisparse16_437a_interrupted,HiSparse BS16 同版437a中断,hisparse,16,formal-2,294.72684684730825,16,64000,1024,63872,False,137
