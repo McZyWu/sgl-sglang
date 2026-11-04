@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 原始 NoneType 回退问题 | CPU 重现后修复 | 原版读取 `self.k_buffer=None`；修复改读权威 MF split K/V |
 | Linux 完整测试模块 | 8/8，通过，exit 0 | 2 项新增 retraction 测试、6 项既有 MF CPU 测试；MF/设备边界使用模拟 |
-| 自动控制器自检 | 通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；最新测试计数见本次检查日志 |
+| 自动控制器自检 | 27/27，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁和 PF_EXITING 等待 |
 | 冻结资产与报告自检 | 3/3，通过，exit 0 | 原始 SHA、BS16 pickle 原字节、BS20 扩展、seed 1 输出、正式 1024 输出及 cached63872、输入缓存命中 |
 | 静态检查 | 通过 | Ruff 0.15.1、isort 7.0.0、codespell 2.4.1、AST、空白/EOF、Bash 语法、文件大小与 diff check |
 | kernel 构建及安装 | 通过，exit 0 | 217 A3/CANN 9.1.0 构建；两侧安装同一 wheel，检查 split K/V 算子 schema |
@@ -59,7 +59,7 @@ flowchart TD
 
 配套 kernel 基线为 `b47332ce9736a7920139ad8f29364b27ef416dea`；构建时只在任务副本限制编译并发和规范化 shell LF。实际 wheel SHA256 为 `5de65d7eb4ee9acda2f86007eb02ada47ed71e4c0c390645c8dd70a6cac1286c`，两侧主 SO SHA 为 `0b27a873ddd35b789cbe649c1dd17509b6ffac4e62b88829ce856bbb502096f7`。
 
-MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构建器在私有前缀生成 718752 字节 A3 ELF，SHA256 为 `7e30b856a5e1a37bece3ef18f9a8b60f054901ef0e38aa00176d7cbc668d1550`，原 site-packages 未修改。真实 MF TP16 探针使用此私有库通过。新增 `setup_memfabric.sh` 封装同一构建机制，封装自身尚待独立完整执行。
+MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构建器在私有前缀生成 718752 字节 A3 ELF，SHA256 为 `7e30b856a5e1a37bece3ef18f9a8b60f054901ef0e38aa00176d7cbc668d1550`，原 site-packages 未修改。真实 MF TP16 探针使用此私有库通过。新增 `setup_memfabric.sh` 封装同一构建机制，随后已在 217 新目录 `/workspace/splitkv-pd-live/mf-wrapper-validation` 完整执行，外层及 `setup.exit` 为 0，ELF/CDLL 与原 source 库未变检查通过；新产物 718752 字节，SHA 为 `3e87649f4d2ea85936cd94b439afd3473973bd62abcc06f777c9b875cf1a9d46`。未分析两次构建的字节差异，新产物未再次跑 TP16，生产继续原已验证库。
 
 首次 D 运行目录为 `/workspace/splitkv-pd-live/runs/decode-20261104T073438446307Z`。首错为 router `No available servers: No prefill workers available`；`/health` 已返回 200，后台 `/workers` 尚未注册 P。单独实际查询确认 router 0.3.2 异步注册，因此新增精确 URL、角色和健康状态等待，不能靠固定延时。退出阶段还暴露 `/proc/stat` 读取活进程、随后 `environ` 已清空并变成 zombie 的竞态；清理逻辑新增状态与进程身份复核。
 
@@ -68,3 +68,11 @@ MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构�
 第二次运行目录为 `/workspace/splitkv-pd-live/runs/decode-20261104T075657552274Z`。正确通过 router worker 门禁后，native 512/64 首组四请求均 HTTP 200，但 `reference-short-1` 的第 2 token 为 241，其他三条为 112；其后输出也不同，因此原生一致性门禁失败，未运行强制回退或性能。`reference-short-1` 与 `reference-short-3` 的 cached_tokens 都是 384，但只有前者不同，不能仅据此把原因归为缓存。独立原生诊断将保存顺序/并发请求的 logprob 与批次信息，尚无原因结论。
 
 第二次退出也遇到 token 缺失，说明仅立即重读 stat 仍不足以覆盖现场进程生命周期。新清理逻辑对同 session 的缺失 token 最多等待一秒，期间检查状态、birth、session 和标记；未知活进程持续存在仍报错，带 state/ppid/pgrp/session/flags/birth 证据。23 项 CPU 控制器自检通过，覆盖时间虚拟的延迟标记、持续未知和身份变化；此补充仍待真实退出路径验证，不宣称现场根因已确认。
+
+## 独立自然语言精度 oracle
+
+保留原随机输入的全部失败结果后，独立诊断增加了 warm、逐次 flush 的顺序请求和并发请求，13 请求中仍有一条从第二 token 分叉。teacher-force 将原输入加上首 token 构成 513 token，只要求输出一个 token，四次逐次 flush 的输出为 `112/241/112/112`。P 日志各有一次 513-token prefill，D 同时间段只有 flush 和请求完成、没有 target decode batch；因此变化无需进入 D target forward 或回退恢复代码即可出现，不能由此判定 MF transfer 已错或已正确。模型数值/状态根因尚未解决。
+
+将精度和性能输入明确分开：精度使用固定自然语言文首密钥取值，模板关闭 thinking，输入精确为 512/4096/64000 token；性能继续历史随机输入。独立原生诊断中，short 的 warm + 四次顺序 + 四次并发均正确且逐 token 一致，long 四请求、target64k 两请求也正确且一致；64-token 输出实际为重复密钥的截断前缀，不冒称输出六十四行。三份原始 JSON 已按 SHA 冻结到 `fixtures/precision/`，在候选强制回退前确定；门禁继续要求正确答案、组内 exact、候选对原生 exact 和实际 retraction，不以放宽 token 差异阈值处理。
+
+该独立原生结果不是完整 controller 或强制回退通过，也不是通用模型精度得分。原生 64K 取值诊断的 cached token 为 63360，性能仍严格检查每请求 63872，二者输入和用途不同。

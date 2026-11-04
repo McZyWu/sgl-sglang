@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "purpose": "Fixed natural-language retrieval accuracy inputs; never performance inputs.",
+  "answer": "731954",
+  "output_tokens": 64,
+  "tokenizer_files_sha256": {
+    "tokenizer.json": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+    "tokenizer_config.json": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc"
+  },
+  "generation": {
+    "model": "GLM-5.2-w4a8",
+    "enable_thinking": false,
+    "add_generation_prompt": true,
+    "opening": "请记住文首定义的唯一密钥：731954。请严格保留这一密钥。\n",
+    "filler": "这是一段普通的说明文字，用来提供上下文。天气平稳，工作按计划进行。\n",
+    "ending": "\n只输出文首定义的密钥，每行一次，重复六十四行，不解释。",
+    "method": "Apply the model chat template to opening + unique marker + ending; split at marker; encode prefix, filler and suffix separately with add_special_tokens=False; repeat and truncate filler IDs to exact length.",
+    "prefix_tokens": 24,
+    "suffix_tokens": 25
+  },
+  "cases": {
+    "short": {
+      "file": "retrieval-512.json.gz",
+      "gzip_sha256": "623e2f9a5319c429e39c4650db03fab9bc163ed89cb5944698fe28dc4e3f5572",
+      "raw_sha256": "7d0963fb6f9448c77d304cdd6f1eb382b05133446766fd58071d8fa41d8d0303",
+      "token_count": 512,
+      "requests": 4
+    },
+    "long": {
+      "file": "retrieval-4096.json.gz",
+      "gzip_sha256": "82db476a9583b36c1dd8a5737007d8025ac90926bccb2648719399acc40fdcec",
+      "raw_sha256": "18c8dcc3f7f10a6fba36f80d4947590b5f6ceb7dfed8ffe01716554160e97273",
+      "token_count": 4096,
+      "requests": 4
+    },
+    "target64k": {
+      "file": "retrieval-64000.json.gz",
+      "gzip_sha256": "7eda754a9fe4cbcd3cf79e9f7655e61ccfa0ca003b393761144252c2005605eb",
+      "raw_sha256": "8858ecfa3bc7cdb9a8a1d49dded624d88dc6d5248fb12dfd8a342b144223790a",
+      "token_count": 64000,
+      "requests": 2
+    }
+  },
+  "scope": "Exact greedy tokens and correct retrieval on these fixed inputs only. The 64-token generation limit truncates the requested 64 lines. Not a general model accuracy score."
+}

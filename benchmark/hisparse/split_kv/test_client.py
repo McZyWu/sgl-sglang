@@ -2,6 +2,7 @@
 
 import errno
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
@@ -24,6 +25,30 @@ spec.loader.exec_module(runner)
 
 
 class TestClient(unittest.TestCase):
+    @staticmethod
+    def precision_fixture_stub():
+        sizes = {"short": (512, 4), "long": (4096, 4), "target64k": (64000, 2)}
+        cases = {
+            name: {
+                "input_ids": [index + 1] * count,
+                "requests": requests,
+                "token_count": count,
+                "gzip_sha256": f"{index + 1:064x}",
+                "raw_sha256": f"{index + 11:064x}",
+            }
+            for index, (name, (count, requests)) in enumerate(sizes.items())
+        }
+        manifest = {
+            "output_tokens": 64,
+            "answer": "731954",
+            "scope": "Fixed retrieval case check; not a full model benchmark accuracy evaluation.",
+            "cases": {
+                name: {"token_count": count, "requests": requests}
+                for name, (count, requests) in sizes.items()
+            },
+        }
+        return {"manifest": manifest, "cases": cases}
+
     def test_router_waits_for_both_healthy_exact_role_workers(self):
         expected_prefill = "http://127.0.0.1:41000"
         expected_decode = "http://127.0.0.1:30001"
@@ -161,9 +186,9 @@ class TestClient(unittest.TestCase):
             )
 
     @staticmethod
-    def proc_stat(state, session_id=123, birth="101"):
+    def proc_stat(state, session_id=123, birth="101", flags="4194304"):
         fields = [state, "1", "123", str(session_id)] + ["0"] * 16
-        fields[6] = "4194304"
+        fields[6] = flags
         fields[19] = birth
         return fields
 
@@ -293,6 +318,48 @@ class TestClient(unittest.TestCase):
                     runner.stop(process)
             self.assertTrue(process.log_file.closed)
 
+    def test_stop_waits_for_pf_exiting_without_signalling_until_zombie(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.make_proc_fixture(Path(tmp))
+            exiting = self.proc_stat("S", flags="4195652")
+            states = iter(
+                (
+                    exiting,
+                    exiting,
+                    exiting,
+                    self.proc_stat("Z", flags="4195652"),
+                    self.proc_stat("Z", flags="4195652"),
+                    self.proc_stat("Z", flags="4195652"),
+                )
+            )
+            process = self.make_stop_process()
+
+            class FakeClock:
+                now = 0.0
+                sleeps = 0
+
+                def sleep(self, delay):
+                    self.now += delay
+                    self.sleeps += 1
+
+            clock = FakeClock()
+            with (
+                patch.object(runner, "PROC_ROOT", Path(tmp)),
+                patch.object(runner.signal, "SIGKILL", 9, create=True),
+                patch.object(
+                    runner,
+                    "_read_proc_stat",
+                    side_effect=lambda path: next(states),
+                ),
+                patch.object(runner.time, "monotonic", side_effect=lambda: clock.now),
+                patch.object(runner.time, "sleep", side_effect=clock.sleep),
+                patch.object(runner.os, "kill") as kill,
+            ):
+                runner.stop(process)
+            kill.assert_not_called()
+            self.assertEqual(clock.sleeps, 1)
+            self.assertTrue(process.log_file.closed)
+
     def test_stop_rechecks_state_before_signalling_zombie(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.make_proc_fixture(Path(tmp), b"SPLITKV_RUN_TOKEN=owned-token\0")
@@ -316,17 +383,21 @@ class TestClient(unittest.TestCase):
             child_path = Path(tmp) / "234"
             child_path.mkdir()
             (child_path / "environ").write_bytes(b"SPLITKV_RUN_TOKEN=owned-token\0")
-            states = iter(("S", "S", "S", "Z", "Z", "Z"))
+            state = {"count": 0}
             process = self.make_stop_process()
+
+            def read_stat(path):
+                state["count"] += 1
+                status = "S" if state["count"] <= 5 else "Z"
+                return self.proc_stat(status, session_id=999)
+
             with (
                 patch.object(runner, "PROC_ROOT", Path(tmp)),
                 patch.object(runner.signal, "SIGKILL", 9, create=True),
                 patch.object(
                     runner,
                     "_read_proc_stat",
-                    side_effect=lambda path: self.proc_stat(
-                        next(states), session_id=999
-                    ),
+                    side_effect=read_stat,
                 ),
                 patch.object(runner.os, "kill") as kill,
             ):
@@ -438,6 +509,7 @@ class TestClient(unittest.TestCase):
             sequence = []
             phase = {"value": None}
             server_envs = {}
+            performance_fixture_inputs = []
 
             def start(command, env, log_path):
                 name = Path(log_path).name
@@ -455,6 +527,7 @@ class TestClient(unittest.TestCase):
                     "request_id": rid,
                     "response": {
                         "output_ids": [7] * length,
+                        "text": "731954\n" * 12 + "731954",
                         "meta_info": {
                             "prompt_tokens": len(ids),
                             "completion_tokens": length,
@@ -467,6 +540,7 @@ class TestClient(unittest.TestCase):
 
             def frozen_round(router, model_path, out, ids, bs, label):
                 sequence.append(label)
+                performance_fixture_inputs.append(ids)
                 return {
                     "round": label,
                     "output_tokens_per_second": 42.0,
@@ -506,6 +580,11 @@ class TestClient(unittest.TestCase):
                     ),
                     patch.object(runner, "check_split_abi", return_value={}),
                     patch.object(runner, "fixture", return_value=[1] * 64000),
+                    patch.object(
+                        runner,
+                        "precision_fixtures",
+                        return_value=self.precision_fixture_stub(),
+                    ),
                     patch.object(runner, "wait_http"),
                     patch.object(runner, "wait_router_workers"),
                     patch.object(runner, "port_free"),
@@ -538,6 +617,10 @@ class TestClient(unittest.TestCase):
                 ],
             )
             self.assertEqual(summary["formal_output_tps"]["median"], 42.0)
+            self.assertEqual(len(performance_fixture_inputs), 7)
+            self.assertTrue(
+                all(ids == [1] * 64000 for ids in performance_fixture_inputs)
+            )
             self.assertIn(
                 "not a full model benchmark accuracy evaluation",
                 summary["greedy_accuracy_validation"]["scope"],
@@ -732,6 +815,146 @@ class TestClient(unittest.TestCase):
             self.assertEqual(len(ids), 64000)
             self.assertEqual((min(ids), max(ids)), (1, 154855))
 
+    def test_precision_fixtures_verify_hashes_lengths_vocab_and_copy_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "model"
+            model.mkdir()
+            fixture_dir = root / "fixtures" / "precision"
+            fixture_dir.mkdir(parents=True)
+            tokenizer_files = {
+                "tokenizer.json": b"tokenizer fixture",
+                "tokenizer_config.json": b"tokenizer config fixture",
+            }
+            tokenizer_hashes = {}
+            for name, contents in tokenizer_files.items():
+                (model / name).write_bytes(contents)
+                tokenizer_hashes[name] = hashlib.sha256(contents).hexdigest()
+            cases = {}
+            fixture_payloads = {}
+            for name, token_count, requests in (
+                ("short", 512, 4),
+                ("long", 4096, 4),
+                ("target64k", 64000, 2),
+            ):
+                filename = f"{name}.json.gz"
+                raw = json.dumps(
+                    {"input_ids": [1, 2] * (token_count // 2) + [1] * (token_count % 2)}
+                ).encode()
+                compressed = gzip.compress(raw)
+                (fixture_dir / filename).write_bytes(compressed)
+                cases[name] = {
+                    "file": filename,
+                    "gzip_sha256": hashlib.sha256(compressed).hexdigest(),
+                    "raw_sha256": hashlib.sha256(raw).hexdigest(),
+                    "token_count": token_count,
+                    "requests": requests,
+                }
+                fixture_payloads[name] = compressed
+            manifest = {
+                "version": 1,
+                "answer": "731954",
+                "output_tokens": 64,
+                "scope": "test scope",
+                "tokenizer_files_sha256": tokenizer_hashes,
+                "cases": cases,
+            }
+            (fixture_dir / "manifest.json").write_text(json.dumps(manifest))
+            tokenizer = types.SimpleNamespace(
+                from_pretrained=lambda *args, **kwargs: range(10)
+            )
+            args = types.SimpleNamespace(model=str(model))
+            with (
+                patch.object(runner, "HERE", root),
+                patch.dict(
+                    sys.modules,
+                    {"transformers": types.SimpleNamespace(AutoTokenizer=tokenizer)},
+                ),
+            ):
+                loaded = runner.precision_fixtures(args, root / "output")
+            self.assertEqual(
+                {
+                    name: len(case["input_ids"])
+                    for name, case in loaded["cases"].items()
+                },
+                {"short": 512, "long": 4096, "target64k": 64000},
+            )
+            copied = root / "output" / "precision-fixtures"
+            self.assertEqual(
+                (copied / "manifest.json").read_bytes(),
+                (fixture_dir / "manifest.json").read_bytes(),
+            )
+            for name, compressed in fixture_payloads.items():
+                self.assertEqual(
+                    (copied / cases[name]["file"]).read_bytes(), compressed
+                )
+
+    def test_precision_fixture_loader_rejects_tokenizer_hash_length_and_vocab(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "model"
+            model.mkdir()
+            fixture_dir = root / "fixtures" / "precision"
+            fixture_dir.mkdir(parents=True)
+            for name in ("tokenizer.json", "tokenizer_config.json"):
+                (model / name).write_text(name)
+            tokenizer = types.SimpleNamespace(
+                from_pretrained=lambda *args, **kwargs: range(5)
+            )
+            args = types.SimpleNamespace(model=str(model))
+            with patch.dict(
+                sys.modules,
+                {"transformers": types.SimpleNamespace(AutoTokenizer=tokenizer)},
+            ):
+                for failure in ("tokenizer", "gzip", "raw", "length", "vocab"):
+                    with self.subTest(failure=failure):
+                        tokenizer_hashes = {
+                            name: hashlib.sha256(
+                                (model / name).read_bytes()
+                            ).hexdigest()
+                            for name in ("tokenizer.json", "tokenizer_config.json")
+                        }
+                        if failure == "tokenizer":
+                            tokenizer_hashes["tokenizer.json"] = "0" * 64
+                        case_specs = {
+                            "short": (512, 4),
+                            "long": (4096, 4),
+                            "target64k": (64000, 2),
+                        }
+                        case_manifest = {}
+                        for case_name, (count, request_count) in case_specs.items():
+                            ids = [1] * count
+                            if case_name == "short" and failure == "length":
+                                ids = [1] * (count - 1)
+                            elif case_name == "short" and failure == "vocab":
+                                ids[0] = 5
+                            raw = json.dumps({"input_ids": ids}).encode()
+                            compressed = gzip.compress(raw)
+                            filename = f"{case_name}.json.gz"
+                            (fixture_dir / filename).write_bytes(compressed)
+                            case_manifest[case_name] = {
+                                "file": filename,
+                                "gzip_sha256": hashlib.sha256(compressed).hexdigest(),
+                                "raw_sha256": hashlib.sha256(raw).hexdigest(),
+                                "token_count": count,
+                                "requests": request_count,
+                            }
+                        if failure == "gzip":
+                            case_manifest["short"]["gzip_sha256"] = "0" * 64
+                        elif failure == "raw":
+                            case_manifest["short"]["raw_sha256"] = "0" * 64
+                        manifest = {
+                            "version": 1,
+                            "answer": "731954",
+                            "output_tokens": 64,
+                            "tokenizer_files_sha256": tokenizer_hashes,
+                            "cases": case_manifest,
+                        }
+                        (fixture_dir / "manifest.json").write_text(json.dumps(manifest))
+                        with patch.object(runner, "HERE", root):
+                            with self.assertRaises(ValueError):
+                                runner.precision_fixtures(args, root / "out")
+
     def test_validation_rejects_errors_and_wrong_lengths(self):
         with self.assertRaises(RuntimeError):
             runner.validate([{"request_id": "r", "error": "HTTP 500"}], 1, 1)
@@ -767,6 +990,24 @@ class TestClient(unittest.TestCase):
             1,
         )
 
+    def test_retrieval_answer_requires_exact_repeated_line_prefix(self):
+        valid_text = "731954\n" * 12 + "731954"
+        for text in ("731954\n", valid_text):
+            runner.validate_retrieval_answer(
+                [{"request_id": "ok", "response": {"text": text}}], "731954"
+            )
+        for text in (
+            "prefix 731954\n",
+            "731954\n731954x",
+            "x731954\n",
+            "731954",
+        ):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                runner.validate_retrieval_answer(
+                    [{"request_id": "bad", "response": {"text": text}}],
+                    "731954",
+                )
+
     def test_full_sequence_keeps_seven_rounds_and_checks_retraction(self):
         with tempfile.TemporaryDirectory() as tmp:
             model = Path(tmp) / "model"
@@ -791,12 +1032,13 @@ class TestClient(unittest.TestCase):
 
             def generate(router, ids, length, rid):
                 if phase["value"] in ("reference", "functional"):
-                    generated_inputs.append((phase["value"], len(ids), length))
+                    generated_inputs.append((phase["value"], len(ids), ids[0], length))
                 time.sleep(0.02)
                 return {
                     "request_id": rid,
                     "response": {
                         "output_ids": [7] * length,
+                        "text": "731954\n" * 12 + "731954",
                         "meta_info": {
                             "prompt_tokens": len(ids),
                             "completion_tokens": length,
@@ -839,6 +1081,11 @@ class TestClient(unittest.TestCase):
                     ),
                     patch.object(runner, "check_split_abi", return_value={}),
                     patch.object(runner, "fixture", return_value=[1] * 64000),
+                    patch.object(
+                        runner,
+                        "precision_fixtures",
+                        return_value=self.precision_fixture_stub(),
+                    ),
                     patch.object(runner, "wait_http"),
                     patch.object(runner, "wait_router_workers"),
                     patch.object(runner, "port_free"),
@@ -867,20 +1114,14 @@ class TestClient(unittest.TestCase):
             self.assertCountEqual(
                 generated_inputs,
                 [
-                    (phase_name, input_length, 64)
+                    (phase_name, input_length, first_id, 64)
                     for phase_name in ("reference", "functional")
-                    for input_length in (
-                        512,
-                        512,
-                        512,
-                        512,
-                        4096,
-                        4096,
-                        4096,
-                        4096,
-                        64000,
-                        64000,
+                    for input_length, first_id, count in (
+                        (512, 1, 4),
+                        (4096, 2, 4),
+                        (64000, 3, 2),
                     )
+                    for _ in range(count)
                 ],
             )
             for name, expected_count in (
@@ -905,6 +1146,7 @@ class TestClient(unittest.TestCase):
                         for item in report["results"]
                     )
                 )
+                self.assertIs(report["answer_validation"]["passed"], True)
                 outputs = [item["response"]["output_ids"] for item in report["results"]]
                 if name.startswith("reference-"):
                     self.assertTrue(all(output == outputs[0] for output in outputs))

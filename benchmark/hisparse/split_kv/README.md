@@ -31,7 +31,7 @@ bash benchmark/hisparse/split_kv/setup_memfabric.sh "$TASK_WORKSPACE/mf-target" 
 export MF_PYTHON_PATH="$TASK_WORKSPACE/mf-target"
 ```
 
-该命令要求新的空目录、实际 A3 设备与 MF 1.3.0 的 wheel 构建标记，保存源码/产物 SHA、工具链、日志及退出码，并核对原安装库未变化。`run.sh` 会在 source CANN 后追加该私有 Python 路径和 MF/torch/torch_npu 动态库路径。209/217 已验证同一官方构建机制和私有产物；这个封装脚本尚待独立端到端执行。已有正常匹配的 MF 安装无需重复构建；A5 不使用此 A3 专用辅助脚本。
+该命令要求新的空目录、实际 A3 设备与 MF 1.3.0 的 wheel 构建标记，保存源码/产物 SHA、工具链、日志及退出码，并核对原安装库未变化。`run.sh` 会在 source CANN 后追加该私有 Python 路径和 MF/torch/torch_npu 动态库路径。217 已完整执行此封装，外层和 `setup.exit` 均为 0，私有 ELF/CDLL 与原库未变检查通过。该次新产物未再次运行 TP16；当前生产仍使用此前通过 TP16 的私有库，不声称两次构建逐字节相同。已有正常匹配的 MF 安装无需重复构建；A5 不使用此 A3 专用辅助脚本。
 
 在已有完整 SGLang 测试依赖的 Linux 环境，可运行以下 CPU 检查；此前的隔离环境已通过其中 2 项新回退测试与 6 项既有 MF CPU 测试（8 项），不代表设备通过。客户端自检只使用模拟服务和 CPU：
 
@@ -83,7 +83,7 @@ Decode 所有阶段显式设置 `--disaggregation-decode-extra-slots 0`，避免
 
 Decode 控制端执行：
 
-1. 等 P readiness；启动关闭 KV offload 的原生 D 和路由器。除 `/health` 外，还等待 `/workers` 中预期的 P、D URL 以正确角色注册且健康，再发送请求。测试 512/64、4096/64 各四条相同输入，以及 64000/64 两条 greedy 请求；每组输出必须一致，保存为 `reference-short.json`、`reference-long.json`、`reference-target64k.json`。
+1. 等 P readiness；启动关闭 KV offload 的原生 D 和路由器。除 `/health` 外，还等待 `/workers` 中预期的 P、D URL 以正确角色注册且健康，再发送请求。使用独立冻结的自然语言取值输入，测试 512/64、4096/64 各四条相同输入，以及 64000/64 两条 greedy 请求；每条必须正确输出文首密钥的逐行重复前缀，每组 token 必须一致，保存为 `reference-short.json`、`reference-long.json`、`reference-target64k.json`。
 2. 停止本次启动的 D 和路由器，启动开启 KV offload 的 forced-retraction D（`SGLANG_TEST_RETRACT=1`、间隔 3，`cpu_tensor` 备份）及路由器。三组请求分别逐 token 比对对应的原生 reference，且每组响应 `meta_info.num_retractions` 总数大于零；结果保存为对应 `functional-*.json`。这是这三组输入的 greedy 一致性检查，不代替完整模型评测。
 3. 停止本次功能模式的 D 和路由器，启动不含强制回退开关的性能 D 和路由器。每轮先对 P、D 分别调用 `/flush_cache`，再发一条 64000 输入、1 输出的 prefix seed，随后并发测量。默认调用随仓冻结的历史 `bench_serving` 客户端，固定两轮 warmup 和五轮 formal，保留每轮完整报告与原始结果。任一请求错误、输入/输出长度不符或每条 cached tokens 不等于 63872 时退出非零。可用 `--client stdlib` 显式选择本目录的 SSE 客户端用于诊断，诊断客户端还严格要求结束原因是 length。
 
@@ -92,6 +92,8 @@ Decode 控制端执行：
 ## 输入、输出与比较口径
 
 默认输入为 `fixtures/prefix100_64000_token_ids.json.gz`，解压后 64000 个 token ID；其 SHA256 与 manifest 在运行时校验。它从核验过的历史 warm/formal fixture 导出，16 条历史正式请求与 warm prefix 的 token ID 一致。可用 `--token-ids-json /path/file.json` 或 `.json.gz` 传入 JSON 整数数组（也接受 `{"input_ids": [...]}`）；覆盖后仅检查长度和 tokenizer 词表范围，**不再声称与历史输入一致**。
+
+上述默认输入和覆盖参数仅用于性能。精度阶段使用 `fixtures/precision/` 中独立的 512/4096/64000 token 自然语言取值输入，校验文件 SHA、长度、词表及 tokenizer SHA；生成方法和验收范围见 [精度输入说明](fixtures/precision/README.md)。64 是输出 token 上限，不是完成六十四行。原历史随机 token 切片在 P 自身计算的单 token 路径上也会重复分叉，失败日志保留；这不作为强制回退前后的稳定 oracle，也不声称已修复该原生非一致现象。性能的冻结随机输入、prefix100、C12288、预热、五轮正式测量及 cached63872 门禁保持原样。
 
 每次运行默认写到当前目录下 `split-kv-runs/prefill-<UTC>/` 或 `decode-<UTC>/`，可用 `--output-dir` 指定目录。包含 `config.json`、`runtime.json`、白名单环境、各阶段完整服务/router 日志、`controller.log`、固定输入副本、每条响应、压缩 SSE 原始事件、每轮 JSON、`exitcode.txt` 和 `summary.json`。每轮保留客户端完整报告；汇总五轮正式输出 TPS 的中位数、范围及总体标准差。stdlib 诊断模式报告首 token 时间 TTFT、首尾 token 间隔的 TPOT、总延迟以及服务端返回时的 MTP 接受长度/接受率。输出吞吐是客户端测得的成功输出 token 数除以测量窗口；它**不是 scheduler 的 decode-only TPS**，也不是论文根据 ITL 计算的 TPS。还需披露两机 PD 与历史单机、两轮 warmup/五轮全部保留与旧 clean 三轮筛选的差别。运行目录创建之前的失败以及 SIGKILL 无法写入 `exitcode.txt`，此时以 shell 退出码和终端首错为准。
 

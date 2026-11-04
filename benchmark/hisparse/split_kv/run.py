@@ -26,6 +26,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PROC_ROOT = Path("/proc")
+# `/proc/<pid>/stat` field 9 exposes PF_EXITING in its decimal bitmask.
+PF_EXITING = 0x00000004
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 EVENT_DIR = None
 RUN_OUT = None
@@ -153,6 +155,10 @@ def _same_live_session(path, expected_birth, session_id):
     )
 
 
+def _proc_is_exiting(stat):
+    return len(stat) > 6 and bool(int(stat[6]) & PF_EXITING)
+
+
 def _proc_identity_evidence(path, stat):
     flags = stat[6] if len(stat) > 6 else "unavailable"
     return (
@@ -182,6 +188,8 @@ def _wait_for_owned_token_or_exit(
         ):
             return False
         last_stat = stat
+        if _proc_is_exiting(stat):
+            return "exiting"
         try:
             environment = (path / "environ").read_bytes().split(b"\0")
             last_environment_error = None
@@ -292,8 +300,12 @@ def stop(proc):
     if proc is None:
         return
 
+    tracked_owned_members = set()
+    exiting_members = set()
+
     def members():
         found = []
+        exiting_members.clear()
         for path in PROC_ROOT.iterdir():
             if not path.name.isdigit():
                 continue
@@ -305,19 +317,37 @@ def stop(proc):
                     or int(stat[19]) < int(proc.start_ticks)
                 ):
                     continue
+                pid = int(path.name)
+                identity = (pid, stat[19], stat[3])
+                if _proc_is_exiting(stat):
+                    if stat[3] == str(proc.pid) or identity in tracked_owned_members:
+                        tracked_owned_members.add(identity)
+                        exiting_members.add(identity)
+                        found.append(identity)
+                    continue
+                same_leader_session = _same_live_session(path, stat[19], proc.pid)
                 try:
                     environment = (path / "environ").read_bytes().split(b"\0")
                 except PermissionError:
-                    if _same_live_session(path, stat[19], proc.pid):
+                    if same_leader_session:
                         raise RuntimeError(
                             f"Cannot verify ownership of session member {path.name}"
                         )
                     continue
                 if f"SPLITKV_RUN_TOKEN={proc.run_token}".encode() in environment:
-                    found.append((int(path.name), stat[19], stat[3]))
-                elif _same_live_session(path, stat[19], proc.pid):
-                    if _wait_for_owned_token_or_exit(path, proc, stat[19], proc.pid):
-                        found.append((int(path.name), stat[19], stat[3]))
+                    tracked_owned_members.add(identity)
+                    found.append(identity)
+                elif same_leader_session:
+                    token_state = _wait_for_owned_token_or_exit(
+                        path, proc, stat[19], proc.pid
+                    )
+                    if token_state is True:
+                        tracked_owned_members.add(identity)
+                        found.append(identity)
+                    elif token_state == "exiting":
+                        tracked_owned_members.add(identity)
+                        exiting_members.add(identity)
+                        found.append(identity)
             except (FileNotFoundError, ProcessLookupError, PermissionError):
                 continue
         return found
@@ -342,12 +372,23 @@ def stop(proc):
                         or stat[19] != birth
                     ):
                         continue
+                    if _proc_is_exiting(stat):
+                        exiting_members.add((pid, birth, session_id))
+                        continue
                     env = (path / "environ").read_bytes().split(b"\0")
                     if (
                         f"SPLITKV_RUN_TOKEN={proc.run_token}".encode() in env
                         and _same_live_session(path, birth, session_id)
                     ):
-                        os.kill(pid, sig)
+                        current_stat = _read_proc_stat(path)
+                        if (
+                            len(current_stat) > 19
+                            and current_stat[0] not in ("Z", "X")
+                            and current_stat[3] == session_id
+                            and current_stat[19] == birth
+                            and not _proc_is_exiting(current_stat)
+                        ):
+                            os.kill(pid, sig)
                 except (FileNotFoundError, ProcessLookupError):
                     pass
             deadline = time.monotonic() + seconds
@@ -361,6 +402,14 @@ def stop(proc):
             flush=True,
         )
         if remaining:
+            pending_exit = [
+                identity for identity in remaining if identity in exiting_members
+            ]
+            if pending_exit:
+                raise RuntimeError(
+                    "Owned processes remained in PF_EXITING after the cleanup "
+                    f"grace periods: {pending_exit}"
+                )
             raise RuntimeError(f"Could not stop owned processes: {remaining}")
     finally:
         proc.log_file.close()
@@ -686,6 +735,136 @@ def fixture(args, out):
     sha = hashlib.sha256((out / "fixture.json").read_bytes()).hexdigest()
     print(f"fixture={out / 'fixture.json'} sha256={sha} origin={origin}", flush=True)
     return ids
+
+
+def precision_fixtures(args, out):
+    fixture_dir = HERE / "fixtures" / "precision"
+    manifest_path = fixture_dir / "manifest.json"
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    if manifest.get("version") != 1:
+        raise ValueError("Unsupported precision fixture manifest version")
+    if manifest.get("output_tokens") != 64 or manifest.get("answer") != "731954":
+        raise ValueError(
+            "Precision fixture manifest must require answer='731954' and "
+            "output_tokens=64"
+        )
+    expected_tokenizer_files = {"tokenizer.json", "tokenizer_config.json"}
+    tokenizer_hashes = manifest.get("tokenizer_files_sha256")
+    if not isinstance(tokenizer_hashes, dict) or set(tokenizer_hashes) != (
+        expected_tokenizer_files
+    ):
+        raise ValueError(
+            "Precision fixture manifest must hash tokenizer.json and "
+            "tokenizer_config.json"
+        )
+    expected_cases = {
+        "short": (512, 4),
+        "long": (4096, 4),
+        "target64k": (64000, 2),
+    }
+    if set(manifest.get("cases", {})) != set(expected_cases):
+        raise ValueError(
+            f"Precision fixture manifest must define exactly {sorted(expected_cases)}"
+        )
+    for case, (token_count, request_count) in expected_cases.items():
+        details = manifest["cases"][case]
+        if (
+            details.get("token_count") != token_count
+            or details.get("requests") != request_count
+        ):
+            raise ValueError(
+                f"Precision fixture {case} must declare token_count={token_count} "
+                f"and requests={request_count}"
+            )
+
+    for name, expected_sha in manifest["tokenizer_files_sha256"].items():
+        path = Path(args.model) / name
+        if not path.is_file():
+            raise ValueError(f"Required tokenizer file is missing: {path}")
+        actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_sha != expected_sha:
+            raise ValueError(
+                f"Tokenizer file SHA256 mismatch for {name}: "
+                f"expected={expected_sha} actual={actual_sha}"
+            )
+
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    vocab_size = len(tokenizer)
+    output_dir = out / "precision-fixtures"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "manifest.json").write_bytes(manifest_bytes)
+
+    loaded_cases = {}
+    for case, details in manifest["cases"].items():
+        path = fixture_dir / details["file"]
+        compressed = path.read_bytes()
+        gzip_sha = hashlib.sha256(compressed).hexdigest()
+        if gzip_sha != details["gzip_sha256"]:
+            raise ValueError(
+                f"Precision fixture {case} gzip SHA256 mismatch: "
+                f"expected={details['gzip_sha256']} actual={gzip_sha}"
+            )
+        raw = gzip.decompress(compressed)
+        raw_sha = hashlib.sha256(raw).hexdigest()
+        if raw_sha != details["raw_sha256"]:
+            raise ValueError(
+                f"Precision fixture {case} raw SHA256 mismatch: "
+                f"expected={details['raw_sha256']} actual={raw_sha}"
+            )
+        payload = json.loads(raw)
+        ids = payload.get("input_ids") if isinstance(payload, dict) else None
+        if not isinstance(ids, list) or len(ids) != details["token_count"]:
+            raise ValueError(
+                f"Precision fixture {case} must contain exactly "
+                f"{details['token_count']} input token IDs"
+            )
+        if any(type(token_id) is not int or token_id < 0 for token_id in ids):
+            raise ValueError(f"Precision fixture {case} has invalid token IDs")
+        if ids and max(ids) >= vocab_size:
+            raise ValueError(
+                f"Precision fixture {case} token ID {max(ids)} exceeds "
+                f"tokenizer vocabulary {vocab_size}"
+            )
+        (output_dir / details["file"]).write_bytes(compressed)
+        loaded_cases[case] = {
+            "input_ids": ids,
+            "requests": details["requests"],
+            "token_count": details["token_count"],
+            "gzip_sha256": gzip_sha,
+            "raw_sha256": raw_sha,
+        }
+    dump(
+        output_dir / "loaded.json",
+        {
+            "manifest": manifest,
+            "tokenizer_vocab_size": vocab_size,
+            "cases": {
+                name: {key: value for key, value in case.items() if key != "input_ids"}
+                for name, case in loaded_cases.items()
+            },
+        },
+    )
+    print(f"precision_fixtures={output_dir} tokenizer_vocab={vocab_size}", flush=True)
+    return {"manifest": manifest, "cases": loaded_cases}
+
+
+def validate_retrieval_answer(results, answer):
+    line = answer + "\n"
+    for result in results:
+        text = result.get("response", {}).get("text")
+        if not isinstance(text, str):
+            raise ValueError(
+                f"Request {result.get('request_id')}: missing retrieval response text"
+            )
+        expected_prefix = line * (len(text) // len(line) + 1)
+        if not text or not expected_prefix.startswith(text) or line not in text:
+            raise ValueError(
+                f"Request {result.get('request_id')}: response text is not a "
+                f"valid repeated-answer prefix: {text!r}"
+            )
 
 
 def generate(router, ids, output, rid):
@@ -1019,6 +1198,7 @@ def main():
                 raise RuntimeError(f"Prefill exited: {status}")
             return
         ids = fixture(args, out)
+        precision = precision_fixtures(args, out)
         wait_http(prefill + "/health", timeout=args.ready_timeout)
         round_reports = []
         references = {}
@@ -1057,24 +1237,42 @@ def main():
                 router, prefill, decode, router_proc, args.ready_timeout
             )
             if phase in ("reference", "functional"):
-                for case, input_length, request_count in (
-                    ("short", 512, 4),
-                    ("long", 4096, 4),
-                    ("target64k", 64000, 2),
-                ):
+                for case, case_fixture in precision["cases"].items():
                     flush(prefill, decode)
                     results, duration = concurrent_generate(
                         router,
-                        ids[:input_length],
-                        64,
-                        request_count,
+                        case_fixture["input_ids"],
+                        precision["manifest"]["output_tokens"],
+                        case_fixture["requests"],
                         f"{phase}-{case}",
                     )
                     dump(
                         out / f"{phase}-{case}.json",
-                        {"results": results, "duration_seconds": duration},
+                        {
+                            "fixture": {
+                                "case": case,
+                                "token_count": case_fixture["token_count"],
+                                "gzip_sha256": case_fixture["gzip_sha256"],
+                                "raw_sha256": case_fixture["raw_sha256"],
+                            },
+                            "answer_validation": {
+                                "expected": precision["manifest"]["answer"],
+                                "passed": None,
+                            },
+                            "results": results,
+                            "duration_seconds": duration,
+                        },
                     )
-                    validate(results, input_length, 64)
+                    validate(
+                        results,
+                        case_fixture["token_count"],
+                        precision["manifest"]["output_tokens"],
+                    )
+                    validate_retrieval_answer(results, precision["manifest"]["answer"])
+                    report_path = out / f"{phase}-{case}.json"
+                    report = json.loads(report_path.read_text(encoding="utf-8"))
+                    report["answer_validation"]["passed"] = True
+                    dump(report_path, report)
                     tokens = [x["response"]["output_ids"] for x in results]
                     if phase == "reference":
                         reference_tokens = tokens[0]
@@ -1165,11 +1363,15 @@ def main():
         summary = {
             "greedy_accuracy_validation": {
                 "cases": [
-                    {"input_tokens": 512, "output_tokens": 64, "requests": 4},
-                    {"input_tokens": 4096, "output_tokens": 64, "requests": 4},
-                    {"input_tokens": 64000, "output_tokens": 64, "requests": 2},
+                    {
+                        "input_tokens": case["token_count"],
+                        "output_tokens": precision["manifest"]["output_tokens"],
+                        "requests": case["requests"],
+                    }
+                    for case in precision["cases"].values()
                 ],
-                "scope": "Greedy token equality for these three fixed cases only; not a full model benchmark accuracy evaluation.",
+                "answer": precision["manifest"]["answer"],
+                "scope": precision["manifest"]["scope"],
             },
             "rounds": round_reports,
             "observed_decode_batch": active_batch,
