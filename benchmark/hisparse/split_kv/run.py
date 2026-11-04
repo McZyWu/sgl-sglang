@@ -580,6 +580,7 @@ def record_server_env(out, phase, env):
         "DEEPEP_NORMAL_LONG_SEQ_ROUND",
         "DEEPEP_NORMAL_LONG_SEQ_PER_ROUND_TOKENS",
         "DEEPEP_NORMAL_COMBINE_ENABLE_LONG_SEQ",
+        "SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK",
         "SGLANG_SCHEDULER_DECREASE_PREFILL_IDLE",
         "SGLANG_PREFILL_DELAYER_MAX_DELAY_PASSES",
         "DEEP_NORMAL_MODE_USE_INT8_QUANT",
@@ -1147,6 +1148,11 @@ def main():
     args = parser.parse_args()
     if args.bs < 2 or args.tp < 1:
         parser.error("bs >= 2 and tp >= 1 are required")
+    if args.role == "decode" and args.bs * 4 % args.tp != 0:
+        parser.error(
+            "decode graph capture has no valid bucket: with the current MTP draft width 4, "
+            "--bs * 4 must be divisible by --tp"
+        )
     try:
         validate_host_addresses(args.prefill_host, args.decode_host, args.role)
     except ValueError as error:

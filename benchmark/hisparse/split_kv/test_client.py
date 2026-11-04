@@ -501,6 +501,46 @@ class TestClient(unittest.TestCase):
             self.assertIn("--prefill-host must be a full IPv4 address", result.stderr)
             self.assertFalse(output.exists())
 
+    def test_invalid_decode_graph_shape_fails_before_runtime_initialization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / "model"
+            model.mkdir()
+            output = root / "runs"
+            command = [
+                sys.executable,
+                str(Path(__file__).with_name("run.py")),
+                "decode",
+                "--model",
+                str(model),
+                "--prefill-host",
+                "127.0.0.2",
+                "--decode-host",
+                "127.0.0.1",
+                "--devices",
+                ",".join(str(index) for index in range(16)),
+                "--interface",
+                "lo",
+                "--tp",
+                "16",
+                "--bs",
+                "5",
+                "--output-dir",
+                str(output),
+            ]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("decode graph capture has no valid bucket", result.stderr)
+            self.assertIn("--bs * 4 must be divisible by --tp", result.stderr)
+            self.assertFalse(output.exists())
+
+    def test_server_env_records_deepep_dispatch_limit_when_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            runner.record_server_env(output, "decode", {})
+            recorded = json.loads((output / "env-decode.json").read_text())
+        self.assertIsNone(recorded["SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK"])
+
     def test_default_frozen_controller_runs_all_rounds_after_flush(self):
         with tempfile.TemporaryDirectory() as tmp:
             model = Path(tmp) / "model"

@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 原始 NoneType 回退问题 | CPU 重现后修复 | 原版读取 `self.k_buffer=None`；修复改读权威 MF split K/V |
 | Linux 完整测试模块 | 8/8，通过，exit 0 | 2 项新增 retraction 测试、6 项既有 MF CPU 测试；MF/设备边界使用模拟 |
-| 自动控制器自检 | 28/28，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁、PF_EXITING 等待和性能配置的 prefix 准确性门禁 |
+| 自动控制器自检 | 30/30，通过，exit 0 | 真实本机 HTTP/SSE、错误/cache 门禁、默认冻结客户端及 stdlib 的 2 warmup + 5 formal 模拟流程、活跃 BS、异常退出码；另覆盖精度 fixture/答案门禁、PF_EXITING 等待、性能配置的 prefix 准确性门禁和 Q4/TP 图尺寸预检 |
 | 冻结资产与报告自检 | 3/3，通过，exit 0 | 原始 SHA、BS16 pickle 原字节、BS20 扩展、seed 1 输出、正式 1024 输出及 cached63872、输入缓存命中 |
 | 静态检查 | 通过 | Ruff 0.15.1、isort 7.0.0、codespell 2.4.1、AST、空白/EOF、Bash 语法、文件大小与 diff check |
 | kernel 构建及安装 | 通过，exit 0 | 217 A3/CANN 9.1.0 构建；两侧安装同一 wheel，检查 split K/V 算子 schema |
@@ -87,3 +87,9 @@ MF 1.3.0 wheel 的 AccOffload 库为官方零字节占位。用随包官方构�
 该次性能D启用实验性decode radix prefix cache，而前面的自然精度在D cache关闭的reference/forced配置下执行。为补足这个组合的答案验证，新增性能D ready后、七轮计时前的64K语义seed+BS并发64-token准确性门禁，要求与原生exact、正确答案且实际有cache hit；七轮冻结随机性能流程原样保留。正常完整流程因此共14次flush。此新增cache专项在BS16旧运行中未执行，将在BS扩展实机运行中验证，不倒填为BS16已有证据。
 
 本轮期间长时间保留的旧P曾在MF `AccTcpWorker` native栈段错误，之后出现Gloo peer断开；SMEM对旧D端口重连与该错误因果未确认。恢复P后上述完整controller完成，不把重启称为MF根因修复。新实验每次干净启动两端，并继续保留失败证据。
+
+## 扩 BS 的失败与边界
+
+两端统一BS20、其余Q4/C12288/BF16/TP16与163840-token容量不变，原生D在target verify图启动阶段退出1。最早可见错误为HCCL watchdog `ERR02005` 与Python Aborted，后续同步报507018、AICPU `RunAicpuRpcSrvLaunchV2_allgather errorCode=0x2a` 参数错误；捕获开始可用14.83GB，不把它归为OOM。该次未执行任何用户精度请求、MF回退或性能轮次。纯TP16的若干BF16、int32/int64、FP32 all-gather eager/graph小探针均通过，不能据此把问题泛化为“所有HCCL图或BS20均不支持”。具体模型算子及参数仍在定位。
+
+随后BS18 startup-only对照退出1，源码和实机一致为 `AssertionError: capture_bs=[]`：Q4需要BS×4被TP16整除，72行不满足，80行满足；因此18不是当前配置的有效替代。脚本新增decode参数预检，在runtime导入及模型加载前拒绝不满足该关系的尺寸。这个预检不是BS20错误的修复。环境快照新增已有dispatch上限变量的原始值；未设置为null，默认128来自框架定义，未改变运行值。

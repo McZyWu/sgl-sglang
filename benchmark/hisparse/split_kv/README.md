@@ -77,6 +77,10 @@ P 自动创建 Ascend transfer 的配置存储：framework 的 `start_disagg_ser
 
 两侧的 `--tp`、`--bs`、端口、内存比例等参数须一致；默认 TP16、DP1、BS16、MTP3/Q4、mode1、C12288、BF16 KV、context 67584、page 128、max-total-tokens 163840、静态显存比例 0.92。扩大 BS 时在两侧同时指定 `--bs N`，并根据现场显存和容量设 `--max-total-tokens`；不能把不同配置的数据当成同一基线。`--help` 显示完整参数。以上启动参数来自历史单机 203 TPS 配置的已知部分；PD 结构与历史单机不同。
 
+本脚本固定 Q4：decode 捕获的 token 行数为 `BS * 4`，须能被 TP 整除。TP16 时 BS 应是 4 的倍数；BS18 会在模型加载前被参数预检拒绝。满足此关系仍不保证具体模型的图能工作：本轮 BS20 原生 verify 图启动阶段出现 HCCL/AICPU 参数错误，开始捕获时可用显存约14.83GB，未发现 OOM 证据，尚未产生BS20性能数据。默认推荐已完成全流程的BS16，不把BS20失败记为零TPS，也不把相邻模型支持BS20扩大为当前GLM路径已通过。
+
+环境记录保留 `SGLANG_DEEPEP_NUM_MAX_DISPATCH_TOKENS_PER_RANK` 的原始设置；未设置时 JSON 为 `null`，框架 `environ.py` 的当前默认值为128。本脚本不为记录而更改它。本轮BS20失败后的环境重建读到128，不支持“沿用64导致80个verify token超限”的猜测；死进程的有效值没有被事后直接读取。
+
 Decode 所有阶段显式设置 `--disaggregation-decode-extra-slots 0`，避免默认的额外请求槽同时扩大 C12288 resident 预算。性能阶段启用实验性的 `--disaggregation-decode-enable-radix-cache`，让共享前缀有机会复用物理槽；参考与强制回退阶段保持 Decode radix cache 关闭。此组合的 MF prefix 复用尚未实机验证。脚本在性能结束时从 Decode 原始打屏提取最大 `#running-req`，缺失或小于目标 BS 时以非零退出，避免把客户端排队并发误称实际 Decode BS。
 
 `--disable-decode-prefix-cache` 仅用于诊断，需同时设 `--max-total-tokens` 至少为 `BS * (64000 + 1024 + 128)`；这只是保守预检，实际池大小、空闲显存与 admission 仍需查看运行日志。该模式不保证满足 63872 cached tokens 门禁，不应与 prefix100 正式数据混用。
