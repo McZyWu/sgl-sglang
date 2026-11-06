@@ -638,7 +638,19 @@ class TestDisaggregationWire(unittest.TestCase):
         self.assertEqual(info.dst_dcp_size, 4)
         self.assertEqual(info.dst_dcp_rank, 2)
         self.assertEqual(info.dst_kv_item_lens, [])
+        self.assertEqual(info.npu_mla_bridge_metadata, b"")
         info = KVArgsRegisterInfo.from_zmq(msg + [b"", struct.pack("Q", 128)])
+        self.assertEqual(info.npu_mla_bridge_metadata, b"")
+        extended = KVArgsRegisterInfo.from_zmq(
+            msg + [b"", struct.pack("Q", 128), b"bridge-v1"]
+        )
+        self.assertEqual(extended.npu_mla_bridge_metadata, b"bridge-v1")
+        manager = MooncakeKVManager.__new__(MooncakeKVManager)
+        self.assertIsNotNone(
+            manager.validate_npu_mla_bridge_registration(
+                extended.npu_mla_bridge_metadata
+            )
+        )
         self.assertEqual(info.dst_kv_item_lens, [128])
 
     def test_int_lists_roundtrip(self):

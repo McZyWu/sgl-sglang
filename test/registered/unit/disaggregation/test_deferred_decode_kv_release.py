@@ -694,6 +694,30 @@ def _make_decode_req(room, idx, mgr, n_prefill_ranks=1):
 
 
 class TestResolveDeferredReleases(CustomTestCase):
+    def test_strict_drain_never_releases_on_timeout(self):
+        mgr = _make_manager()
+        q = _make_queue(timeout=-1)
+        q.gloo_group = None
+        q.queue = []
+        dreq = _make_decode_req(401, 8, mgr)
+        dreq.kv_receiver.requires_strict_transfer_drain = lambda: True
+        dreq.kv_receiver.is_strict_transfer_drain_safe = MagicMock(return_value=False)
+        q._deferred_releases.append((dreq, 10.0, float("-inf"), 8, 1))
+        with (
+            patch.object(
+                decode_mod.torch.distributed, "get_world_size", return_value=1
+            ),
+            patch.object(decode_mod, "release_kv_cache") as release,
+        ):
+            q.resolve_deferred_releases()
+            release.assert_not_called()
+            self.assertEqual(len(q._deferred_releases), 1)
+            with self.assertRaises(RuntimeError):
+                q.release_memory_occupation()
+            dreq.kv_receiver.is_strict_transfer_drain_safe.return_value = True
+            q.resolve_deferred_releases()
+            release.assert_called_once()
+
     def test_host_release_requires_drain_on_every_rank_even_after_timeout(self):
         mgr = _make_manager()
         q = _make_queue(timeout=-1)

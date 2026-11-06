@@ -101,6 +101,7 @@ class TransferInfo:
     is_dummy: bool
     decode_prefix_len: Optional[int] = None
     dst_device_kv_indices: Optional[npt.NDArray[np.int32]] = None
+    npu_mla_room: bytes = b""
     # Note: always put the optional staging field at the final (it will be set through 'STAGING_RSP' pkg when needed)
     staging: Optional[StagingTransferInfo] = None
 
@@ -134,6 +135,7 @@ class TransferInfo:
                 if len(msg) > 9 and msg[9] != b""
                 else None
             ),
+            npu_mla_room=msg[10] if len(msg) > 10 else b"",
         )
 
 
@@ -163,6 +165,7 @@ class KVArgsRegisterInfo:
     staging_base_ptr: int = 0
     staging_total_size: int = 0
     staging: Optional[StagingRegisterInfo] = None
+    npu_mla_bridge_metadata: bytes = b""
 
     @classmethod
     def from_zmq(cls, msg: List[bytes]):
@@ -212,6 +215,7 @@ class KVArgsRegisterInfo:
                 if len(msg) > 19 and msg[19]
                 else []
             ),
+            npu_mla_bridge_metadata=msg[20] if len(msg) > 20 else b"",
             # Note: always put the staging field at the final
             staging=StagingRegisterInfo.from_zmq_fields(msg, 14, slot_ids_index=18),
         )
@@ -896,6 +900,17 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         reason, if any.
         """
         fully_checked, mismatch = self._validate_peer_state_layout(decode_kv_args)
+        bridge_metadata = getattr(decode_kv_args, "npu_mla_bridge_metadata", b"")
+        if bridge_metadata:
+            # Backends must explicitly override this before they advertise the
+            # capability. Never let an unknown extension fall through to the
+            # ordinary same-layout transfer path.
+            mismatch = (
+                self.validate_npu_mla_bridge_registration(
+                    bridge_metadata, decode_kv_args
+                )
+                or mismatch
+            )
         with self.session_lock:
             self.failed_sessions.discard(mooncake_session_id)
             self.session_failures.pop(mooncake_session_id, None)
@@ -907,6 +922,34 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 self.state_strides_validated.add(mooncake_session_id)
             self.decode_kv_args_table[mooncake_session_id] = decode_kv_args
         return mismatch
+
+    def validate_npu_mla_bridge_registration(
+        self, metadata: bytes, registration=None
+    ) -> Optional[str]:
+        return "NPU MLA bridge registration is not supported by this backend"
+
+    def _do_npu_mla_bridge_transfer(
+        self, kv_chunk, req, target_info, dst_indices, executor, queue, writer_id
+    ):
+        """Backend hook must finish native index/draft as well as staged KV."""
+        raise RuntimeError("NPU MLA bridge transfer is not implemented")
+
+    def handle_npu_mla_bridge_ack(self, msg):
+        raise RuntimeError("NPU MLA bridge ACK is not supported by this backend")
+
+    def handle_npu_mla_bridge_chunk(self, msg):
+        raise RuntimeError("NPU MLA bridge chunk is not supported by this backend")
+
+    def handle_npu_mla_bridge_native_ready(self, msg):
+        raise RuntimeError("NPU MLA bridge native completion is not supported")
+
+    def handle_npu_mla_bridge_lease_request(self, msg):
+        raise RuntimeError("NPU MLA bridge lease is not supported by this backend")
+
+    def handle_npu_mla_bridge_lease_response(self, msg):
+        raise RuntimeError(
+            "NPU MLA bridge lease response is not supported by this backend"
+        )
 
     def _validate_peer_state_layout(
         self, registration_info: KVArgsRegisterInfo
@@ -2580,7 +2623,24 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                         skip_kv, skip_state = self._get_dsa_cache_transfer_skip_flags(
                             target_rank_registration_info
                         )
-                        if (
+                        if getattr(
+                            target_rank_registration_info,
+                            "npu_mla_bridge_metadata",
+                            b"",
+                        ):
+                            ret, deferred = self._do_npu_mla_bridge_transfer(
+                                kv_chunk,
+                                req,
+                                target_rank_registration_info,
+                                chunked_dst_kv_indice,
+                                executor,
+                                queue,
+                                prefill_unique_rank,
+                            )
+                            if deferred:
+                                staging_deferred = True
+                                break
+                        elif (
                             len(kv_chunk.prefill_kv_indices) == 0
                             or not self.kv_args.kv_data_ptrs
                             or skip_kv
@@ -2903,6 +2963,12 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                 if room == "STAGING_RSP":
                     handle_staging_rsp(waiting_req_bytes, self.transfer_infos)
                     continue
+                if room == "NPU_MLA_ACK":
+                    self.handle_npu_mla_bridge_ack(waiting_req_bytes)
+                    continue
+                if room == "NPU_MLA_LEASE_RSP":
+                    self.handle_npu_mla_bridge_lease_response(waiting_req_bytes)
+                    continue
                 if self._handle_abort_notification(waiting_req_bytes):
                     continue
                 mooncake_session_id = waiting_req_bytes[3].decode("ascii")
@@ -2977,6 +3043,15 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                     continue
                 if msg[0] == MooncakeKVManager.AUX_DATA_HEADER:
                     self._handle_aux_data(msg)
+                    continue
+                if msg[0] == b"NPU_MLA_LEASE_REQ":
+                    self.handle_npu_mla_bridge_lease_request(msg)
+                    continue
+                if msg[0] == b"NPU_MLA_NATIVE_READY":
+                    self.handle_npu_mla_bridge_native_ready(msg)
+                    continue
+                if msg[0] == b"NPU_MLA_CHUNK_READY":
+                    self.handle_npu_mla_bridge_chunk(msg)
                     continue
 
                 # Staging: prefill notifies a chunk written to staging buffer
@@ -3256,6 +3331,10 @@ class MooncakeKVSender(MooncakeFailureExceptionMixin, CommonKVSender):
 
 
 class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
+    def _npu_mla_room_frame(self):
+        """Optional backend extension; legacy Mooncake sends no extra frame."""
+        return None
+
     def __init__(
         self,
         mgr: MooncakeKVManager,
@@ -3320,36 +3399,66 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
                 for layer_id in (staging_slots.get("slot_layer_ids") or [])
             )
 
+            bridge_metadata = getattr(self.kv_mgr, "npu_mla_bridge_metadata", None)
+            if (
+                getattr(self.kv_mgr, "_sparse_decode_bridge_resources", None)
+                is not None
+                and bridge_metadata is None
+            ):
+                self.kv_mgr.record_failure(
+                    self.bootstrap_room, "NPU MLA bridge metadata is not ready"
+                )
+                self.conclude_state = KVPoll.Failed
+                self.kv_mgr.update_status(self.bootstrap_room, KVPoll.Failed)
+                return False
+            if bridge_metadata is not None:
+                from sglang.srt.disaggregation.ascend.mla_bridge_contract import (
+                    LAYOUT,
+                    BridgeMetadata,
+                )
+
+                if (
+                    getattr(self.prefill_info, "npu_mla_bridge_capability", None)
+                    != LAYOUT
+                ):
+                    self.kv_mgr.record_failure(
+                        self.bootstrap_room, "Prefill does not support NPU MLA bridge"
+                    )
+                    self.conclude_state = KVPoll.Failed
+                    self.kv_mgr.update_status(self.bootstrap_room, KVPoll.Failed)
+                    return False
+                BridgeMetadata.decode(bridge_metadata)
             try:
                 sock, lock = self._connect_to_bootstrap_server(bootstrap_info)
                 with lock:
-                    sock.send_multipart(
-                        [
-                            "None".encode("ascii"),
-                            self.kv_mgr.local_ip.encode("ascii"),
-                            str(self.kv_mgr.rank_port).encode("ascii"),
-                            self.session_id.encode("ascii"),
-                            packed_kv_data_ptrs,
-                            packed_aux_data_ptrs,
-                            packed_state_data_ptrs,
-                            dst_tp_rank,
-                            dst_attn_tp_size,
-                            dst_kv_item_len,
-                            packed_state_item_lens,
-                            packed_state_dim_per_tensor,
-                            packed_kv_layer_ids,
-                            packed_state_layer_ids,
-                            packed_staging_base_ptr,
-                            staging_total_size_str,
-                            dst_dcp_size,
-                            dst_dcp_rank,
-                            packed_staging_slot_layer_ids,
-                            struct.pack(
-                                f"{len(self.kv_mgr.kv_args.kv_item_lens)}Q",
-                                *self.kv_mgr.kv_args.kv_item_lens,
-                            ),
-                        ]
-                    )
+                    registration = [
+                        "None".encode("ascii"),
+                        self.kv_mgr.local_ip.encode("ascii"),
+                        str(self.kv_mgr.rank_port).encode("ascii"),
+                        self.session_id.encode("ascii"),
+                        packed_kv_data_ptrs,
+                        packed_aux_data_ptrs,
+                        packed_state_data_ptrs,
+                        dst_tp_rank,
+                        dst_attn_tp_size,
+                        dst_kv_item_len,
+                        packed_state_item_lens,
+                        packed_state_dim_per_tensor,
+                        packed_kv_layer_ids,
+                        packed_state_layer_ids,
+                        packed_staging_base_ptr,
+                        staging_total_size_str,
+                        dst_dcp_size,
+                        dst_dcp_rank,
+                        packed_staging_slot_layer_ids,
+                        struct.pack(
+                            f"{len(self.kv_mgr.kv_args.kv_item_lens)}Q",
+                            *self.kv_mgr.kv_args.kv_item_lens,
+                        ),
+                    ]
+                    if bridge_metadata is not None:
+                        registration.append(bridge_metadata)
+                    sock.send_multipart(registration)
             except zmq.ZMQError:
                 self.kv_mgr.record_failure(
                     self.bootstrap_room,
@@ -3390,28 +3499,30 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
             try:
                 sock, lock = self._connect_to_bootstrap_server(bootstrap_info)
                 with lock:
-                    sock.send_multipart(
-                        [
-                            str(self.bootstrap_room).encode("ascii"),
-                            self.kv_mgr.local_ip.encode("ascii"),
-                            str(self.kv_mgr.rank_port).encode("ascii"),
-                            self.session_id.encode("ascii"),
-                            kv_indices.tobytes() if not is_dummy else b"",
-                            str(aux_index).encode("ascii") if not is_dummy else b"",
-                            (
-                                pack_int_lists(state_indices, "i")
-                                if not is_dummy and state_indices
-                                else b""
-                            ),
-                            str(self.required_dst_info_num).encode("ascii"),
-                            str(decode_prefix_len or 0).encode("ascii"),
-                            (
-                                np.asarray(device_kv_indices, dtype=np.int32).tobytes()
-                                if not is_dummy and device_kv_indices is not None
-                                else b""
-                            ),
-                        ]
-                    )
+                    room_frame = self._npu_mla_room_frame() if not is_dummy else None
+                    frames = [
+                        str(self.bootstrap_room).encode("ascii"),
+                        self.kv_mgr.local_ip.encode("ascii"),
+                        str(self.kv_mgr.rank_port).encode("ascii"),
+                        self.session_id.encode("ascii"),
+                        kv_indices.tobytes() if not is_dummy else b"",
+                        str(aux_index).encode("ascii") if not is_dummy else b"",
+                        (
+                            pack_int_lists(state_indices, "i")
+                            if not is_dummy and state_indices
+                            else b""
+                        ),
+                        str(self.required_dst_info_num).encode("ascii"),
+                        str(decode_prefix_len or 0).encode("ascii"),
+                        (
+                            np.asarray(device_kv_indices, dtype=np.int32).tobytes()
+                            if not is_dummy and device_kv_indices is not None
+                            else b""
+                        ),
+                    ]
+                    if room_frame is not None:
+                        frames.append(room_frame)
+                    sock.send_multipart(frames)
             except zmq.ZMQError:
                 self.invalidate_cached_bootstrap_infos()
                 self.kv_mgr.record_failure(

@@ -603,8 +603,18 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
             if self.scheduler.enable_hisparse
             else self.token_to_kv_pool
         )
-        kv_data_ptrs, kv_data_lens, kv_item_lens = get_kv_transfer_buf_infos(
-            transfer_kv_pool
+        from sglang.srt.disaggregation.common.decode_kv_export import (
+            prepare_decode_kv_buffers,
+        )
+
+        kv_data_ptrs, kv_data_lens, kv_item_lens = prepare_decode_kv_buffers(
+            is_ascend=self.transfer_backend == TransferBackend.ASCEND,
+            manager_factory=lambda: get_kv_class(
+                self.transfer_backend, KVClassType.MANAGER
+            ),
+            native_export=get_kv_transfer_buf_infos,
+            kv_args=kv_args,
+            pool=transfer_kv_pool,
         )
         kv_data_mem_kinds = (
             ["DRAM"] * len(kv_data_ptrs)
@@ -639,6 +649,9 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
         kv_args.kv_data_lens = kv_data_lens
         kv_args.kv_item_lens = kv_item_lens
         kv_args.num_draft_entries = num_draft_entries
+        bridge_resources = getattr(kv_args, "_npu_mla_bridge_resources", None)
+        if bridge_resources is not None:
+            bridge_resources.bind_native_manifest(self.draft_token_to_kv_pool, kv_args)
         kv_args.kv_layer_ids = build_kv_layer_ids(
             token_to_kv_pool=self.token_to_kv_pool,
             draft_token_to_kv_pool=self.draft_token_to_kv_pool,
@@ -1817,6 +1830,16 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
         )
         assert decode_req.metadata_buffer_index is not None
         page_indices = self._transfer_page_indices(decode_req, kv_indices, page_size)
+        if getattr(
+            decode_req.kv_receiver.kv_mgr, "npu_mla_bridge_metadata", None
+        ) is not None and not _is_fake_transfer(decode_req.req):
+            decode_req.kv_receiver.prepare_npu_mla_bridge_room(
+                decode_req,
+                page_indices,
+                len(kv_indices),
+                metadata_kwargs.get("decode_prefix_len", 0),
+                self.draft_token_to_kv_pool,
+            )
         if (
             metadata_kwargs.get("destination") != KVTransferDestination.HOST
             and self.transfer_queue.enable_staging
@@ -2817,6 +2840,13 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
                 requires_host_drain = (
                     self.enable_host_receive and decode_req.host_staged
                 )
+                strict_drain = getattr(
+                    decode_req.kv_receiver,
+                    "requires_strict_transfer_drain",
+                    lambda: False,
+                )()
+                if strict_drain:
+                    decode_req.kv_receiver.begin_strict_transfer_drain()
                 deferrable = (
                     self.enable_deferred_kv_release
                     and decode_req.kv_receiver.kv_mgr.enable_deferred_decode_kv_release
@@ -2829,8 +2859,10 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
                     # already hold destinations; this path always reaches
                     # _do_release, which clears the tracker.
                     decode_req.kv_receiver.ensure_abort_notified(force_arm=True)
-                if requires_host_drain or (
-                    deferrable and decode_req.kv_receiver.abort_notified
+                if (
+                    strict_drain
+                    or requires_host_drain
+                    or (deferrable and decode_req.kv_receiver.abort_notified)
                 ):
                     # Host pages always await a drain ack. A receiver that could
                     # not notify (metadata never published, so no prefill holds
@@ -2862,6 +2894,11 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
                         decode_req
                     ):
                         continue
+                finish_bridge = getattr(
+                    decode_req.kv_receiver, "finish_npu_mla_transfer", None
+                )
+                if finish_bridge is not None:
+                    finish_bridge()
                 self._commit_transfer_to_req(decode_req)
                 indices_to_remove.add(i)
                 # Check if request was aborted due to corruption
@@ -2969,7 +3006,11 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
             [
                 req.kv_receiver.is_abort_release_safe()
                 for req, _, _, _, _ in self._deferred_releases
-                if self.enable_host_receive and req.host_staged
+                if self.enable_host_receive
+                and req.host_staged
+                and not getattr(
+                    req.kv_receiver, "requires_strict_transfer_drain", lambda: False
+                )()
             ],
             dtype=torch.int32,
         )
@@ -2990,6 +3031,16 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
             required_acks,
         ) in self._deferred_releases:
             room = decode_req.req.bootstrap_room
+            if getattr(
+                decode_req.kv_receiver, "requires_strict_transfer_drain", lambda: False
+            )():
+                if decode_req.kv_receiver.is_strict_transfer_drain_safe():
+                    to_release.append((decode_req, start_time, idx, room, True))
+                else:
+                    still_held.append(
+                        (decode_req, start_time, deadline, idx, required_acks)
+                    )
+                continue
             if self.enable_host_receive and decode_req.host_staged:
                 if next(host_ready):
                     to_release.append((decode_req, start_time, idx, room, True))
@@ -3031,6 +3082,17 @@ class DecodeTransferQueue(DecodeHiCacheTransferMixin):
 
     def release_memory_occupation(self):
         """Clean up in-flight transfers before releasing GPU memory."""
+        if any(
+            getattr(req.kv_receiver, "requires_strict_transfer_drain", lambda: False)()
+            for req in self.queue
+            if req.kv_receiver is not None
+        ) or any(
+            getattr(req.kv_receiver, "requires_strict_transfer_drain", lambda: False)()
+            for req, _, _, _, _ in self._deferred_releases
+        ):
+            raise RuntimeError(
+                "Cannot release memory while strict transfer drains are held"
+            )
         self.queue.clear()
         # Pool is being torn down; drop held entries without per-request release.
         self._deferred_releases.clear()

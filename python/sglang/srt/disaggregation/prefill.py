@@ -336,6 +336,12 @@ class PrefillBootstrapQueue:
         )
 
         kv_manager_class = get_kv_class(self.transfer_backend, KVClassType.MANAGER)
+        if self.transfer_backend == TransferBackend.ASCEND:
+            prepare_bridge = getattr(
+                kv_manager_class, "prepare_prefill_mla_bridge_inputs", None
+            )
+            if prepare_bridge is not None:
+                prepare_bridge(kv_args, self.token_to_kv_pool, draft_kv_pool)
         kv_manager_kwargs = (
             {"dcp_remote_decode_layout": dcp_remote_decode_layout}
             if self.transfer_backend == TransferBackend.ASCEND
