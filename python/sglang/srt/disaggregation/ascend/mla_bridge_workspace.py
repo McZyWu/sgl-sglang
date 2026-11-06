@@ -25,6 +25,8 @@ class PackedBridgeWorkspace:
         self.v_workspace = torch.empty(
             (self.capacity, 64), dtype=torch.bfloat16, device=device
         )
+        self.index_buffer = torch.empty(self.capacity, dtype=torch.int64, device=device)
+        self._index_key = None
         self._lock = Lock()
         self._lease = None
         self._next_lease = 0
@@ -43,6 +45,26 @@ class PackedBridgeWorkspace:
             self._packed_rows = None
             self._send_attempted = False
             return self._lease
+
+    def prepare_indices(self, lease, scope, physical_rows):
+        """Reuse only identical physical rows within the same segment scope."""
+        with self._lock:
+            if self._lease != lease or lease is None:
+                raise ValueError("Stale packed workspace lease")
+            if self._packed_rows is not None or self._send_attempted:
+                raise RuntimeError("Cannot change indices after packing")
+            if not isinstance(scope, tuple) or len(scope) != 5:
+                raise ValueError("Invalid packed index scope")
+            rows = tuple(physical_rows)
+            if not 0 < len(rows) <= self.capacity:
+                raise ValueError("Invalid packed index count")
+            key = (scope, rows, self.index_buffer.device)
+            if key != self._index_key:
+                self._index_key = None
+                cpu_rows = torch.tensor(rows, dtype=torch.int64, device="cpu")
+                self.index_buffer[: len(rows)].copy_(cpu_rows, non_blocking=False)
+                self._index_key = key
+            return self.index_buffer[: len(rows)]
 
     def pack(self, lease, k, v, indices):
         with self._lock:
@@ -141,5 +163,7 @@ class PackedBridgeWorkspace:
             self.transfer.close(
                 engine, transport_drained=transport_drained, synchronize=synchronize
             )
+            self._index_key = None
+            self.index_buffer = None
             self.k_workspace = None
             self.v_workspace = None

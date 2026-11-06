@@ -1339,6 +1339,121 @@ class TestAscendMLABridgeContract(CustomTestCase):
             workspace.release(lease, transport_drained=True, device_work_drained=True)
         workspace.close(engine, transport_drained=True, synchronize=lambda: None)
 
+    def test_workspace_index_cache_respects_lease_scope_and_failure(self):
+        import torch
+        from unittest.mock import Mock, patch
+
+        from sglang.srt.disaggregation.ascend.mla_bridge_workspace import (
+            PackedBridgeWorkspace,
+        )
+
+        workspace = PackedBridgeWorkspace("cpu")
+        engine = Mock()
+        engine.batch_register_memory.return_value = 0
+        engine.unregister_memory.return_value = 0
+        workspace.transfer.register(engine)
+        scope = (4, 1, "peer", 0, 128)
+        lease = workspace.try_acquire()
+        self.assertIsNone(workspace.try_acquire())
+        first = workspace.prepare_indices(lease, scope, (1, 0))
+        self.assertEqual(first.tolist(), [1, 0])
+        with patch.object(torch, "tensor", side_effect=AssertionError("cache miss")):
+            self.assertEqual(
+                workspace.prepare_indices(lease, scope, (1, 0)).tolist(), [1, 0]
+            )
+        with self.assertRaises(RuntimeError):
+            workspace.release(lease, transport_drained=False, device_work_drained=True)
+        workspace.release(lease, transport_drained=True, device_work_drained=True)
+        lease2 = workspace.try_acquire()
+        with patch.object(torch, "tensor", side_effect=AssertionError("cache miss")):
+            reused = workspace.prepare_indices(lease2, scope, (1, 0))
+        self.assertEqual(reused.data_ptr(), first.data_ptr())
+        self.assertEqual(reused.data_ptr(), workspace.index_buffer.data_ptr())
+        self.assertEqual(reused.tolist(), [1, 0])
+        for changed_scope in ((5, 1, "peer", 0, 128), (4, 1, "peer", 128, 256)):
+            with patch.object(torch, "tensor", wraps=torch.tensor) as create:
+                self.assertEqual(
+                    workspace.prepare_indices(lease2, changed_scope, (1, 0)).tolist(),
+                    [1, 0],
+                )
+                self.assertEqual(create.call_count, 1)
+        self.assertEqual(
+            workspace.prepare_indices(lease2, scope, (0, 1)).tolist(), [0, 1]
+        )
+        with patch.object(torch, "tensor", wraps=torch.tensor) as create:
+            self.assertEqual(
+                workspace.prepare_indices(
+                    lease2, (4, 2, "peer", 0, 128), (0, 1)
+                ).tolist(),
+                [0, 1],
+            )
+            self.assertEqual(create.call_count, 1)
+        with self.assertRaises(ValueError):
+            workspace.prepare_indices(lease, scope, (0,))
+        with self.assertRaises(ValueError):
+            workspace.prepare_indices(lease2, scope, ())
+        self.assertEqual(
+            workspace.prepare_indices(lease2, scope, range(workspace.capacity)).numel(),
+            workspace.capacity,
+        )
+        with self.assertRaises(ValueError):
+            workspace.prepare_indices(lease2, scope, range(workspace.capacity + 1))
+
+        class FailedCopy:
+            @property
+            def device(self):
+                return torch.device("cpu")
+
+            def __getitem__(self, key):
+                return self
+
+            def copy_(self, *args, **kwargs):
+                raise RuntimeError("injected copy failure")
+
+        original = workspace.index_buffer
+        workspace.index_buffer = FailedCopy()
+        with self.assertRaisesRegex(RuntimeError, "injected copy failure"):
+            workspace.prepare_indices(lease2, scope, (3,))
+        self.assertIsNone(workspace._index_key)
+        self.assertIsNone(workspace.try_acquire())
+        workspace.index_buffer = original
+        workspace.release(lease2, transport_drained=True, device_work_drained=True)
+        lease3 = workspace.try_acquire()
+        self.assertEqual(workspace.prepare_indices(lease3, scope, (3,)).tolist(), [3])
+        workspace.release(lease3, transport_drained=True, device_work_drained=True)
+        workspace.close(engine, transport_drained=True, synchronize=lambda: None)
+        self.assertIsNone(workspace.index_buffer)
+        with self.assertRaises(RuntimeError):
+            workspace.try_acquire()
+
+    def test_cached_indices_do_not_cache_layer_payload(self):
+        import torch
+        from unittest.mock import Mock
+
+        from sglang.srt.disaggregation.ascend.mla_bridge_workspace import (
+            PackedBridgeWorkspace,
+        )
+
+        workspace = PackedBridgeWorkspace("cpu")
+        engine = Mock()
+        engine.batch_register_memory.return_value = 0
+        engine.unregister_memory.return_value = 0
+        workspace.transfer.register(engine)
+        scope = (4, 1, "peer", 0, 2)
+        for layer in (1, 7):
+            lease = workspace.try_acquire()
+            indices = workspace.prepare_indices(lease, scope, (1, 0))
+            k = torch.tensor([[layer] * 512, [layer + 1] * 512], dtype=torch.bfloat16)
+            v = torch.tensor([[layer + 2] * 64, [layer + 3] * 64], dtype=torch.bfloat16)
+            packed = workspace.pack(lease, k, v, indices)
+            with self.assertRaises(RuntimeError):
+                workspace.prepare_indices(lease, scope, (1, 0))
+            self.assertTrue(
+                torch.equal(packed, torch.cat((k[[1, 0]], v[[1, 0]]), dim=1))
+            )
+            workspace.release(lease, transport_drained=True, device_work_drained=True)
+        workspace.close(engine, transport_drained=True, synchronize=lambda: None)
+
     def test_buffer_retains_owned_memory_until_drain_and_unregister(self):
         from unittest.mock import Mock
 

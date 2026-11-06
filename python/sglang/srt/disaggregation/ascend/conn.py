@@ -226,11 +226,11 @@ class AscendKVManager(MooncakeKVManager):
         budget = BridgeBudget()
         logger.info(
             "NPU MLA bridge P: allocated raw_scratch=%d usable_slot=%d gather=%d bytes; "
-            "estimated max_indices=%d runtime_reserve=%d bytes; pool_budget_deducted=false",
+            "allocated indices=%d runtime_reserve=%d bytes; pool_budget_deducted=false",
             workspace.transfer.raw.nbytes,
             workspace.transfer.size,
             workspace.k_workspace.nbytes + workspace.v_workspace.nbytes,
-            budget.prefill_index_bytes,
+            workspace.index_buffer.nbytes,
             budget.pack_transient_reserve_bytes,
         )
 
@@ -296,7 +296,6 @@ class AscendKVManager(MooncakeKVManager):
                 dst_capacity=dst_capacity,
             )
             torch.npu.set_device(self.kv_args.gpu_id)
-            device = torch.device(f"npu:{self.kv_args.gpu_id}")
             for entry in staged:
                 ckv, kpe = main_kv[(entry.layer, "ckv")], main_kv[(entry.layer, "kpe")]
                 for offset in range(0, count, workspace.capacity):
@@ -329,7 +328,17 @@ class AscendKVManager(MooncakeKVManager):
                             timeout=30,
                         )
                     slot, remote_lease = remote
-                    indices = torch.tensor(part, dtype=torch.int64, device=device)
+                    indices = workspace.prepare_indices(
+                        lease,
+                        (
+                            req.room,
+                            descriptor.generation,
+                            req.mooncake_session_id,
+                            start,
+                            end,
+                        ),
+                        part,
+                    )
                     workspace.pack_native_planes(lease, ckv, kpe, indices)
                     pack_event = torch.npu.Event()
                     pack_event.record()
