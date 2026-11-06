@@ -130,6 +130,7 @@ class PrefillServerInfo:
     target_pp_ranks: Optional[List[int]] = None
     required_dst_info_num: Optional[int] = None
     required_prefill_response_num: Optional[int] = None
+    npu_mla_bridge_capability: Optional[str] = None
 
     def __post_init__(self):
         self.attn_tp_size = int(self.attn_tp_size)
@@ -1405,7 +1406,7 @@ class CommonKVManager(BaseKVManager):
             )
         return synced_port
 
-    def register_to_bootstrap(self):
+    def register_to_bootstrap(self, *, strict=False):
         """Register prefill server info to bootstrap server via HTTP PUT."""
         if self.dist_init_addr:
             # Multi-node case: bootstrap server's host is dist_init_addr
@@ -1455,6 +1456,11 @@ class CommonKVManager(BaseKVManager):
         payload["decode_allocation_policy"] = (
             get_disagg().disaggregation_decode_allocation_policy
         )
+        bridge_capability = getattr(self, "npu_mla_bridge_capability", None)
+        if getattr(self, "_npu_mla_bridge_pending", False):
+            payload["npu_mla_bridge_pending"] = True
+        if bridge_capability is not None:
+            payload["npu_mla_bridge_capability"] = bridge_capability
 
         if envs.SGLANG_RUST_SERVER.get() and self.attn_dp_size > 1:
             topology_rows = get_parallel().world_group.all_gather_object(payload)
@@ -1475,9 +1481,12 @@ class CommonKVManager(BaseKVManager):
                 self._register_topology_row(url, registry_row)
             return
 
-        self._register_topology_row(url, payload)
+        if strict:
+            self._register_topology_row(url, payload, strict=True)
+        else:
+            self._register_topology_row(url, payload)
 
-    def _register_topology_row(self, url: str, payload: Dict) -> None:
+    def _register_topology_row(self, url: str, payload: Dict, *, strict=False) -> None:
         max_retries, initial_delay, max_delay = 5, 1.0, 30.0
         for attempt in range(max_retries):
             try:
@@ -1505,6 +1514,8 @@ class CommonKVManager(BaseKVManager):
         logger.error(
             f"Prefill instance failed to register to bootstrap server after {max_retries} retries"
         )
+        if strict:
+            raise RuntimeError("NPU MLA bootstrap readiness registration failed")
 
     def _connect(self, endpoint: str, is_ipv6: bool = False):
         with self._socket_lock:
@@ -2305,10 +2316,26 @@ class CommonKVReceiver(BaseKVReceiver):
         with self._lifecycle_lock:
             return self._poll()
 
+    def filter_transfer_status(self, status: KVPoll) -> KVPoll:
+        """Allow a backend to defer terminal status until its resources drain."""
+        return status
+
+    def requires_strict_transfer_drain(self) -> bool:
+        return False
+
+    def begin_strict_transfer_drain(self) -> None:
+        raise RuntimeError("Strict transfer drain is not supported by this receiver")
+
+    def is_strict_transfer_drain_safe(self) -> bool:
+        """True only when every rank's writer and scatter are known drained."""
+        return False
+
     def _poll(self) -> KVPoll:
         if self.conclude_state is not None:
             return self.conclude_state
-        status = self.kv_mgr.check_status(self.bootstrap_room)
+        status = self.filter_transfer_status(
+            self.kv_mgr.check_status(self.bootstrap_room)
+        )
         if status in (KVPoll.Success, KVPoll.Failed):
             self.conclude_state = status
         elif status == KVPoll.Bootstrapping and self._prefill_wait_start is not None:
@@ -2661,6 +2688,9 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
         self.page_size = None
         self.kv_cache_dtype: Optional[str] = None
         self.kv_layout: Optional[str] = None
+        self.npu_mla_bridge_capability: Optional[str] = None
+        self._npu_mla_bridge_pending = False
+        self._npu_mla_ready_ranks = set()
         self.dsv41_spec_layout: Optional[dict] = None
         self.follow_bootstrap_room: Optional[bool] = None
         self.enable_dsa_cache_layer_split: Optional[bool] = None
@@ -2694,6 +2724,12 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
         logger.debug(
             f"Expected {expected} prefill servers to be registered, {self._registered_count} registered so far"
         )
+        if getattr(self, "_npu_mla_bridge_pending", False):
+            return (
+                self._registered_count >= expected
+                and len(self._npu_mla_ready_ranks) == expected
+                and self.npu_mla_bridge_capability is not None
+            )
         return self._registered_count >= expected
 
     def _setup_routes(self):
@@ -2733,6 +2769,46 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
         page_size = int(data["page_size"])
         kv_cache_dtype = data["kv_cache_dtype"]
         kv_layout = data.get("kv_layout")
+        bridge_capability = data.get("npu_mla_bridge_capability")
+        bridge_pending = data.get("npu_mla_bridge_pending", False)
+        if type(bridge_pending) is not bool:
+            return web.Response(text="Invalid NPU MLA pending flag", status=400)
+        if bridge_pending:
+            from sglang.srt.disaggregation.ascend.mla_bridge_contract import LAYOUT
+
+            geometry = (
+                attn_tp_size,
+                attn_tp_rank,
+                attn_cp_size,
+                attn_cp_rank,
+                attn_dp_size,
+                attn_dp_rank,
+                pp_size,
+                pp_rank,
+                system_dp_size,
+                system_dp_rank,
+            )
+            if (
+                any(type(value) is not int for value in geometry)
+                or attn_tp_size != 16
+                or not 0 <= attn_tp_rank < 16
+                or (
+                    attn_cp_size,
+                    attn_cp_rank,
+                    attn_dp_size,
+                    attn_dp_rank,
+                    pp_size,
+                    pp_rank,
+                    system_dp_size,
+                    system_dp_rank,
+                )
+                != (1, 0, 1, 0, 1, 0, 1, 0)
+                or bridge_capability not in (None, LAYOUT)
+            ):
+                return web.Response(
+                    text="Unsupported NPU MLA bootstrap geometry or capability",
+                    status=400,
+                )
         prefill_http_port = data.get("prefill_http_port")
         dsv41_spec_layout = data.get("dsv41_spec_layout")
 
@@ -2740,6 +2816,19 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
             return web.Response(
                 text="DeepSeek-V4.1 DSpark PD layout differs across prefill ranks",
                 status=400,
+            )
+        if (
+            self._registered_count
+            and getattr(self, "_npu_mla_bridge_pending", False) != bridge_pending
+        ):
+            return web.Response(text="Inconsistent NPU MLA bridge mode", status=400)
+        if (
+            self._registered_count
+            and not bridge_pending
+            and self.npu_mla_bridge_capability != bridge_capability
+        ):
+            return web.Response(
+                text="Inconsistent NPU MLA bridge capability", status=400
             )
         policy = data.get("decode_allocation_policy", "early")
         if self._registered_count and self.decode_allocation_policy != policy:
@@ -2791,16 +2880,52 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
 
         # Add lock to make sure thread-safe
         async with self.lock:
+            if (
+                self._registered_count
+                and getattr(self, "_npu_mla_bridge_pending", False) != bridge_pending
+            ):
+                return web.Response(text="Inconsistent NPU MLA bridge mode", status=400)
+            if (
+                self._registered_count
+                and not bridge_pending
+                and self.npu_mla_bridge_capability != bridge_capability
+            ):
+                return web.Response(
+                    text="Inconsistent NPU MLA bridge capability", status=400
+                )
+            self._npu_mla_bridge_pending = bridge_pending
+            if not bridge_pending:
+                self.npu_mla_bridge_capability = bridge_capability
             dp_group_table = self.prefill_port_table.setdefault(dp_group, {})
             cp_group_table = dp_group_table.setdefault(attn_cp_rank, {})
             tp_group_table = cp_group_table.setdefault(attn_tp_rank, {})
 
+            previous = tp_group_table.get(pp_rank)
+            if (
+                bridge_pending
+                and previous is not None
+                and (previous.rank_ip, previous.rank_port) != (rank_ip, rank_port)
+            ):
+                return web.Response(text="NPU MLA rank endpoint changed", status=400)
             tp_group_table[pp_rank] = PrefillRankInfo(
-                rank_ip=rank_ip,
-                rank_port=rank_port,
+                rank_ip=rank_ip, rank_port=rank_port
             )
-
-            self._registered_count += 1
+            if not bridge_pending or previous is None:
+                self._registered_count += 1
+            if bridge_pending:
+                if not hasattr(self, "_npu_mla_ready_ranks"):
+                    self._npu_mla_ready_ranks = set()
+                rank_key = (dp_group, attn_cp_rank, attn_tp_rank, pp_rank)
+                if bridge_capability is not None:
+                    self._npu_mla_ready_ranks.add(rank_key)
+                expected = (
+                    self.dp_size * self.attn_cp_size * self.attn_tp_size * self.pp_size
+                )
+                if (
+                    self._registered_count == expected
+                    and len(self._npu_mla_ready_ranks) == expected
+                ):
+                    self.npu_mla_bridge_capability = LAYOUT
 
         expected = self.dp_size * self.attn_cp_size * self.attn_tp_size * self.pp_size
         logger.debug(
@@ -2843,6 +2968,7 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
                 page_size=self.page_size,
                 kv_cache_dtype=self.kv_cache_dtype,
                 kv_layout=self.kv_layout,
+                npu_mla_bridge_capability=self.npu_mla_bridge_capability,
                 dsv41_spec_layout=self.dsv41_spec_layout,
                 follow_bootstrap_room=(
                     self.follow_bootstrap_room
@@ -2858,6 +2984,8 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
                 payload.pop("dsv41_spec_layout")
             if info.kv_layout is None:
                 payload.pop("kv_layout")
+            if info.npu_mla_bridge_capability is None:
+                payload.pop("npu_mla_bridge_capability")
             return web.json_response(payload, status=200)
 
         if not self._is_ready():
