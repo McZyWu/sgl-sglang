@@ -17,11 +17,30 @@ from sglang.srt.disaggregation.mooncake.conn import (
     MooncakeKVReceiver,
     MooncakeKVSender,
 )
-from sglang.srt.runtime_context import get_parallel
 from sglang.srt.environ import envs
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.utils.network import NetworkAddress, get_local_ip_auto
 
 logger = logging.getLogger(__name__)
+
+
+def _wait_for_npu_mla_bridge_chunk(
+    resources, *, room, generation, session, layer, slot, lease_id, deadline
+):
+    """Wait for one scatter completion with a bounded scheduling yield."""
+    false_queries = 0
+    while not resources.finish_chunk(
+        room=room,
+        generation=generation,
+        session=session,
+        layer=layer,
+        slot=slot,
+        lease_id=lease_id,
+    ):
+        if time.monotonic() >= deadline:
+            raise TimeoutError("NPU MLA scatter event did not finish")
+        false_queries += 1
+        time.sleep(0 if false_queries <= 4 else 0.001)
 
 
 class AscendStateType(str, enum.Enum):
@@ -242,6 +261,8 @@ class AscendKVManager(MooncakeKVManager):
         The experimental feature flag enables this path. A failed or uncertain
         operation quarantines room state and any held workspace lease.
         """
+        import torch
+
         from sglang.srt.disaggregation.ascend.mla_bridge_collect import (
             plan_native_component_blocks,
         )
@@ -251,7 +272,6 @@ class AscendKVManager(MooncakeKVManager):
             bridge_segment_token_bounds,
             expand_physical_pages,
         )
-        import torch
 
         workspace = getattr(self, "_npu_mla_sender_workspace", None)
         if workspace is None or not getattr(self, "_npu_mla_bridge_ready", False):
@@ -675,17 +695,16 @@ class AscendKVManager(MooncakeKVManager):
                 event_factory=torch.npu.Event,
             )
             deadline = time.monotonic() + 30
-            while not resources.finish_chunk(
+            _wait_for_npu_mla_bridge_chunk(
+                resources,
                 room=room,
                 generation=generation,
                 session=session,
                 layer=layer,
                 slot=slot,
                 lease_id=lease_id,
-            ):
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("NPU MLA scatter event did not finish")
-                time.sleep(0.001)
+                deadline=deadline,
+            )
             na = NetworkAddress(*peer)
             self._send_multipart_locked(
                 na.to_tcp(), [b"NPU_MLA_ACK", *msg[1:9]], is_ipv6=na.is_ipv6
