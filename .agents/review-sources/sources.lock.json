@@ -1,0 +1,362 @@
+{
+  "schema_version": 1,
+  "captured_date": "2026-11-17",
+  "repos": [
+    {
+      "repo": "ascend-agent-skills",
+      "commit": "155ac37bd169ddb89479af528297cfb2237400aa",
+      "license": "MulanPSL-2.0",
+      "entrypoints": [
+        "skills/npu-adapter-reviewer/SKILL.md",
+        "skills/ascendc-operator-code-review/SKILL.md",
+        "skills/triton-operator-code-review/SKILL.md"
+      ],
+      "repository_full_name": "Ascend/agent-skills",
+      "url": "https://github.com/Ascend/agent-skills",
+      "supporting_paths": [
+        "skills/triton-operator-shared/references/ascend-terminology.md",
+        "skills/triton-operator-shared/references/tiling-strategies.md",
+        "skills/triton-operator-shared/references/triton-api-reference.md"
+      ]
+    },
+    {
+      "repo": "minhhh-agent-skills",
+      "commit": "9f4c8c9f240d3d56463f9b826668b09e57f115f5",
+      "license": "MIT",
+      "entrypoints": [
+        "skills/python-code-review/SKILL.md",
+        "skills/code-review-principles/SKILL.md",
+        "skills/python-dev/SKILL.md"
+      ],
+      "repository_full_name": "minhhh/agent-skills",
+      "url": "https://github.com/minhhh/agent-skills"
+    },
+    {
+      "repo": "sentry-skills",
+      "commit": "a582c51ee29d0f35e6ac321340796f77d43da733",
+      "license": "Apache-2.0",
+      "entrypoints": [
+        "skills/code-review/SKILL.md"
+      ],
+      "repository_full_name": "getsentry/skills",
+      "url": "https://github.com/getsentry/skills"
+    },
+    {
+      "repo": "trailofbits-skills",
+      "commit": "149d7b21f4067765b82e67029730b42d228ef4b4",
+      "license": "CC-BY-SA-4.0",
+      "entrypoints": [
+        "plugins/differential-review/skills/differential-review/SKILL.md"
+      ],
+      "repository_full_name": "trailofbits/skills",
+      "url": "https://github.com/trailofbits/skills"
+    }
+  ],
+  "files": [
+    {
+      "source_path": "skills/npu-adapter-reviewer/SKILL.md",
+      "local_path": "ascend-agent-skills/skills/npu-adapter-reviewer/SKILL.md",
+      "sha256": "87f58507432264e6b11b8de0b0351a4db37327a47c823a9ea40459050165aac1",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "b78c4ef9ce6e3ea1661d123cbd3c787983a7132d",
+      "upstream_sha256": "919793f57f3520566cbcc4345faac9f0bbbe09d8850f679f63141dea8556c61d"
+    },
+    {
+      "source_path": "skills/npu-adapter-reviewer/references/ascend_npu_best_practices.md",
+      "local_path": "ascend-agent-skills/skills/npu-adapter-reviewer/references/ascend_npu_best_practices.md",
+      "sha256": "872de72d65ba5a8b1f4c63b9052dedd33f6adf94791c463a90543e94897e7a4d",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "c5c648e9385d32f788e6720cf5df7a0d1ba5b886",
+      "upstream_sha256": "872de72d65ba5a8b1f4c63b9052dedd33f6adf94791c463a90543e94897e7a4d"
+    },
+    {
+      "source_path": "skills/npu-adapter-reviewer/references/cann_migration_guide.md",
+      "local_path": "ascend-agent-skills/skills/npu-adapter-reviewer/references/cann_migration_guide.md",
+      "sha256": "73b13cbac853c921a256ca0465c052c24f8818086f2a2470db4c7f5a301b0b80",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "db2cd95c4e67e5f37a545631d3cec3743c56ee31",
+      "upstream_sha256": "19d3af65e598b98816f5db6e86163875f3b987cacee54fcab0ae3e442f44352c"
+    },
+    {
+      "source_path": "skills/npu-adapter-reviewer/references/npu_python_api.md",
+      "local_path": "ascend-agent-skills/skills/npu-adapter-reviewer/references/npu_python_api.md",
+      "sha256": "08d6c396fafd34ddf92e89827cd3cea1d46a7ce32d67ac8f127b0f43011f1fa8",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "b8f07d28364301b88333fe5c70f3cd08fd1d6714",
+      "upstream_sha256": "ae08cdc78bcd6a5e7746e62cbb8da7f9d60c0a1fc2f8ad276b40accc52561f4c"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/SKILL.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/SKILL.md",
+      "sha256": "eb6019e2cbd191e867c30c200b7d5f5e90aa33001e111dea21f59f1b65513858",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "9f4436d167b197563c43cf4221cce7c0b7522d99",
+      "upstream_sha256": "44916e2c25a5cfa1bb50c474988b79f8b4a5905f7771e83870409bf852ddd2ad"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/01_numeric_operations.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/01_numeric_operations.md",
+      "sha256": "af723a8c877998d9a0253baa88df47399c68f6a8e2bc11c480eb496501f70a85",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "9dd70621852336a7ce7c21e6f4e7f7177d042afb",
+      "upstream_sha256": "2c38026621cfc0ffb20c2b352db439a26a658cc05553ccd951bcb7c02f7bf3e4"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/02_memory_pointer_safety.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/02_memory_pointer_safety.md",
+      "sha256": "ef170f0a3a78a1b2cf7d6c23866141ceebf5ab1c79dc8c6e9d579f10cb5f0f21",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "2da47b68840713218ca22ae4a00f7cc91346308c",
+      "upstream_sha256": "ec01dd45bdd8d5ab91100f345cc55c6fc0a96bfe014470f28b104a026a02420b"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/03_resource_management.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/03_resource_management.md",
+      "sha256": "0d95d59467a27e338e30a57accaf1b0cbcc687d69c2ac094bfcd626056a8afc9",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "58b6829afe96f1ef8e19d38697187f46eeccf868",
+      "upstream_sha256": "3052a26da285faba01c768d6a33981d4e833ad082be35011cd0fafb4a747f52c"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/04_input_validation.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/04_input_validation.md",
+      "sha256": "6ebba4cb2fd6efb72b517ce7908c401420500961247a8338e3faa966db997305",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "fa77561df990108ef740946f4623641e7e215a29",
+      "upstream_sha256": "2ebc5994a1eb4e8fca4a8380155a4fec30a23d2332e3e94caef557597a496014"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/05_concurrency_safety.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/05_concurrency_safety.md",
+      "sha256": "e10559a727251454bae2c74e05c625491a14f3be6036037e5d577902701f557a",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "f1be30cf8aa2fb96608aa1e80c1fde29b619b114",
+      "upstream_sha256": "e10559a727251454bae2c74e05c625491a14f3be6036037e5d577902701f557a"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/06_operator_interface.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/06_operator_interface.md",
+      "sha256": "1daa0d46a07448d18bd7fbd0cc1618004e4c0bd5846c49c5ee34d29ba8737123",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "cea2716bc0ba0fcb20b187a4a482f31cc2e82d88",
+      "upstream_sha256": "86cf6cca797927d72d4fdb5e94d34bf531f66de7e2efb7d00c37a4cc5fb768ae"
+    },
+    {
+      "source_path": "skills/ascendc-operator-code-review/references/07_interface_compatibility.md",
+      "local_path": "ascend-agent-skills/skills/ascendc-operator-code-review/references/07_interface_compatibility.md",
+      "sha256": "5e37c15ae833eb2b55308e0fb21d908421bddc4fa3bdddd25a32dfc9be9616dc",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "3d3200440eb30546663aa2587c5152ac9a72f715",
+      "upstream_sha256": "9e3de4aa59935aa25545f057484432300359675fa6fffa176c740bf89e89c2ac"
+    },
+    {
+      "source_path": "skills/triton-operator-code-review/SKILL.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-code-review/SKILL.md",
+      "sha256": "22683586b9fe8078b5869f6b6a75254c0d0116e25cfa9a32158ca90bc7e11c42",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "8dc60020b3d0a50165ad8d76fef8be1347c5f6c3",
+      "upstream_sha256": "22683586b9fe8078b5869f6b6a75254c0d0116e25cfa9a32158ca90bc7e11c42"
+    },
+    {
+      "source_path": "skills/triton-operator-code-review/references/ascend-api-dtype-matrix.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-code-review/references/ascend-api-dtype-matrix.md",
+      "sha256": "1e2fc2c5902a8f32025cff5fa5e2f6e2b1b2bd1c8b0d5892d6b48eae8553fe5c",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "f83c80bfd6a2bd14e0fec3880886849208558245",
+      "upstream_sha256": "1e2fc2c5902a8f32025cff5fa5e2f6e2b1b2bd1c8b0d5892d6b48eae8553fe5c"
+    },
+    {
+      "source_path": "skills/triton-operator-code-review/references/ascend-test-patterns.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-code-review/references/ascend-test-patterns.md",
+      "sha256": "41cf956fa06854d02463c4ccee92facc3972680f58c9c0269d4667f87fd46a31",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "c65bab3ff00a3cea9e7f42008a5877a7545c6049",
+      "upstream_sha256": "57b1c948fa51227f3dcd8a5aa636f8904f8dd82f8c6091bb604769685bdfdda6"
+    },
+    {
+      "source_path": "skills/triton-operator-code-review/references/ascend-triton-api-constraints.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-code-review/references/ascend-triton-api-constraints.md",
+      "sha256": "a39fcd3e005dbca11a9ba3a0fca1ffd548bda8fb9b70bc40b20d9a7c60727425",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "394e624022796c625d890c881fa956eeb222da14",
+      "upstream_sha256": "a39fcd3e005dbca11a9ba3a0fca1ffd548bda8fb9b70bc40b20d9a7c60727425"
+    },
+    {
+      "source_path": "skills/triton-operator-code-review/references/code-review-checklist.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-code-review/references/code-review-checklist.md",
+      "sha256": "07e68fe6f86cbe25974bfd665679c0e9a6ab0e48fd6194ae871801b7f0ebb3c4",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "750ed089e8e7c6302b041eb9644c3b3ef9b35edf",
+      "upstream_sha256": "07e68fe6f86cbe25974bfd665679c0e9a6ab0e48fd6194ae871801b7f0ebb3c4"
+    },
+    {
+      "source_path": "skills/triton-operator-code-review/references/code-review-report-template.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-code-review/references/code-review-report-template.md",
+      "sha256": "c9b51479c9c06d08aecca85db0c2a1e75a88e891585775c6b6af8f2b68bcb3b4",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "fa362d344e1596ee4e77d6ebeb465e009870f548",
+      "upstream_sha256": "c9b51479c9c06d08aecca85db0c2a1e75a88e891585775c6b6af8f2b68bcb3b4"
+    },
+    {
+      "source_path": "skills/triton-operator-shared/references/ascend-terminology.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-shared/references/ascend-terminology.md",
+      "sha256": "dc2eae7994287eb6018889af8687ecb21a3c7802da3a3a705e452c064d42b395",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "28ee2db5ef37ce2c987f6f10ca822666b8f11264",
+      "upstream_sha256": "dc2eae7994287eb6018889af8687ecb21a3c7802da3a3a705e452c064d42b395"
+    },
+    {
+      "source_path": "skills/triton-operator-shared/references/tiling-strategies.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-shared/references/tiling-strategies.md",
+      "sha256": "726920ed577ffa45b7932d571c7fa96b772dd694d43b59e1b33c0d2787642384",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "b1808b4c323eddd9f5492608362339654da17cfa",
+      "upstream_sha256": "09c1a6a4294aa74743124541d8da1a45db9b3219bc2d7493a160cd1c9a1630a7"
+    },
+    {
+      "source_path": "skills/triton-operator-shared/references/triton-api-reference.md",
+      "local_path": "ascend-agent-skills/skills/triton-operator-shared/references/triton-api-reference.md",
+      "sha256": "f8c81e2dbe6fb893c450b12278321e304046de95acef62f6148421079e2e77e5",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "31d3e1393fd72772b9c7c6c7519916409bdc5083",
+      "upstream_sha256": "f8c81e2dbe6fb893c450b12278321e304046de95acef62f6148421079e2e77e5"
+    },
+    {
+      "source_path": "LICENSE",
+      "local_path": "ascend-agent-skills/LICENSE",
+      "sha256": "305aabc561c05723f615729cec53d3101a52c8bec99e434ebb77835826fa2701",
+      "repo": "ascend-agent-skills",
+      "git_blob_sha1": "4dceb7d73579b033976fda75e1ac28ebe0bb7032",
+      "upstream_sha256": "3ff90416cfa7c39fa712549d388be9f6a6c9f08b56a5df3b8a19727978eae0a5"
+    },
+    {
+      "source_path": "skills/python-code-review/SKILL.md",
+      "local_path": "minhhh-agent-skills/skills/python-code-review/SKILL.md",
+      "sha256": "78b20bbd899f02c54514ca005d0c62204ba349824fc510314bbca6d5612b2e5e",
+      "repo": "minhhh-agent-skills",
+      "git_blob_sha1": "5add59e3e045b1354b448bae1ce3f3727ed6f3d2",
+      "upstream_sha256": "78b20bbd899f02c54514ca005d0c62204ba349824fc510314bbca6d5612b2e5e"
+    },
+    {
+      "source_path": "skills/code-review-principles/SKILL.md",
+      "local_path": "minhhh-agent-skills/skills/code-review-principles/SKILL.md",
+      "sha256": "bf2af32f1398c0b3d9678d48fff4756183bf3b836653db6d542ee486e9f8eb24",
+      "repo": "minhhh-agent-skills",
+      "git_blob_sha1": "72ac196152006618fe7eb2452594f2cead61780f",
+      "upstream_sha256": "bf2af32f1398c0b3d9678d48fff4756183bf3b836653db6d542ee486e9f8eb24"
+    },
+    {
+      "source_path": "skills/python-dev/SKILL.md",
+      "local_path": "minhhh-agent-skills/skills/python-dev/SKILL.md",
+      "sha256": "06444eb7b23840de55caaf2fa321938dc316d0c823acd9063a4b2a62a3b19597",
+      "repo": "minhhh-agent-skills",
+      "git_blob_sha1": "3e7cfac9cc453c4065028eb813da201c0abd5b54",
+      "upstream_sha256": "06444eb7b23840de55caaf2fa321938dc316d0c823acd9063a4b2a62a3b19597"
+    },
+    {
+      "source_path": "LICENSE",
+      "local_path": "minhhh-agent-skills/LICENSE",
+      "sha256": "42b249ed6ec6a7a5365982bbbb3c49c98fe431bf6f90bd6ebb81d1bad709fc1d",
+      "repo": "minhhh-agent-skills",
+      "git_blob_sha1": "93479e907c2a026c9ca6c8b34bbed67b6d0738f6",
+      "upstream_sha256": "82aaabbafbb373b636020bb36b51fb69bab08876e12ebf3ee79a2e9afb43ed6c"
+    },
+    {
+      "source_path": "skills/code-review/SKILL.md",
+      "local_path": "sentry-skills/skills/code-review/SKILL.md",
+      "sha256": "ec5fc8855cb4648b4f2c79b608f8c8824a2da6a683330524c4d6283e4a3954c4",
+      "repo": "sentry-skills",
+      "git_blob_sha1": "621007b4da6639b9574e3e0a18054df73a5de807",
+      "upstream_sha256": "ec5fc8855cb4648b4f2c79b608f8c8824a2da6a683330524c4d6283e4a3954c4"
+    },
+    {
+      "source_path": "LICENSE",
+      "local_path": "sentry-skills/LICENSE",
+      "sha256": "96e78a9ce85795b117c8929887bdb78f88bf23f7b85a31f0872cde4dff7e92cd",
+      "repo": "sentry-skills",
+      "git_blob_sha1": "753a6c03c60a9232405d05170bd3ad3cab49a1ef",
+      "upstream_sha256": "96e78a9ce85795b117c8929887bdb78f88bf23f7b85a31f0872cde4dff7e92cd"
+    },
+    {
+      "source_path": "LICENSE",
+      "local_path": "trailofbits-skills/LICENSE",
+      "sha256": "f0d34c2c4b49dfbac71068a307d609c7b17807da40d1f452e434409f534c81db",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "3b7b82d0da2db857eda1a798dbd908ea136f07b5",
+      "upstream_sha256": "7abe19ec9bb73b36141b999b861d24ad855e808bafe0f81e84cce28556f6c297"
+    },
+    {
+      "source_path": "plugins/differential-review/skills/differential-review/SKILL.md",
+      "local_path": "trailofbits-skills/plugins/differential-review/skills/differential-review/SKILL.md",
+      "sha256": "f9af6a8193fc1a9f8ca3c54bb8d19095a5f20c9472ca6d014488bbde50b67da0",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "536e9258092876017b098f1712a92e7d06bb1480",
+      "upstream_sha256": "f9af6a8193fc1a9f8ca3c54bb8d19095a5f20c9472ca6d014488bbde50b67da0"
+    },
+    {
+      "source_path": "plugins/differential-review/skills/differential-review/agents/openai.yaml",
+      "local_path": "trailofbits-skills/plugins/differential-review/skills/differential-review/agents/openai.yaml",
+      "sha256": "0279d56f88dc1a04d4b1941a25fa7672912a3ceb0557b13c38d069908b30ae61",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "ba287073f8a5f482350b8149cf55a7ce101b2d68",
+      "upstream_sha256": "0279d56f88dc1a04d4b1941a25fa7672912a3ceb0557b13c38d069908b30ae61"
+    },
+    {
+      "source_path": "plugins/differential-review/skills/differential-review/adversarial.md",
+      "local_path": "trailofbits-skills/plugins/differential-review/skills/differential-review/adversarial.md",
+      "sha256": "3cb823f38c6e551cbcf5f72325d2bb219dacdad774072519c31d50d92db19800",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "0176d374bc2d9d59f114b647cb21f0685bc7e9f3",
+      "upstream_sha256": "3cb823f38c6e551cbcf5f72325d2bb219dacdad774072519c31d50d92db19800"
+    },
+    {
+      "source_path": "plugins/differential-review/skills/differential-review/methodology.md",
+      "local_path": "trailofbits-skills/plugins/differential-review/skills/differential-review/methodology.md",
+      "sha256": "16b335d24cf2145e3dc4a37f50056550d29db2efa20e6df78fec95ec1e6fb0b4",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "71d9dc0babf1417ee79ec8d5214ea690d0c2fe6b",
+      "upstream_sha256": "16b335d24cf2145e3dc4a37f50056550d29db2efa20e6df78fec95ec1e6fb0b4"
+    },
+    {
+      "source_path": "plugins/differential-review/skills/differential-review/patterns.md",
+      "local_path": "trailofbits-skills/plugins/differential-review/skills/differential-review/patterns.md",
+      "sha256": "52abb18abbc73502a3d3b2f36a7a035adc1db40fd812d1d5424cf065036a06e9",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "71078a725d986c90d014cceff0cc54414ad3b1a1",
+      "upstream_sha256": "52abb18abbc73502a3d3b2f36a7a035adc1db40fd812d1d5424cf065036a06e9"
+    },
+    {
+      "source_path": "plugins/differential-review/skills/differential-review/reporting.md",
+      "local_path": "trailofbits-skills/plugins/differential-review/skills/differential-review/reporting.md",
+      "sha256": "0016876dc6f158e926448bff1b6f634796757c7afe09dff177cfe30250724fc4",
+      "repo": "trailofbits-skills",
+      "git_blob_sha1": "cb5e37b4eab89c429bf6f968d3e3482adaa39faa",
+      "upstream_sha256": "0016876dc6f158e926448bff1b6f634796757c7afe09dff177cfe30250724fc4"
+    }
+  ],
+  "missing_references": [
+    {
+      "repo": "ascend-agent-skills",
+      "source_path": "agents/ascendc-ops-reviewer/style/code_review_summary_style.txt",
+      "referenced_from": "skills/ascendc-operator-code-review/SKILL.md"
+    }
+  ],
+  "example_outputs": [
+    {
+      "repo": "ascend-agent-skills",
+      "source_path": "skills/npu-adapter-reviewer/CodeReview_Results_运行当天的日期.md",
+      "referenced_from": "skills/npu-adapter-reviewer/SKILL.md",
+      "note": "Illustrative generated output or example target, not a required source dependency."
+    }
+  ],
+  "normalization": {
+    "encoding": "UTF-8",
+    "steps": [
+      "Convert CRLF and CR line endings to LF.",
+      "Expand leading spaces and tabs on each line using tab stops of 8 columns.",
+      "Remove trailing spaces and tabs from each line.",
+      "Remove extra blank lines at EOF and ensure exactly one final LF."
+    ],
+    "scope": "Whitespace only; non-whitespace text and code tokens remain unchanged."
+  }
+}
