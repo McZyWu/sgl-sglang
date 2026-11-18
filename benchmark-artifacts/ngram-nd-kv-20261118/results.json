@@ -1,0 +1,1271 @@
+{
+  "framework": "5a5f41205f5def45d75a926bd37d2f47fee1db7e",
+  "kernel": "0f496a4f12338decee650529e61fe1f738cea918",
+  "configuration": "NGRAM D12, eager/sync, BF16 KV, FIA ND, random 21000/300, six requests, concurrency 6, rate 0.625, seed 42",
+  "summary": {
+    "status": "complete",
+    "valid_case_count": 20,
+    "errors": [],
+    "models": {
+      "deepseek": {
+        "case_counts": {
+          "baseline": 5,
+          "candidate": 5
+        },
+        "pairs_text_match": [
+          {
+            "pair": 1,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 2,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 3,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 4,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 5,
+            "identical": true,
+            "inputs_identical": true
+          }
+        ],
+        "per_case": {
+          "baseline": [
+            {
+              "pair": 1,
+              "output_throughput": 51.819176188307054,
+              "median_tpot_ms": 37.75189744313847,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 34.7361755319871,
+                "request_throughput": 0.17273058729435684,
+                "input_throughput": 3627.342333181494,
+                "output_throughput": 51.819176188307054,
+                "total_throughput": 3679.1615093698006,
+                "mean_ttft_ms": 1824.9324073355335,
+                "median_ttft_ms": 1603.1853540043812,
+                "std_ttft_ms": 388.28719460482256,
+                "p90_ttft_ms": 2326.2473044887884,
+                "p95_ttft_ms": 2460.7399887390784,
+                "p99_ttft_ms": 2568.3341361393104,
+                "mean_tpot_ms": 47.08736378652431,
+                "median_tpot_ms": 37.75189744313847,
+                "std_tpot_ms": 35.836602198488826,
+                "p90_tpot_ms": 92.62415188464749,
+                "p95_tpot_ms": 100.96598039550574,
+                "p99_tpot_ms": 107.63944320419235,
+                "ttfts": [
+                  1.579395425011171,
+                  2.0572619359882083,
+                  1.5113337020156905,
+                  1.5912251110130455,
+                  1.615145596995717,
+                  2.5952326729893684
+                ]
+              }
+            },
+            {
+              "pair": 2,
+              "output_throughput": 53.85823821886027,
+              "median_tpot_ms": 35.9307905518622,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 33.42107093599043,
+                "request_throughput": 0.17952746072953424,
+                "input_throughput": 3770.0766753202192,
+                "output_throughput": 53.85823821886027,
+                "total_throughput": 3823.9349135390794,
+                "mean_ttft_ms": 1799.8887223269169,
+                "median_ttft_ms": 1579.2783749784576,
+                "std_ttft_ms": 383.69579401849126,
+                "p90_ttft_ms": 2297.3407065001084,
+                "p95_ttft_ms": 2426.8398047497612,
+                "p99_ttft_ms": 2530.4390833494836,
+                "mean_tpot_ms": 44.757996270919236,
+                "median_tpot_ms": 35.9307905518622,
+                "std_tpot_ms": 34.152934908811325,
+                "p90_tpot_ms": 88.03410555686128,
+                "p95_tpot_ms": 96.21182082355821,
+                "p99_tpot_ms": 102.75399303691576,
+                "ttfts": [
+                  1.5654539490060415,
+                  2.0383425100008026,
+                  1.4806402219983283,
+                  1.5747744449763559,
+                  1.5837823049805593,
+                  2.556338902999414
+                ]
+              }
+            },
+            {
+              "pair": 3,
+              "output_throughput": 51.93581427089884,
+              "median_tpot_ms": 37.64049468731763,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 34.65816460701171,
+                "request_throughput": 0.17311938090299614,
+                "input_throughput": 3635.5069989629187,
+                "output_throughput": 51.93581427089884,
+                "total_throughput": 3687.4428132338176,
+                "mean_ttft_ms": 1793.7943456636276,
+                "median_ttft_ms": 1572.4689840135397,
+                "std_ttft_ms": 383.7717536875866,
+                "p90_ttft_ms": 2293.010654480895,
+                "p95_ttft_ms": 2419.8632157349493,
+                "p99_ttft_ms": 2521.345264738193,
+                "mean_tpot_ms": 46.836214535116916,
+                "median_tpot_ms": 37.64049468731763,
+                "std_tpot_ms": 35.67798348117134,
+                "p90_tpot_ms": 92.18179585950809,
+                "p95_tpot_ms": 100.35106200333253,
+                "p99_tpot_ms": 106.88647491839208,
+                "ttfts": [
+                  1.5610229939920828,
+                  2.0393055319727864,
+                  1.4707838030008134,
+                  1.5763409970095381,
+                  1.5685969710175414,
+                  2.5467157769890036
+                ]
+              }
+            },
+            {
+              "pair": 4,
+              "output_throughput": 52.033380953359256,
+              "median_tpot_ms": 36.94340352507863,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 34.59317782201106,
+                "request_throughput": 0.1734446031778642,
+                "input_throughput": 3642.336666735148,
+                "output_throughput": 52.033380953359256,
+                "total_throughput": 3694.3700476885074,
+                "mean_ttft_ms": 1853.8372741701703,
+                "median_ttft_ms": 1635.089274510392,
+                "std_ttft_ms": 407.2483559247516,
+                "p90_ttft_ms": 2378.9762489905115,
+                "p95_ttft_ms": 2518.195069991634,
+                "p99_ttft_ms": 2629.570126792533,
+                "mean_tpot_ms": 46.406160421408494,
+                "median_tpot_ms": 36.94340352507863,
+                "std_tpot_ms": 35.70348031284251,
+                "p90_tpot_ms": 91.82626980933692,
+                "p95_tpot_ms": 100.11974661367192,
+                "p99_tpot_ms": 106.75452805713991,
+                "ttfts": [
+                  1.6046033200109378,
+                  2.100538606988266,
+                  1.5074500940099824,
+                  1.587442504009232,
+                  1.6655752290098462,
+                  2.657413890992757
+                ]
+              }
+            },
+            {
+              "pair": 5,
+              "output_throughput": 53.649975680553744,
+              "median_tpot_ms": 36.49302512373429,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 33.55080738000106,
+                "request_throughput": 0.1788332522685125,
+                "input_throughput": 3755.4982976387623,
+                "output_throughput": 53.649975680553744,
+                "total_throughput": 3809.1482733193156,
+                "mean_ttft_ms": 1823.7039416611271,
+                "median_ttft_ms": 1598.49135899276,
+                "std_ttft_ms": 389.55964558414666,
+                "p90_ttft_ms": 2338.4462494868785,
+                "p95_ttft_ms": 2454.6082787419436,
+                "p99_ttft_ms": 2547.5379021459958,
+                "mean_tpot_ms": 45.214805707377394,
+                "median_tpot_ms": 36.49302512373429,
+                "std_tpot_ms": 34.37522517596065,
+                "p90_tpot_ms": 88.66917249666999,
+                "p95_tpot_ms": 96.97120907442644,
+                "p99_tpot_ms": 103.6128383366316,
+                "ttfts": [
+                  1.6147821159975138,
+                  2.1061221909767482,
+                  1.4951552099955734,
+                  1.5731932230119128,
+                  1.5822006019880064,
+                  2.570770307997009
+                ]
+              }
+            }
+          ],
+          "candidate": [
+            {
+              "pair": 1,
+              "output_throughput": 53.797622116213034,
+              "median_tpot_ms": 43.25936476426101,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 33.4587278990075,
+                "request_throughput": 0.17932540705404346,
+                "input_throughput": 3765.8335481349127,
+                "output_throughput": 53.797622116213034,
+                "total_throughput": 3819.6311702511257,
+                "mean_ttft_ms": 1801.269429003393,
+                "median_ttft_ms": 1594.717670493992,
+                "std_ttft_ms": 398.9936853315623,
+                "p90_ttft_ms": 2311.2510920182103,
+                "p95_ttft_ms": 2452.8090885214624,
+                "p99_ttft_ms": 2566.055485724064,
+                "mean_tpot_ms": 46.88377870460131,
+                "median_tpot_ms": 43.25936476426101,
+                "std_tpot_ms": 33.59404760996358,
+                "p90_tpot_ms": 87.62286992809412,
+                "p95_tpot_ms": 95.59430070821021,
+                "p99_tpot_ms": 101.9714453323031,
+                "ttfts": [
+                  1.5446225390187465,
+                  2.028135099011706,
+                  1.4510565099772066,
+                  1.573982811998576,
+                  1.6154525289894082,
+                  2.5943670850247145
+                ]
+              }
+            },
+            {
+              "pair": 2,
+              "output_throughput": 58.748376967385894,
+              "median_tpot_ms": 33.72885108359678,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 30.639144312008284,
+                "request_throughput": 0.19582792322461964,
+                "input_throughput": 4112.386387717012,
+                "output_throughput": 58.748376967385894,
+                "total_throughput": 4171.134764684399,
+                "mean_ttft_ms": 1808.984619997015,
+                "median_ttft_ms": 1599.7281385061797,
+                "std_ttft_ms": 401.7682569772594,
+                "p90_ttft_ms": 2327.1746789832832,
+                "p95_ttft_ms": 2458.6834164874745,
+                "p99_ttft_ms": 2563.8904064908274,
+                "mean_tpot_ms": 40.353321602552846,
+                "median_tpot_ms": 33.72885108359678,
+                "std_tpot_ms": 30.114027597171557,
+                "p90_tpot_ms": 77.80551715550732,
+                "p95_tpot_ms": 85.60120113460498,
+                "p99_tpot_ms": 91.83774831788313,
+                "ttfts": [
+                  1.5852742330171168,
+                  2.0641572039749008,
+                  1.415689192013815,
+                  1.5844128929893486,
+                  1.6141820439952426,
+                  2.5901921539916657
+                ]
+              }
+            },
+            {
+              "pair": 3,
+              "output_throughput": 57.03909555136066,
+              "median_tpot_ms": 34.34942586286723,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 31.55730262902216,
+                "request_throughput": 0.19013031850453554,
+                "input_throughput": 3992.736688595246,
+                "output_throughput": 57.03909555136066,
+                "total_throughput": 4049.775784146607,
+                "mean_ttft_ms": 1840.7669904942547,
+                "median_ttft_ms": 1616.0527689935407,
+                "std_ttft_ms": 397.2381354847473,
+                "p90_ttft_ms": 2356.75511349109,
+                "p95_ttft_ms": 2488.5987047455274,
+                "p99_ttft_ms": 2594.0735777490772,
+                "mean_tpot_ms": 41.78525294312403,
+                "median_tpot_ms": 34.34942586286723,
+                "std_tpot_ms": 31.546769703571112,
+                "p90_tpot_ms": 81.27547802672609,
+                "p95_tpot_ms": 89.30466770231264,
+                "p99_tpot_ms": 95.72801944278189,
+                "ttfts": [
+                  1.595611791999545,
+                  2.0930679309822153,
+                  1.5033743859967217,
+                  1.6035694299789611,
+                  1.6285361080081202,
+                  2.6204422959999647
+                ]
+              }
+            },
+            {
+              "pair": 4,
+              "output_throughput": 59.15220739178962,
+              "median_tpot_ms": 32.853441025131616,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 30.429971751989797,
+                "request_throughput": 0.1971740246392987,
+                "input_throughput": 4140.654517425273,
+                "output_throughput": 59.15220739178962,
+                "total_throughput": 4199.806724817063,
+                "mean_ttft_ms": 1810.7932678297705,
+                "median_ttft_ms": 1594.886446982855,
+                "std_ttft_ms": 401.6546419318299,
+                "p90_ttft_ms": 2329.6215965092415,
+                "p95_ttft_ms": 2464.70980525919,
+                "p99_ttft_ms": 2572.7803722591493,
+                "mean_tpot_ms": 39.96710670457381,
+                "median_tpot_ms": 32.853441025131616,
+                "std_tpot_ms": 30.17348458076975,
+                "p90_tpot_ms": 77.57271355515219,
+                "p95_tpot_ms": 85.59309802841385,
+                "p99_tpot_ms": 92.00940560702318,
+                "ttfts": [
+                  1.5630379630019888,
+                  2.0594451790093444,
+                  1.4527055569924414,
+                  1.5753744559769984,
+                  1.6143984379887115,
+                  2.5997980140091386
+                ]
+              }
+            },
+            {
+              "pair": 5,
+              "output_throughput": 58.16361773437763,
+              "median_tpot_ms": 33.521158285923754,
+              "text_sha256": [
+                "46e0c1c96b308d2b8a7791d49879410a1c234ca1e508c81c084ec8c665a1a897",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "314a530bcb55f2cffda19c4d03a4670ad9c2f40edc15763966fa9c3d45df727d",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "fb4826232459c63166e41c86946b68247017297c0a82dcfb903086f748fc93a5"
+              ],
+              "metrics": {
+                "duration": 30.947180903021945,
+                "request_throughput": 0.19387872578125878,
+                "input_throughput": 4071.4532414064342,
+                "output_throughput": 58.16361773437763,
+                "total_throughput": 4129.616859140812,
+                "mean_ttft_ms": 1798.239480665264,
+                "median_ttft_ms": 1577.9561240051407,
+                "std_ttft_ms": 397.4857005680637,
+                "p90_ttft_ms": 2317.032201492111,
+                "p95_ttft_ms": 2442.0311452486203,
+                "p99_ttft_ms": 2542.0303002538276,
+                "mean_tpot_ms": 40.63020871294565,
+                "median_tpot_ms": 33.521158285923754,
+                "std_tpot_ms": 30.713016851840464,
+                "p90_tpot_ms": 79.02054387457392,
+                "p95_tpot_ms": 86.84708037206133,
+                "p99_tpot_ms": 93.10830957005128,
+                "ttfts": [
+                  1.568202594993636,
+                  2.067034313979093,
+                  1.4312576380034443,
+                  1.5736274410155602,
+                  1.5822848069947213,
+                  2.5670300890051294
+                ]
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "baseline": {
+            "median_output_throughput": 52.033380953359256,
+            "median_of_median_tpot_ms": 36.94340352507863,
+            "scalar_metric_ranges": {
+              "duration": {
+                "min": 33.42107093599043,
+                "max": 34.7361755319871,
+                "median": 34.59317782201106
+              },
+              "input_throughput": {
+                "min": 3627.342333181494,
+                "max": 3770.0766753202192,
+                "median": 3642.336666735148
+              },
+              "mean_tpot_ms": {
+                "min": 44.757996270919236,
+                "max": 47.08736378652431,
+                "median": 46.406160421408494
+              },
+              "mean_ttft_ms": {
+                "min": 1793.7943456636276,
+                "max": 1853.8372741701703,
+                "median": 1823.7039416611271
+              },
+              "median_tpot_ms": {
+                "min": 35.9307905518622,
+                "max": 37.75189744313847,
+                "median": 36.94340352507863
+              },
+              "median_ttft_ms": {
+                "min": 1572.4689840135397,
+                "max": 1635.089274510392,
+                "median": 1598.49135899276
+              },
+              "output_throughput": {
+                "min": 51.819176188307054,
+                "max": 53.85823821886027,
+                "median": 52.033380953359256
+              },
+              "p90_tpot_ms": {
+                "min": 88.03410555686128,
+                "max": 92.62415188464749,
+                "median": 91.82626980933692
+              },
+              "p90_ttft_ms": {
+                "min": 2293.010654480895,
+                "max": 2378.9762489905115,
+                "median": 2326.2473044887884
+              },
+              "p95_tpot_ms": {
+                "min": 96.21182082355821,
+                "max": 100.96598039550574,
+                "median": 100.11974661367192
+              },
+              "p95_ttft_ms": {
+                "min": 2419.8632157349493,
+                "max": 2518.195069991634,
+                "median": 2454.6082787419436
+              },
+              "p99_tpot_ms": {
+                "min": 102.75399303691576,
+                "max": 107.63944320419235,
+                "median": 106.75452805713991
+              },
+              "p99_ttft_ms": {
+                "min": 2521.345264738193,
+                "max": 2629.570126792533,
+                "median": 2547.5379021459958
+              },
+              "request_throughput": {
+                "min": 0.17273058729435684,
+                "max": 0.17952746072953424,
+                "median": 0.1734446031778642
+              },
+              "std_tpot_ms": {
+                "min": 34.152934908811325,
+                "max": 35.836602198488826,
+                "median": 35.67798348117134
+              },
+              "std_ttft_ms": {
+                "min": 383.69579401849126,
+                "max": 407.2483559247516,
+                "median": 388.28719460482256
+              },
+              "total_throughput": {
+                "min": 3679.1615093698006,
+                "max": 3823.9349135390794,
+                "median": 3694.3700476885074
+              }
+            }
+          },
+          "candidate": {
+            "median_output_throughput": 58.16361773437763,
+            "median_of_median_tpot_ms": 33.72885108359678,
+            "scalar_metric_ranges": {
+              "duration": {
+                "min": 30.429971751989797,
+                "max": 33.4587278990075,
+                "median": 30.947180903021945
+              },
+              "input_throughput": {
+                "min": 3765.8335481349127,
+                "max": 4140.654517425273,
+                "median": 4071.4532414064342
+              },
+              "mean_tpot_ms": {
+                "min": 39.96710670457381,
+                "max": 46.88377870460131,
+                "median": 40.63020871294565
+              },
+              "mean_ttft_ms": {
+                "min": 1798.239480665264,
+                "max": 1840.7669904942547,
+                "median": 1808.984619997015
+              },
+              "median_tpot_ms": {
+                "min": 32.853441025131616,
+                "max": 43.25936476426101,
+                "median": 33.72885108359678
+              },
+              "median_ttft_ms": {
+                "min": 1577.9561240051407,
+                "max": 1616.0527689935407,
+                "median": 1594.886446982855
+              },
+              "output_throughput": {
+                "min": 53.797622116213034,
+                "max": 59.15220739178962,
+                "median": 58.16361773437763
+              },
+              "p90_tpot_ms": {
+                "min": 77.57271355515219,
+                "max": 87.62286992809412,
+                "median": 79.02054387457392
+              },
+              "p90_ttft_ms": {
+                "min": 2311.2510920182103,
+                "max": 2356.75511349109,
+                "median": 2327.1746789832832
+              },
+              "p95_tpot_ms": {
+                "min": 85.59309802841385,
+                "max": 95.59430070821021,
+                "median": 86.84708037206133
+              },
+              "p95_ttft_ms": {
+                "min": 2442.0311452486203,
+                "max": 2488.5987047455274,
+                "median": 2458.6834164874745
+              },
+              "p99_tpot_ms": {
+                "min": 91.83774831788313,
+                "max": 101.9714453323031,
+                "median": 93.10830957005128
+              },
+              "p99_ttft_ms": {
+                "min": 2542.0303002538276,
+                "max": 2594.0735777490772,
+                "median": 2566.055485724064
+              },
+              "request_throughput": {
+                "min": 0.17932540705404346,
+                "max": 0.1971740246392987,
+                "median": 0.19387872578125878
+              },
+              "std_tpot_ms": {
+                "min": 30.114027597171557,
+                "max": 33.59404760996358,
+                "median": 30.713016851840464
+              },
+              "std_ttft_ms": {
+                "min": 397.2381354847473,
+                "max": 401.7682569772594,
+                "median": 398.9936853315623
+              },
+              "total_throughput": {
+                "min": 3819.6311702511257,
+                "max": 4199.806724817063,
+                "median": 4129.616859140812
+              }
+            }
+          }
+        },
+        "zero_regression_gate": {
+          "status": "passed",
+          "throughput_passed": true,
+          "tpot_passed": true,
+          "basis": "five-pair median comparison; no uncertainty or significance claim"
+        }
+      },
+      "qwen": {
+        "case_counts": {
+          "baseline": 5,
+          "candidate": 5
+        },
+        "pairs_text_match": [
+          {
+            "pair": 1,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 2,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 3,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 4,
+            "identical": true,
+            "inputs_identical": true
+          },
+          {
+            "pair": 5,
+            "identical": true,
+            "inputs_identical": true
+          }
+        ],
+        "per_case": {
+          "baseline": [
+            {
+              "pair": 1,
+              "output_throughput": 27.859679273393215,
+              "median_tpot_ms": 69.59939425249341,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 64.60950186598347,
+                "request_throughput": 0.09286559757797738,
+                "input_throughput": 1950.177549137525,
+                "output_throughput": 27.859679273393215,
+                "total_throughput": 1978.0372284109183,
+                "mean_ttft_ms": 3455.9001346691125,
+                "median_ttft_ms": 3296.91178300709,
+                "std_ttft_ms": 1033.3664152602369,
+                "p90_ttft_ms": 4605.922120506875,
+                "p95_ttft_ms": 4990.909852756886,
+                "p99_ttft_ms": 5298.900038556894,
+                "mean_tpot_ms": 95.17024510534293,
+                "median_tpot_ms": 69.59939425249341,
+                "std_tpot_ms": 65.05040697151752,
+                "p90_tpot_ms": 180.47871405850972,
+                "p95_tpot_ms": 194.03831437373196,
+                "p99_tpot_ms": 204.88599462590972,
+                "ttfts": [
+                  2.5162065439799335,
+                  3.835946656006854,
+                  2.4135264570068102,
+                  2.7695931880152784,
+                  3.8242303779989015,
+                  5.375897585006896
+                ]
+              }
+            },
+            {
+              "pair": 2,
+              "output_throughput": 27.34654593720376,
+              "median_tpot_ms": 71.48989032274369,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 65.82184105200577,
+                "request_throughput": 0.09115515312401254,
+                "input_throughput": 1914.2582156042633,
+                "output_throughput": 27.34654593720376,
+                "total_throughput": 1941.604761541467,
+                "mean_ttft_ms": 3457.8601685013077,
+                "median_ttft_ms": 3298.52247099916,
+                "std_ttft_ms": 1033.6359622946675,
+                "p90_ttft_ms": 4606.898850004654,
+                "p95_ttft_ms": 4993.855334003456,
+                "p99_ttft_ms": 5303.420521202497,
+                "mean_tpot_ms": 97.38851557859208,
+                "median_tpot_ms": 71.48989032274369,
+                "std_tpot_ms": 66.275749499554,
+                "p90_tpot_ms": 184.36513968060464,
+                "p95_tpot_ms": 198.00686581355419,
+                "p99_tpot_ms": 208.92024671991376,
+                "ttfts": [
+                  2.507734845014056,
+                  3.8329858820070513,
+                  2.4285835239861626,
+                  2.769829779979773,
+                  3.827215162018547,
+                  5.3808118180022575
+                ]
+              }
+            },
+            {
+              "pair": 3,
+              "output_throughput": 27.734154991185807,
+              "median_tpot_ms": 70.0474257240645,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 64.90192329898127,
+                "request_throughput": 0.0924471833039527,
+                "input_throughput": 1941.3908493830065,
+                "output_throughput": 27.734154991185807,
+                "total_throughput": 1969.1250043741925,
+                "mean_ttft_ms": 3435.7475910073845,
+                "median_ttft_ms": 3265.633708506357,
+                "std_ttft_ms": 1032.7520108710776,
+                "p90_ttft_ms": 4592.172989505343,
+                "p95_ttft_ms": 4971.668559257523,
+                "p99_ttft_ms": 5275.265015059268,
+                "mean_tpot_ms": 95.67232616667542,
+                "median_tpot_ms": 70.0474257240645,
+                "std_tpot_ms": 65.32951103100467,
+                "p90_tpot_ms": 181.35428390303903,
+                "p95_tpot_ms": 194.97388460370965,
+                "p99_tpot_ms": 205.86956516424615,
+                "ttfts": [
+                  2.5072057860088535,
+                  3.833181850000983,
+                  2.3916663640120532,
+                  2.735297573002754,
+                  3.79596984400996,
+                  5.351164129009703
+                ]
+              }
+            },
+            {
+              "pair": 4,
+              "output_throughput": 27.95053854382559,
+              "median_tpot_ms": 69.1631958076464,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 64.39947470699553,
+                "request_throughput": 0.09316846181275197,
+                "input_throughput": 1956.5376980677916,
+                "output_throughput": 27.95053854382559,
+                "total_throughput": 1984.4882366116171,
+                "mean_ttft_ms": 3472.0205853276034,
+                "median_ttft_ms": 3311.9857525016414,
+                "std_ttft_ms": 1035.391474765814,
+                "p90_ttft_ms": 4623.6419179913355,
+                "p95_ttft_ms": 5010.238211492833,
+                "p99_ttft_ms": 5319.515246294031,
+                "mean_tpot_ms": 94.83493484223523,
+                "median_tpot_ms": 69.1631958076464,
+                "std_tpot_ms": 64.63960400271628,
+                "p90_tpot_ms": 179.62465684279454,
+                "p95_tpot_ms": 193.24393212540915,
+                "p99_tpot_ms": 204.13935235150086,
+                "ttfts": [
+                  2.5221853499824647,
+                  3.85044933098834,
+                  2.438682820997201,
+                  2.7814671900123358,
+                  3.842504314990947,
+                  5.396834504994331
+                ]
+              }
+            },
+            {
+              "pair": 5,
+              "output_throughput": 27.45982070788603,
+              "median_tpot_ms": 71.40825046486272,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 65.5503187419963,
+                "request_throughput": 0.09153273569295343,
+                "input_throughput": 1922.1874495520221,
+                "output_throughput": 27.45982070788603,
+                "total_throughput": 1949.6472702599083,
+                "mean_ttft_ms": 3444.128028835015,
+                "median_ttft_ms": 3269.4991209864384,
+                "std_ttft_ms": 1034.1368618619022,
+                "p90_ttft_ms": 4605.879738504882,
+                "p95_ttft_ms": 4981.948897264374,
+                "p99_ttft_ms": 5282.8042242719675,
+                "mean_tpot_ms": 97.0310218026589,
+                "median_tpot_ms": 71.40825046486272,
+                "std_tpot_ms": 65.94217382094574,
+                "p90_tpot_ms": 183.50864165715825,
+                "p95_tpot_ms": 197.1045601697135,
+                "p99_tpot_ms": 207.98129497975776,
+                "ttfts": [
+                  2.5226580500020646,
+                  3.853741420985898,
+                  2.3913524040253833,
+                  2.7368443649902474,
+                  3.8021538769826293,
+                  5.358018056023866
+                ]
+              }
+            }
+          ],
+          "candidate": [
+            {
+              "pair": 1,
+              "output_throughput": 38.207645272259,
+              "median_tpot_ms": 61.20977893649456,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 47.11099014800857,
+                "request_throughput": 0.12735881757419668,
+                "input_throughput": 2674.53516905813,
+                "output_throughput": 38.207645272259,
+                "total_throughput": 2712.742814330389,
+                "mean_ttft_ms": 3458.3940418427424,
+                "median_ttft_ms": 3296.447842512862,
+                "std_ttft_ms": 1036.741779645929,
+                "p90_ttft_ms": 4612.527210003464,
+                "p95_ttft_ms": 4999.192280505667,
+                "p99_ttft_ms": 5308.5243369074315,
+                "mean_tpot_ms": 74.63710215662016,
+                "median_tpot_ms": 61.20977893649456,
+                "std_tpot_ms": 40.64990549784896,
+                "p90_tpot_ms": 125.57745573406199,
+                "p95_tpot_ms": 137.329773330228,
+                "p99_tpot_ms": 146.7316274071608,
+                "ttfts": [
+                  2.512564138014568,
+                  3.8391970689990558,
+                  2.4198500080092344,
+                  2.765762299008202,
+                  3.827133386017522,
+                  5.385857351007871
+                ]
+              }
+            },
+            {
+              "pair": 2,
+              "output_throughput": 41.858500445709,
+              "median_tpot_ms": 50.61476929097695,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 43.002018247992964,
+                "request_throughput": 0.13952833481903,
+                "input_throughput": 2930.09503119963,
+                "output_throughput": 41.858500445709,
+                "total_throughput": 2971.953531645339,
+                "mean_ttft_ms": 3429.0286698330115,
+                "median_ttft_ms": 3257.0060184953036,
+                "std_ttft_ms": 1026.7182536514044,
+                "p90_ttft_ms": 4581.893887007027,
+                "p95_ttft_ms": 4956.62072950654,
+                "p99_ttft_ms": 5256.40220350615,
+                "mean_tpot_ms": 63.16570676419337,
+                "median_tpot_ms": 50.61476929097695,
+                "std_tpot_ms": 39.1919341666251,
+                "p90_tpot_ms": 112.02809511032503,
+                "p95_tpot_ms": 123.67960067053582,
+                "p99_tpot_ms": 133.00080511870445,
+                "ttfts": [
+                  2.5162914780084975,
+                  3.8324402020080015,
+                  2.380080729984911,
+                  2.7322300579980947,
+                  3.7817819789925124,
+                  5.331347572006052
+                ]
+              }
+            },
+            {
+              "pair": 3,
+              "output_throughput": 40.912244520672495,
+              "median_tpot_ms": 51.703458881275466,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 43.996608376997756,
+                "request_throughput": 0.13637414840224166,
+                "input_throughput": 2863.8571164470745,
+                "output_throughput": 40.912244520672495,
+                "total_throughput": 2904.769360967747,
+                "mean_ttft_ms": 3388.104388839565,
+                "median_ttft_ms": 3190.6333590159193,
+                "std_ttft_ms": 1028.0885476724652,
+                "p90_ttft_ms": 4560.419303001254,
+                "p95_ttft_ms": 4919.268161502259,
+                "p99_ttft_ms": 5206.347248303064,
+                "mean_tpot_ms": 65.00335004180475,
+                "median_tpot_ms": 51.703458881275466,
+                "std_tpot_ms": 40.25886264416775,
+                "p90_tpot_ms": 115.39012304347368,
+                "p95_tpot_ms": 127.02861648829392,
+                "p99_tpot_ms": 136.33941124415009,
+                "ttfts": [
+                  2.510820382012753,
+                  3.842721585999243,
+                  2.315700626990292,
+                  2.6589825540140737,
+                  3.722284164017765,
+                  5.278117020003265
+                ]
+              }
+            },
+            {
+              "pair": 4,
+              "output_throughput": 40.86410567136993,
+              "median_tpot_ms": 52.56630195651078,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 44.048437385994475,
+                "request_throughput": 0.1362136855712331,
+                "input_throughput": 2860.487396995895,
+                "output_throughput": 40.86410567136993,
+                "total_throughput": 2901.351502667265,
+                "mean_ttft_ms": 3434.2827501629167,
+                "median_ttft_ms": 3257.7612765016966,
+                "std_ttft_ms": 1025.5486288330424,
+                "p90_ttft_ms": 4589.773693485768,
+                "p95_ttft_ms": 4960.2070502369315,
+                "p99_ttft_ms": 5256.553735637863,
+                "mean_tpot_ms": 65.53835607302653,
+                "median_tpot_ms": 52.56630195651078,
+                "std_tpot_ms": 40.10366514683661,
+                "p90_tpot_ms": 115.5469771020035,
+                "p95_tpot_ms": 127.16367845400158,
+                "p99_tpot_ms": 136.45703953560007,
+                "ttfts": [
+                  2.53076009999495,
+                  3.8489069799834397,
+                  2.379866461007623,
+                  2.7324291080003604,
+                  3.7830934450030327,
+                  5.3306404069880955
+                ]
+              }
+            },
+            {
+              "pair": 5,
+              "output_throughput": 41.03556708645243,
+              "median_tpot_ms": 52.16169959534953,
+              "text_sha256": [
+                "b0145dcc1eb288caefe2ded9cc0a4d0c9cf3ac939ed293407e81cd69a6f4c44f",
+                "09dff50876fad6cd82260ed8cd9369c2a48b6b5b9593a6658149effa7b30a5c5",
+                "63461daa9019e0ccdbb350d24f97427d5a641a9f7cc25487730a8504a6bd334b",
+                "2f7e9202793c672d2d28ac58a41cb0f1a082706e57fefce574aa0ba5bfd6f8c3",
+                "144773900f0676b05b0af0d59d83b25cfa5b84235e2d7b0b9cddeb41cdede343",
+                "55359abdc4b8e464c915e1b1053d6eec5b0189598aec01c598393747fb3d8e42"
+              ],
+              "metrics": {
+                "duration": 43.86438711101073,
+                "request_throughput": 0.1367852236215081,
+                "input_throughput": 2872.48969605167,
+                "output_throughput": 41.03556708645243,
+                "total_throughput": 2913.5252631381227,
+                "mean_ttft_ms": 3405.001738331824,
+                "median_ttft_ms": 3224.6131475112634,
+                "std_ttft_ms": 1028.9596531404172,
+                "p90_ttft_ms": 4565.041638998082,
+                "p95_ttft_ms": 4936.675293996814,
+                "p99_ttft_ms": 5233.982217995799,
+                "mean_tpot_ms": 65.12977884338837,
+                "median_tpot_ms": 52.16169959534953,
+                "std_tpot_ms": 39.95835052584032,
+                "p90_tpot_ms": 114.96283470741184,
+                "p95_tpot_ms": 126.62059238049014,
+                "p99_tpot_ms": 135.94679851895282,
+                "ttfts": [
+                  2.4971801379870158,
+                  3.8217743290006183,
+                  2.353520718985237,
+                  2.6947841200162657,
+                  3.754442175006261,
+                  5.3083089489955455
+                ]
+              }
+            }
+          ]
+        },
+        "metrics": {
+          "baseline": {
+            "median_output_throughput": 27.734154991185807,
+            "median_of_median_tpot_ms": 70.0474257240645,
+            "scalar_metric_ranges": {
+              "duration": {
+                "min": 64.39947470699553,
+                "max": 65.82184105200577,
+                "median": 64.90192329898127
+              },
+              "input_throughput": {
+                "min": 1914.2582156042633,
+                "max": 1956.5376980677916,
+                "median": 1941.3908493830065
+              },
+              "mean_tpot_ms": {
+                "min": 94.83493484223523,
+                "max": 97.38851557859208,
+                "median": 95.67232616667542
+              },
+              "mean_ttft_ms": {
+                "min": 3435.7475910073845,
+                "max": 3472.0205853276034,
+                "median": 3455.9001346691125
+              },
+              "median_tpot_ms": {
+                "min": 69.1631958076464,
+                "max": 71.48989032274369,
+                "median": 70.0474257240645
+              },
+              "median_ttft_ms": {
+                "min": 3265.633708506357,
+                "max": 3311.9857525016414,
+                "median": 3296.91178300709
+              },
+              "output_throughput": {
+                "min": 27.34654593720376,
+                "max": 27.95053854382559,
+                "median": 27.734154991185807
+              },
+              "p90_tpot_ms": {
+                "min": 179.62465684279454,
+                "max": 184.36513968060464,
+                "median": 181.35428390303903
+              },
+              "p90_ttft_ms": {
+                "min": 4592.172989505343,
+                "max": 4623.6419179913355,
+                "median": 4605.922120506875
+              },
+              "p95_tpot_ms": {
+                "min": 193.24393212540915,
+                "max": 198.00686581355419,
+                "median": 194.97388460370965
+              },
+              "p95_ttft_ms": {
+                "min": 4971.668559257523,
+                "max": 5010.238211492833,
+                "median": 4990.909852756886
+              },
+              "p99_tpot_ms": {
+                "min": 204.13935235150086,
+                "max": 208.92024671991376,
+                "median": 205.86956516424615
+              },
+              "p99_ttft_ms": {
+                "min": 5275.265015059268,
+                "max": 5319.515246294031,
+                "median": 5298.900038556894
+              },
+              "request_throughput": {
+                "min": 0.09115515312401254,
+                "max": 0.09316846181275197,
+                "median": 0.0924471833039527
+              },
+              "std_tpot_ms": {
+                "min": 64.63960400271628,
+                "max": 66.275749499554,
+                "median": 65.32951103100467
+              },
+              "std_ttft_ms": {
+                "min": 1032.7520108710776,
+                "max": 1035.391474765814,
+                "median": 1033.6359622946675
+              },
+              "total_throughput": {
+                "min": 1941.604761541467,
+                "max": 1984.4882366116171,
+                "median": 1969.1250043741925
+              }
+            }
+          },
+          "candidate": {
+            "median_output_throughput": 40.912244520672495,
+            "median_of_median_tpot_ms": 52.16169959534953,
+            "scalar_metric_ranges": {
+              "duration": {
+                "min": 43.002018247992964,
+                "max": 47.11099014800857,
+                "median": 43.996608376997756
+              },
+              "input_throughput": {
+                "min": 2674.53516905813,
+                "max": 2930.09503119963,
+                "median": 2863.8571164470745
+              },
+              "mean_tpot_ms": {
+                "min": 63.16570676419337,
+                "max": 74.63710215662016,
+                "median": 65.12977884338837
+              },
+              "mean_ttft_ms": {
+                "min": 3388.104388839565,
+                "max": 3458.3940418427424,
+                "median": 3429.0286698330115
+              },
+              "median_tpot_ms": {
+                "min": 50.61476929097695,
+                "max": 61.20977893649456,
+                "median": 52.16169959534953
+              },
+              "median_ttft_ms": {
+                "min": 3190.6333590159193,
+                "max": 3296.447842512862,
+                "median": 3257.0060184953036
+              },
+              "output_throughput": {
+                "min": 38.207645272259,
+                "max": 41.858500445709,
+                "median": 40.912244520672495
+              },
+              "p90_tpot_ms": {
+                "min": 112.02809511032503,
+                "max": 125.57745573406199,
+                "median": 115.39012304347368
+              },
+              "p90_ttft_ms": {
+                "min": 4560.419303001254,
+                "max": 4612.527210003464,
+                "median": 4581.893887007027
+              },
+              "p95_tpot_ms": {
+                "min": 123.67960067053582,
+                "max": 137.329773330228,
+                "median": 127.02861648829392
+              },
+              "p95_ttft_ms": {
+                "min": 4919.268161502259,
+                "max": 4999.192280505667,
+                "median": 4956.62072950654
+              },
+              "p99_tpot_ms": {
+                "min": 133.00080511870445,
+                "max": 146.7316274071608,
+                "median": 136.33941124415009
+              },
+              "p99_ttft_ms": {
+                "min": 5206.347248303064,
+                "max": 5308.5243369074315,
+                "median": 5256.40220350615
+              },
+              "request_throughput": {
+                "min": 0.12735881757419668,
+                "max": 0.13952833481903,
+                "median": 0.13637414840224166
+              },
+              "std_tpot_ms": {
+                "min": 39.1919341666251,
+                "max": 40.64990549784896,
+                "median": 40.10366514683661
+              },
+              "std_ttft_ms": {
+                "min": 1025.5486288330424,
+                "max": 1036.741779645929,
+                "median": 1028.0885476724652
+              },
+              "total_throughput": {
+                "min": 2712.742814330389,
+                "max": 2971.953531645339,
+                "median": 2904.769360967747
+              }
+            }
+          }
+        },
+        "zero_regression_gate": {
+          "status": "passed",
+          "throughput_passed": true,
+          "tpot_passed": true,
+          "basis": "five-pair median comparison; no uncertainty or significance claim"
+        }
+      }
+    },
+    "ordinary_default_comparison": "unavailable: no five-round ordinary baseline included"
+  }
+}
