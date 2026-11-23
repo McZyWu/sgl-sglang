@@ -44,7 +44,7 @@ class LIMDecodeAdapter:
         self.rows = manager.size
         self.batch_capacity = manager.batch_capacity
         self.max_query_width = manager.max_query_width
-        self.operator = load_fused_lim_operator()
+        self.operator = self._load_operator()
         self._fused_prepare_lim_metadata = fused_prepare_lim_metadata
         self._prepared_batch = None
         device = manager.device
@@ -66,6 +66,10 @@ class LIMDecodeAdapter:
 
     def reset_requests(self, request_slots):
         self.last_prefix.index_fill_(0, request_slots, -1)
+
+    @staticmethod
+    def _load_operator():
+        return load_fused_lim_operator()
 
     def _prepare_forward(self, manager, block_table, forward_batch, width):
         batch = forward_batch.batch_size
@@ -103,6 +107,7 @@ class LIMDecodeAdapter:
         forward_batch,
         layer_id,
         reuse_metadata=False,
+        **operator_kwargs,
     ):
         batch = forward_batch.batch_size
         width = sparse_query_width(forward_batch)
@@ -112,30 +117,18 @@ class LIMDecodeAdapter:
         # different batch has used it since this batch's preceding owner.
         if not reuse_metadata or self._prepared_batch is not forward_batch:
             self._prepare_forward(manager, block_table, forward_batch, width)
-        sources = self.source_ids[:rows]
-        fused_lightning_indexer_manage(
-            weights=weights[:rows].contiguous(),
-            query=query[:rows].contiguous(),
+        self._run_operator(
+            manager,
+            layer_index,
+            batch,
+            width,
+            query=query,
+            weights=weights,
             key=key,
-            block_table=self.block_table[:batch],
-            query_ends=self.query_ends[width - 1, :batch],
-            seq_lens=self._pre_lengths[:batch],
-            prefix_lens=self._pre_lengths[:batch],
-            cache_sizes=self._pre_cache_sizes[:batch],
-            request_state=self._pre_states[:batch],
-            request_slots=self.resident_safe_slots[:batch],
-            slot_pool=manager.device_slot_map[layer_index],
-            source_ids=sources,
-            device_slots=self.device_slots[:rows],
-            topk_misses=self.topk_misses[:rows],
-            miss_sources=self.miss_sources[:batch],
-            miss_slots=self.miss_slots[:batch],
-            miss_counts=self.miss_counts[:batch],
-            operator=self.operator,
-            full_visible=True,
+            **operator_kwargs,
         )
         plan = LIMSelection(
-            sources,
+            self.source_ids[:rows],
             self.device_slots[:rows],
             self.topk_misses[:rows],
             self.miss_sources[:batch],
@@ -149,6 +142,30 @@ class LIMDecodeAdapter:
         )
         manager.prepare_copy_sfa_plan(plan)
         return plan
+
+    def _run_operator(self, manager, layer_index, batch, width, *, query, weights, key):
+        rows = batch * width
+        fused_lightning_indexer_manage(
+            weights=weights[:rows].contiguous(),
+            query=query[:rows].contiguous(),
+            key=key,
+            block_table=self.block_table[:batch],
+            query_ends=self.query_ends[width - 1, :batch],
+            seq_lens=self._pre_lengths[:batch],
+            prefix_lens=self._pre_lengths[:batch],
+            cache_sizes=self._pre_cache_sizes[:batch],
+            request_state=self._pre_states[:batch],
+            request_slots=self.resident_safe_slots[:batch],
+            slot_pool=manager.device_slot_map[layer_index],
+            source_ids=self.source_ids[:rows],
+            device_slots=self.device_slots[:rows],
+            topk_misses=self.topk_misses[:rows],
+            miss_sources=self.miss_sources[:batch],
+            miss_slots=self.miss_slots[:batch],
+            miss_counts=self.miss_counts[:batch],
+            operator=self.operator,
+            full_visible=True,
+        )
 
     def commit_forward(self, batch: int) -> None:
         """Publish the visible lengths after the last layer has copied its KV."""

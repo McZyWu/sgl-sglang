@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 class FusedSparseKVCacheManager:
     host_pool: HostKVPool
+    packed_c8 = False
 
     def __init__(
         self,
@@ -62,7 +63,7 @@ class FusedSparseKVCacheManager:
         self.host_token_capacity = self.budget.host_token_capacity
         self.device_cache_size = self.budget.cache_tokens
         self.cache_capacity = self.device_cache_size
-        self._copy_sfa_operator = load_copy_sfa_operator()
+        self._copy_sfa_operator = self._load_copy_sfa_operator()
 
         # Allocate exactly the persistent shapes reserved by the plan.
         self.request_to_resident: Optional[torch.Tensor] = None
@@ -82,6 +83,25 @@ class FusedSparseKVCacheManager:
         except Exception as e:
             self._raise_buffer_allocation_error(name, e)
 
+        self._init_host_pool()
+        self.lim_adapter = self._make_decode_adapter()
+
+        if self.request_to_resident is None:
+            self._install_req_alloc_hook(req_to_token_pool)
+        else:
+            self._clear_resident_rows()
+            req_to_token_pool.available_sparse_resident_rows = (
+                self._available_resident_rows
+            )
+            req_to_token_pool.admit_sparse_resident_rows = self._admit_resident_rows
+            req_to_token_pool.release_sparse_resident_row = self._release_resident_row
+            req_to_token_pool.clear_sparse_resident_rows = self._clear_resident_rows
+
+    @staticmethod
+    def _load_copy_sfa_operator():
+        return load_copy_sfa_operator()
+
+    def _init_host_pool(self):
         # Shared host components use [physical_pages, page_size, head_num, width].
         # The padded slot 0 is used for writing dummy outputs from padded tokens.
 
@@ -106,22 +126,12 @@ class FusedSparseKVCacheManager:
         )
         self.host_k_buffer, self.host_v_buffer = self.host_pool.buffers
 
+    def _make_decode_adapter(self):
         from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_lim import (
             LIMDecodeAdapter,
         )
 
-        self.lim_adapter = LIMDecodeAdapter(self)
-
-        if self.request_to_resident is None:
-            self._install_req_alloc_hook(req_to_token_pool)
-        else:
-            self._clear_resident_rows()
-            req_to_token_pool.available_sparse_resident_rows = (
-                self._available_resident_rows
-            )
-            req_to_token_pool.admit_sparse_resident_rows = self._admit_resident_rows
-            req_to_token_pool.release_sparse_resident_row = self._release_resident_row
-            req_to_token_pool.clear_sparse_resident_rows = self._clear_resident_rows
+        return LIMDecodeAdapter(self)
 
     def _raise_buffer_allocation_error(
         self,
@@ -212,11 +222,13 @@ class FusedSparseKVCacheManager:
             valid_rows=plan.valid_rows,
             sparse_rows=plan.sparse_rows,
             request_slots=plan.resident_safe_slots,
+            # The next LIM owner still needs the real sequence lengths.
             seq_lens=adapter._pre_lengths[:batch],
             actual_seq_lengths_kv=adapter._copy_lengths[:batch],
             hbm_block_table=self.planner_hbm_block_table[:batch],
             capacity=adapter.capacity,
             query_width=plan.query_width,
+            hbm_row_offset=int(self.packed_c8),
         )
 
     def copy_sfa_attention(
@@ -325,7 +337,9 @@ class FusedSparseKVCacheManager:
             forward_batch.out_cache_loc,
             request_rows=self.size,
             context_len=(
-                self.max_context_len if is_prefill else self.logical_max_context_len
+                self.max_context_len
+                if is_prefill and not self.packed_c8
+                else self.logical_max_context_len
             ),
             host_capacity=self.host_token_capacity,
             query_width=1 if is_prefill else sparse_query_width(forward_batch),

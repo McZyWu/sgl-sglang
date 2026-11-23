@@ -352,6 +352,9 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                 get_sparsity_driven_kv_offload_sparse_context_len,
                 is_sparsity_driven_kv_offload_enabled,
             )
+            from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.fused_budget import (
+                C8_ROW_BYTES,
+            )
             from sglang.srt.mem_cache.allocation_sizing import (
                 get_req_to_token_extra_context_len,
             )
@@ -395,10 +398,14 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                             model_config=kvc.model_config
                         ),
                         kv_bytes_per_token=(
-                            kvc.model_config.kv_lora_rank
-                            + kvc.model_config.qk_rope_head_dim
-                        )
-                        * torch._utils._element_size(kvc.kv_cache_dtype),
+                            C8_ROW_BYTES
+                            if kvc.kv_cache_dtype == torch.float8_e4m3fn
+                            else (
+                                kvc.model_config.kv_lora_rank
+                                + kvc.model_config.qk_rope_head_dim
+                            )
+                            * torch._utils._element_size(kvc.kv_cache_dtype)
+                        ),
                         num_layers=num_layers,
                         kv_dtype=kvc.kv_cache_dtype,
                     )
@@ -417,6 +424,17 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                     budget.context_len, 2 * (budget.request_rows - 1)
                 )
                 self._fixed_overhead_bytes += budget.managed_hbm_bytes
+                if budget.packed_c8:
+                    scale_bytes = (
+                        len(kvc.get_dsa_indexer_layer_ids()) * torch.float32.itemsize
+                    )
+                    self._cell_size += scale_bytes
+                    self._fixed_overhead_bytes += 128 * 128 * torch.bfloat16.itemsize
+                    # PD's native padding page already includes the scale bytes.
+                    if not self._pd_sparse_decode:
+                        self._fixed_overhead_bytes += (
+                            scale_bytes * get_schedule().page_size
+                        )
 
         # EAGLE/STANDALONE: assumes the draft shares the target's per-layer KV size,
         # which holds for EAGLE/MTP drafts that reuse the target's attention config.

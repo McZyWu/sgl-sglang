@@ -1357,6 +1357,12 @@ class TestEagleConfigurator(CustomTestCase):
                     )
 
     def test_pd_sparse_best_effort_sets_the_running_limit(self):
+        self._check_pd_sparse_best_effort(packed_c8=False)
+
+    def test_a5_c8_pd_sparse_best_effort_sets_the_running_limit(self):
+        self._check_pd_sparse_best_effort(packed_c8=True)
+
+    def _check_pd_sparse_best_effort(self, *, packed_c8):
         from sglang.srt.environ import envs
         from sglang.srt.hardware_backend.npu.sparsity_driven_kv_offload.config import (
             get_sparse_kv_budget,
@@ -1384,7 +1390,7 @@ class TestEagleConfigurator(CustomTestCase):
             speculative_eagle_topk=1,
         )
         _configure_dsa_model(mr)
-        mr.kv_cache_dtype = torch.bfloat16
+        mr.kv_cache_dtype = torch.float8_e4m3fn if packed_c8 else torch.bfloat16
         mr.spec_algorithm.is_eagle.return_value = True
         mr.spec_algorithm.is_none.return_value = False
         mr.spec_aux_config.eagle_draft_num_layers = 1
@@ -1426,12 +1432,16 @@ class TestEagleConfigurator(CustomTestCase):
             patch("sglang.srt.model_executor.pool_configurator._is_npu", True),
             patch(
                 "sglang.srt.hardware_backend.npu.utils.is_npu_arch35",
-                return_value=False,
+                return_value=packed_c8,
             ),
-            mock_cpu_env(),
+            mock_cpu_env(kv_size=1 if packed_c8 else 2),
         ):
-            # Target and draft index-K, plus the draft's native MLA payload.
-            native_bytes_per_token = 5 * 128 * 2 + 576 * 2
+            kv_bytes_per_token = 656 if packed_c8 else 576 * 2
+            # Target and draft index-K (including FP32 scales for C8),
+            # plus the draft's native MLA payload.
+            index_bytes = 128 + 4 if packed_c8 else 128 * 2
+            native_bytes_per_token = 5 * index_bytes + kv_bytes_per_token
+            hadamard_bytes = 128 * 128 * torch.bfloat16.itemsize if packed_c8 else 0
 
             def budget_for(rows, tokens):
                 plan = get_sparse_kv_budget(
@@ -1441,12 +1451,14 @@ class TestEagleConfigurator(CustomTestCase):
                     context_len=8192 + get_req_to_token_extra_context_len(),
                     num_layers=4,
                     top_k=2048,
-                    kv_bytes_per_token=576 * 2,
+                    kv_bytes_per_token=kv_bytes_per_token,
+                    kv_dtype=mr.kv_cache_dtype,
                 )
                 request_bytes = plan.request_rows * plan.context_len * 4
                 return (
                     plan.managed_hbm_bytes
                     + request_bytes
+                    + hadamard_bytes
                     + (tokens + page_size) * native_bytes_per_token
                 )
 
@@ -1472,8 +1484,16 @@ class TestEagleConfigurator(CustomTestCase):
                     plan = mr.sparse_kv_budget_plan
                     self.assertEqual(plan.resident_rows, rows + 1)
                     self.assertEqual(plan.request_rows, rows + extra_rows + 1)
-                    for name in ("device_k_buffer", "device_v_buffer"):
-                        self.assertEqual(plan.manager_buffers[name].shape[0], rows + 1)
+                    if packed_c8:
+                        self.assertEqual(
+                            plan.manager_buffers["device_k_buffer"].shape[0], rows
+                        )
+                        self.assertNotIn("device_v_buffer", plan.manager_buffers)
+                    else:
+                        for name in ("device_k_buffer", "device_v_buffer"):
+                            self.assertEqual(
+                                plan.manager_buffers[name].shape[0], rows + 1
+                            )
                     self.assertEqual(
                         plan.manager_buffers["device_slot_map"].shape[0], rows + 2
                     )
